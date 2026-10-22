@@ -1,0 +1,50 @@
+[package]
+name = "optimax-upscale"
+description = "Апскейл вікна гри: захоплення через Windows Graphics Capture, масштабування шейдерами D3D11 в оверлеї поверх гри"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Генерація TypeScript-типів для UI (вмикає лише крейт app у тестах).
+ts = ["dep:ts-rs"]
+
+[dependencies]
+ts-rs = { workspace = true, optional = true }
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Foundation",
+    "Graphics",
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D_Fxc",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

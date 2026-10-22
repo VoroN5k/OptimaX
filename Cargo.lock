@@ -2371,6 +2371,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "optimax-upscale"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "ts-rs",
+ "windows",
+]
+
+[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

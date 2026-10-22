@@ -1,10 +1,14 @@
-//! Читання реєстру за трейтом [`RegistryApi`], щоб логіку можна було тестувати моками.
+//! Доступ до реєстру за трейтами [`RegistryApi`] (читання) і [`RegistryWriteApi`] (запис),
+//! щоб логіку можна було тестувати моками.
 //!
-//! Запис з'явиться в крейті `tweaks` разом із журналом відкату.
+//! Запис дозволено лише в **уже наявні** ключі: нові ключі не створюються, щоб відкат завжди
+//! зводився до «повернути значення» або «видалити значення». Використовує його лише крейт
+//! `tweaks`, який перед кожним записом зберігає старе значення в журнал.
 
 use crate::error::CoreError;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 #[cfg(windows)]
 mod windows;
@@ -89,6 +93,40 @@ impl RegValue {
         }
     }
 
+    /// Код типу `REG_*` і сирі байти для запису (зворотне до [`RegValue::from_raw`]).
+    pub fn to_raw(&self) -> (u32, Vec<u8>) {
+        fn wide(s: &str) -> Vec<u8> {
+            s.encode_utf16()
+                .chain(std::iter::once(0))
+                .flat_map(u16::to_le_bytes)
+                .collect()
+        }
+        match self {
+            Self::Dword(v) => (REG_DWORD, v.to_le_bytes().to_vec()),
+            Self::Qword(v) => (REG_QWORD, v.to_le_bytes().to_vec()),
+            Self::String(s) => (REG_SZ, wide(s)),
+            Self::ExpandString(s) => (REG_EXPAND_SZ, wide(s)),
+            Self::MultiString(items) => {
+                let mut out: Vec<u8> = items.iter().flat_map(|s| wide(s)).collect();
+                out.extend_from_slice(&[0, 0]);
+                (REG_MULTI_SZ, out)
+            }
+            Self::Binary(b) => (REG_BINARY, b.clone()),
+        }
+    }
+
+    /// Назва типу для показу користувачу (`REG_DWORD` тощо).
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::Dword(_) => "REG_DWORD",
+            Self::Qword(_) => "REG_QWORD",
+            Self::String(_) => "REG_SZ",
+            Self::ExpandString(_) => "REG_EXPAND_SZ",
+            Self::MultiString(_) => "REG_MULTI_SZ",
+            Self::Binary(_) => "REG_BINARY",
+        }
+    }
+
     /// Рядок для `REG_SZ`/`REG_EXPAND_SZ`.
     pub fn as_str(&self) -> Option<&str> {
         match self {
@@ -121,10 +159,37 @@ pub trait RegistryApi {
     ) -> Result<Option<RegValue>, CoreError>;
 }
 
-/// Реєстр у пам'яті для тестів і моків.
-#[derive(Debug, Default, Clone)]
+/// Запис у реєстр. Ключ має вже існувати — інакше помилка, ключі не створюються.
+pub trait RegistryWriteApi: RegistryApi {
+    /// Записує значення в наявний ключ.
+    fn write_value(
+        &self,
+        hive: RegHive,
+        path: &str,
+        name: &str,
+        value: &RegValue,
+    ) -> Result<(), CoreError>;
+
+    /// Видаляє значення. Якщо його вже немає — не помилка.
+    fn delete_value(&self, hive: RegHive, path: &str, name: &str) -> Result<(), CoreError>;
+}
+
+type ValueKey = (RegHive, String, String);
+
+#[derive(Debug, Default)]
+struct MemState {
+    keys: HashSet<(RegHive, String)>,
+    values: HashMap<ValueKey, RegValue>,
+}
+
+/// Реєстр у пам'яті для тестів і моків (з тими самими правилами, що й справжній).
+#[derive(Debug, Default)]
 pub struct MemRegistry {
-    values: HashMap<(RegHive, String, String), RegValue>,
+    state: Mutex<MemState>,
+}
+
+fn value_key(hive: RegHive, path: &str, name: &str) -> ValueKey {
+    (hive, path.to_ascii_lowercase(), name.to_ascii_lowercase())
 }
 
 impl MemRegistry {
@@ -133,12 +198,20 @@ impl MemRegistry {
         Self::default()
     }
 
-    /// Встановлює значення (шлях і ім'я без урахування регістру, як у Windows).
+    fn lock(&self) -> MutexGuard<'_, MemState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Створює порожній ключ.
+    pub fn create_key(&mut self, hive: RegHive, path: &str) {
+        self.lock().keys.insert((hive, path.to_ascii_lowercase()));
+    }
+
+    /// Встановлює значення, створюючи ключ (шлях і ім'я без урахування регістру, як у Windows).
     pub fn set(&mut self, hive: RegHive, path: &str, name: &str, value: RegValue) {
-        self.values.insert(
-            (hive, path.to_ascii_lowercase(), name.to_ascii_lowercase()),
-            value,
-        );
+        let mut st = self.lock();
+        st.keys.insert((hive, path.to_ascii_lowercase()));
+        st.values.insert(value_key(hive, path, name), value);
     }
 }
 
@@ -150,9 +223,35 @@ impl RegistryApi for MemRegistry {
         name: &str,
     ) -> Result<Option<RegValue>, CoreError> {
         Ok(self
+            .lock()
             .values
-            .get(&(hive, path.to_ascii_lowercase(), name.to_ascii_lowercase()))
+            .get(&value_key(hive, path, name))
             .cloned())
+    }
+}
+
+impl RegistryWriteApi for MemRegistry {
+    fn write_value(
+        &self,
+        hive: RegHive,
+        path: &str,
+        name: &str,
+        value: &RegValue,
+    ) -> Result<(), CoreError> {
+        let mut st = self.lock();
+        if !st.keys.contains(&(hive, path.to_ascii_lowercase())) {
+            return Err(CoreError::Os {
+                api: "RegOpenKeyExW",
+                code: 2,
+            });
+        }
+        st.values.insert(value_key(hive, path, name), value.clone());
+        Ok(())
+    }
+
+    fn delete_value(&self, hive: RegHive, path: &str, name: &str) -> Result<(), CoreError> {
+        self.lock().values.remove(&value_key(hive, path, name));
+        Ok(())
     }
 }
 
@@ -195,6 +294,57 @@ mod tests {
         assert_eq!(
             RegValue::from_raw(7, &multi).unwrap(),
             RegValue::MultiString(vec!["a".into(), "bc".into()])
+        );
+    }
+
+    #[test]
+    fn raw_roundtrip() {
+        for v in [
+            RegValue::Dword(0xDEAD_BEEF),
+            RegValue::Qword(u64::MAX),
+            RegValue::String("Привіт".into()),
+            RegValue::ExpandString("%SystemRoot%".into()),
+            RegValue::MultiString(vec!["a".into(), "bc".into()]),
+            RegValue::Binary(vec![1, 2, 3]),
+        ] {
+            let (ty, bytes) = v.to_raw();
+            assert_eq!(RegValue::from_raw(ty, &bytes).unwrap(), v);
+        }
+        assert_eq!(RegValue::Dword(1).type_name(), "REG_DWORD");
+    }
+
+    #[test]
+    fn mem_registry_writes_only_into_existing_keys() {
+        let mut r = MemRegistry::new();
+        r.create_key(RegHive::CurrentUser, r"Software\Exists");
+        r.write_value(
+            RegHive::CurrentUser,
+            r"software\exists",
+            "V",
+            &RegValue::Dword(3),
+        )
+        .unwrap();
+        assert_eq!(
+            r.read_value(RegHive::CurrentUser, r"Software\Exists", "v")
+                .unwrap(),
+            Some(RegValue::Dword(3))
+        );
+        assert!(r
+            .write_value(
+                RegHive::CurrentUser,
+                r"Software\Missing",
+                "V",
+                &RegValue::Dword(1)
+            )
+            .is_err());
+        r.delete_value(RegHive::CurrentUser, r"Software\Exists", "V")
+            .unwrap();
+        r.delete_value(RegHive::CurrentUser, r"Software\Exists", "V")
+            .unwrap();
+        assert_eq!(
+            r.read_value(RegHive::CurrentUser, r"Software\Exists", "V")
+                .unwrap(),
+            None
         );
     }
 

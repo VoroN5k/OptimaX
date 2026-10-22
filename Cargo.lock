@@ -269,6 +269,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "optimax-tweaks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "optimax-core",
+ "optimax-diagnosis",
+ "optimax-frametime",
+ "optimax-metrics",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "windows",
+]
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -23,16 +23,7 @@ const DRIVER_AGING_DAYS: i64 = 180;
 const BIOS_OLD_DAYS: i64 = 730;
 
 /// GUID стандартних схем живлення Windows.
-pub mod power_guids {
-    /// «Економія енергії»
-    pub const POWER_SAVER: &str = "a1841308-3541-4fab-bc81-f71556f20b4a";
-    /// «Збалансована»
-    pub const BALANCED: &str = "381b4222-f694-41f0-9685-ff5bb260df2e";
-    /// «Висока продуктивність»
-    pub const HIGH_PERFORMANCE: &str = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
-    /// «Максимальна продуктивність»
-    pub const ULTIMATE: &str = "e9a42b02-d5df-448d-aa00-03f14749eb61";
-}
+pub use optimax_core::power::guids as power_guids;
 
 /// Будівник знахідки аудиту: ключі тексту `audit.<id>.title` / `.detail` / `.advice`.
 fn draft(id: &'static str, category: Category, impact: Impact, confidence: u8) -> FindingBuilder {

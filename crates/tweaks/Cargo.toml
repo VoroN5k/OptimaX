@@ -1,0 +1,27 @@
+[package]
+name = "optimax-tweaks"
+description = "Застосування змін із журналом і відкатом, точка відновлення Windows, A/B-тестування ефекту"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+optimax-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Restore"] }
+
+[dev-dependencies]
+anyhow.workspace = true
+optimax-metrics.workspace = true
+optimax-frametime.workspace = true
+optimax-diagnosis.workspace = true
+
+[lints]
+workspace = true

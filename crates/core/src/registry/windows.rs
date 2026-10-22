@@ -1,15 +1,16 @@
 //! Реалізація [`RegistryApi`] через WinAPI.
 #![allow(unsafe_code)]
 
-use super::{RegHive, RegValue, RegistryApi};
+use super::{RegHive, RegValue, RegistryApi, RegistryWriteApi};
 use crate::error::CoreError;
 use windows::core::HSTRING;
 use windows::Win32::Foundation::{
     ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS, WIN32_ERROR,
 };
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE,
-    KEY_READ, KEY_WOW64_64KEY, REG_VALUE_TYPE,
+    RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
+    HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_READ, KEY_SET_VALUE,
+    KEY_WOW64_64KEY, REG_SAM_FLAGS, REG_VALUE_TYPE,
 };
 
 /// Реєстр Windows (64-бітне представлення).
@@ -98,5 +99,64 @@ impl RegistryApi for WinRegistry {
         Err(CoreError::InvalidData(format!(
             "значення {name} постійно змінює розмір"
         )))
+    }
+}
+
+fn root(hive: RegHive) -> HKEY {
+    match hive {
+        RegHive::LocalMachine => HKEY_LOCAL_MACHINE,
+        RegHive::CurrentUser => HKEY_CURRENT_USER,
+    }
+}
+
+/// Відкриває **наявний** ключ із заданими правами (ключі не створюються).
+fn open_existing(hive: RegHive, path: &str, access: REG_SAM_FLAGS) -> Result<KeyGuard, CoreError> {
+    let path_w = HSTRING::from(path);
+    let mut raw_key = HKEY::default();
+    // SAFETY: HSTRING нуль-термінований, `raw_key` — валідний вихідний вказівник.
+    let status = unsafe {
+        RegOpenKeyExW(
+            root(hive),
+            &path_w,
+            Some(0),
+            access | KEY_WOW64_64KEY,
+            &mut raw_key,
+        )
+    };
+    check(status, "RegOpenKeyExW")?;
+    Ok(KeyGuard(raw_key))
+}
+
+impl RegistryWriteApi for WinRegistry {
+    fn write_value(
+        &self,
+        hive: RegHive,
+        path: &str,
+        name: &str,
+        value: &RegValue,
+    ) -> Result<(), CoreError> {
+        let key = open_existing(hive, path, KEY_SET_VALUE | KEY_QUERY_VALUE)?;
+        let (ty, bytes) = value.to_raw();
+        let name_w = HSTRING::from(name);
+        // SAFETY: ключ відкритий з KEY_SET_VALUE, буфер `bytes` живий на час виклику.
+        let status =
+            unsafe { RegSetValueExW(key.0, &name_w, None, REG_VALUE_TYPE(ty), Some(&bytes)) };
+        check(status, "RegSetValueExW")
+    }
+
+    fn delete_value(&self, hive: RegHive, path: &str, name: &str) -> Result<(), CoreError> {
+        let key = match open_existing(hive, path, KEY_SET_VALUE) {
+            Ok(k) => k,
+            // Немає ключа — немає й значення.
+            Err(CoreError::Os { code, .. }) if code == ERROR_FILE_NOT_FOUND.0 => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        let name_w = HSTRING::from(name);
+        // SAFETY: ключ відкритий з KEY_SET_VALUE, ім'я нуль-терміноване.
+        let status = unsafe { RegDeleteValueW(key.0, &name_w) };
+        if status == ERROR_FILE_NOT_FOUND {
+            return Ok(());
+        }
+        check(status, "RegDeleteValueW")
     }
 }

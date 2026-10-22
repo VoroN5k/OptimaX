@@ -6,6 +6,7 @@ members = [
     "crates/audit",
     "crates/frametime",
     "crates/diagnosis",
+    "crates/tweaks",
 ]
 
 [workspace.package]
@@ -21,6 +22,7 @@ optimax-metrics = { path = "crates/metrics" }
 optimax-audit = { path = "crates/audit" }
 optimax-frametime = { path = "crates/frametime" }
 optimax-diagnosis = { path = "crates/diagnosis" }
+optimax-tweaks = { path = "crates/tweaks" }
 
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

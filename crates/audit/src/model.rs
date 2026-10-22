@@ -238,18 +238,7 @@ pub struct HagsInfo {
     pub adapters: Option<Vec<HagsAdapter>>,
 }
 
-/// Форматує GUID із `u128` у канонічний вигляд у нижньому регістрі.
-pub fn format_guid(v: u128) -> String {
-    let h = format!("{v:032x}");
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
-}
+pub use optimax_core::power::format_guid;
 
 #[cfg(test)]
 mod tests {

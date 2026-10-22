@@ -26,6 +26,15 @@
   "audit.ev.pcie_gen": "Покоління PCIe (зараз / максимум)",
   "audit.ev.of": "{cur} / {max}",
   "audit.ev.guid": "GUID схеми",
+  "audit.ev.hags_registry": "Налаштування в реєстрі (HwSchMode)",
+  "audit.ev.hags_reg_on": "увімкнено (2)",
+  "audit.ev.hags_reg_off": "вимкнено (1)",
+  "audit.ev.hags_reg_unset": "не задано",
+  "audit.ev.hags_reg_unexpected": "неочікуване значення ({value})",
+  "audit.ev.adapter": "Адаптер {name}",
+  "audit.ev.hags_active": "HAGS діє",
+  "audit.ev.hags_inactive": "підтримується, але не діє",
+  "audit.ev.hags_no_support": "HAGS не підтримується",
 
   "audit.ram.below_rated.title": "Пам'ять працює нижче своєї частоти: {configured} замість {rated} MT/s",
   "audit.ram.below_rated.detail": "Модулі зараз працюють на {configured} MT/s, хоча самі повідомляють про підтримку {rated} MT/s. Нижча частота пам'яті найбільше б'є по 1% low у процесорозалежних іграх.",
@@ -112,6 +121,15 @@
   "audit.os.hags_off.title": "Апаратне планування GPU (HAGS) вимкнено",
   "audit.os.hags_off.detail": "Вплив на FPS залежить від гри і зазвичай малий. Але генерація кадрів DLSS 3 (RTX 40 і новіші) працює лише з увімкненим HAGS.",
   "audit.os.hags_off.advice": "Параметри → Система → Дисплей → Графіка → Додаткові параметри графіки. Потрібне перезавантаження.",
+
+  "audit.os.hags_unsupported.title": "Апаратне планування GPU (HAGS) не підтримується",
+  "audit.os.hags_unsupported.detail": "Жоден адаптер не повідомляє про підтримку HAGS: відеокарта або драйвер її не мають. Нічого вмикати не потрібно.",
+
+  "audit.os.hags_pending_on.title": "HAGS увімкнено в налаштуваннях, але ще не діє",
+  "audit.os.hags_pending_on.detail": "У реєстрі HAGS увімкнено, але драйвер повідомляє, що зараз він не працює. Зміна набуде чинності після перезавантаження ПК.",
+
+  "audit.os.hags_pending_off.title": "HAGS вимкнено в налаштуваннях, але ще діє",
+  "audit.os.hags_pending_off.detail": "У реєстрі HAGS вимкнено, але драйвер повідомляє, що зараз він працює. Зміна набуде чинності після перезавантаження ПК.",
 
   "audit.os.hags_default.title": "HAGS: значення не задане явно",
   "audit.os.hags_default.detail": "Діє типове значення драйвера й Windows. Поточний стан видно в Параметрах → Система → Дисплей → Графіка.",

@@ -23,6 +23,8 @@ windows = { workspace = true, features = [
     "Win32_System_Power",
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_Properties",
+    "Win32_Devices_Display",
+    "Wdk_Graphics_Direct3D",
 ] }
 
 [dev-dependencies]

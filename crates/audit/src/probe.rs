@@ -1,6 +1,8 @@
 //! Трейт проби системи та читання налаштувань Windows із реєстру.
 
-use crate::model::{DisplayInfo, FirmwareInfo, GameModeState, GpuAdapter, HagsState, PowerPlan};
+use crate::model::{
+    DisplayInfo, FirmwareInfo, GameModeState, GpuAdapter, HagsInfo, HagsState, PowerPlan,
+};
 use optimax_core::registry::{RegHive, RegValue, RegistryApi};
 use optimax_core::CoreError;
 
@@ -25,8 +27,8 @@ pub trait SystemProbe {
     fn power_plan(&self) -> Result<PowerPlan, CoreError>;
     /// Ігровий режим.
     fn game_mode(&self) -> Result<GameModeState, CoreError>;
-    /// HAGS.
-    fn hags(&self) -> Result<HagsState, CoreError>;
+    /// HAGS: реєстр + реальний стан адаптерів.
+    fn hags(&self) -> Result<HagsInfo, CoreError>;
 }
 
 fn expect_dword(value: Option<RegValue>, name: &str) -> Result<Option<u32>, CoreError> {

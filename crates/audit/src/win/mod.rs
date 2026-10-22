@@ -4,9 +4,10 @@
 mod devices;
 mod display;
 mod firmware;
+mod hags;
 mod power;
 
-use crate::model::{DisplayInfo, FirmwareInfo, GameModeState, GpuAdapter, HagsState, PowerPlan};
+use crate::model::{DisplayInfo, FirmwareInfo, GameModeState, GpuAdapter, HagsInfo, PowerPlan};
 use crate::probe::{read_game_mode, read_hags, SystemProbe};
 use nvml_wrapper::Nvml;
 use optimax_core::registry::WinRegistry;
@@ -55,7 +56,17 @@ impl SystemProbe for WindowsProbe {
         read_game_mode(&self.registry)
     }
 
-    fn hags(&self) -> Result<HagsState, CoreError> {
-        read_hags(&self.registry)
+    fn hags(&self) -> Result<HagsInfo, CoreError> {
+        let adapters = match hags::adapters() {
+            Ok(a) => Some(a),
+            Err(e) => {
+                tracing::warn!("стан HAGS від драйвера недоступний: {e}");
+                None
+            }
+        };
+        Ok(HagsInfo {
+            registry: read_hags(&self.registry)?,
+            adapters,
+        })
     }
 }

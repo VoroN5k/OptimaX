@@ -2,8 +2,8 @@
 
 use crate::gpu_info::nvidia_version;
 use crate::model::{
-    BiosInfo, DisplayInfo, GameModeState, GpuAdapter, GpuVendor, HagsState, MemoryModule,
-    MemoryType, PowerPlan, RebarState,
+    BiosInfo, DisplayInfo, GameModeState, GpuAdapter, GpuVendor, HagsAdapter, HagsInfo, HagsState,
+    MemoryModule, MemoryType, PowerPlan, RebarState,
 };
 use optimax_core::{Category, CivilDate, Confidence, Evidence, Finding, Impact, Text};
 
@@ -335,17 +335,68 @@ pub fn check_game_mode(state: GameModeState) -> Finding {
     .build()
 }
 
-/// Апаратне планування GPU (HAGS).
-pub fn check_hags(state: HagsState) -> Finding {
-    match state {
-        HagsState::Enabled => Draft::new("os.hags_on", Category::Os, Impact::Info, 90),
-        HagsState::Disabled => Draft::new("os.hags_off", Category::Os, Impact::Info, 90).advice(),
-        HagsState::NotSet => Draft::new("os.hags_default", Category::Os, Impact::Info, 60),
-        HagsState::Unexpected(v) => {
-            Draft::new("os.hags_unexpected", Category::Os, Impact::Info, 50).arg("value", v)
+/// Апаратне планування GPU (HAGS). Реальний стан від драйвера має пріоритет; реєстр — запасне
+/// джерело й ознака того, що зміна ще чекає перезавантаження.
+pub fn check_hags(info: &HagsInfo) -> Finding {
+    let registry = match info.registry {
+        HagsState::Enabled => Text::new("audit.ev.hags_reg_on"),
+        HagsState::Disabled => Text::new("audit.ev.hags_reg_off"),
+        HagsState::NotSet => Text::new("audit.ev.hags_reg_unset"),
+        HagsState::Unexpected(v) => Text::new("audit.ev.hags_reg_unexpected").arg("value", v),
+    };
+
+    let Some(adapters) = &info.adapters else {
+        let draft = match info.registry {
+            HagsState::Enabled => Draft::new("os.hags_on", Category::Os, Impact::Info, 90),
+            HagsState::Disabled => {
+                Draft::new("os.hags_off", Category::Os, Impact::Info, 90).advice()
+            }
+            HagsState::NotSet => Draft::new("os.hags_default", Category::Os, Impact::Info, 60),
+            HagsState::Unexpected(v) => {
+                Draft::new("os.hags_unexpected", Category::Os, Impact::Info, 50).arg("value", v)
+            }
+        };
+        return draft
+            .evidence(Text::new("audit.ev.hags_registry"), registry)
+            .build();
+    };
+
+    let supported: Vec<&HagsAdapter> = adapters.iter().filter(|a| a.supported).collect();
+    let active = supported.iter().any(|a| a.enabled);
+    let mut draft = if supported.is_empty() {
+        Draft::new("os.hags_unsupported", Category::Os, Impact::Info, 90)
+    } else {
+        match (active, info.registry) {
+            (false, HagsState::Enabled) => {
+                Draft::new("os.hags_pending_on", Category::Os, Impact::Info, 90)
+            }
+            (true, HagsState::Disabled) => {
+                Draft::new("os.hags_pending_off", Category::Os, Impact::Info, 90)
+            }
+            (true, _) => Draft::new("os.hags_on", Category::Os, Impact::Info, 95),
+            (false, _) => Draft::new("os.hags_off", Category::Os, Impact::Info, 95).advice(),
         }
     }
-    .build()
+    .evidence(Text::new("audit.ev.hags_registry"), registry);
+
+    // Показуємо адаптери з підтримкою HAGS; якщо таких немає — усі, щоб було видно чому.
+    let shown: Vec<&HagsAdapter> = if supported.is_empty() {
+        adapters.iter().collect()
+    } else {
+        supported
+    };
+    for a in shown {
+        let state = match (a.supported, a.enabled) {
+            (true, true) => "audit.ev.hags_active",
+            (true, false) => "audit.ev.hags_inactive",
+            (false, _) => "audit.ev.hags_no_support",
+        };
+        draft = draft.evidence(
+            Text::new("audit.ev.adapter").arg("name", &a.name),
+            Text::new(state),
+        );
+    }
+    draft.build()
 }
 
 #[cfg(test)]
@@ -585,14 +636,70 @@ mod tests {
         ] {
             assert_eq!(check_game_mode(s).impact, Impact::Info);
         }
-        for s in [
+    }
+
+    fn hags(registry: HagsState, adapters: Option<Vec<HagsAdapter>>) -> Finding {
+        check_hags(&HagsInfo { registry, adapters })
+    }
+
+    fn adapter(name: &str, supported: bool, enabled: bool) -> HagsAdapter {
+        HagsAdapter {
+            name: name.into(),
+            supported,
+            enabled,
+            enabled_by_default: false,
+        }
+    }
+
+    #[test]
+    fn hags_registry_fallback() {
+        let ids: Vec<String> = [
             HagsState::Enabled,
             HagsState::Disabled,
             HagsState::NotSet,
             HagsState::Unexpected(7),
-        ] {
-            assert_eq!(check_hags(s).impact, Impact::Info);
-        }
-        assert!(check_hags(HagsState::Disabled).advice.is_some());
+        ]
+        .into_iter()
+        .map(|s| hags(s, None).id)
+        .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "os.hags_on",
+                "os.hags_off",
+                "os.hags_default",
+                "os.hags_unexpected"
+            ]
+        );
+        assert!(hags(HagsState::Disabled, None).advice.is_some());
+    }
+
+    #[test]
+    fn hags_runtime_state_wins_over_unset_registry() {
+        let basic = adapter("Microsoft Basic Render Driver", false, false);
+        let nv = |enabled| adapter("NVIDIA GeForce RTX 4070 SUPER", true, enabled);
+
+        let f = hags(HagsState::NotSet, Some(vec![basic.clone(), nv(true)]));
+        assert_eq!(f.id, "os.hags_on");
+        assert_eq!(f.impact, Impact::Info);
+        // Реєстр + лише адаптер із підтримкою.
+        assert_eq!(f.evidence.len(), 2);
+
+        let f = hags(HagsState::NotSet, Some(vec![nv(false)]));
+        assert_eq!(f.id, "os.hags_off");
+        assert!(f.advice.is_some());
+
+        assert_eq!(
+            hags(HagsState::Enabled, Some(vec![nv(false)])).id,
+            "os.hags_pending_on"
+        );
+        assert_eq!(
+            hags(HagsState::Disabled, Some(vec![nv(true)])).id,
+            "os.hags_pending_off"
+        );
+
+        let f = hags(HagsState::NotSet, Some(vec![basic]));
+        assert_eq!(f.id, "os.hags_unsupported");
+        assert_eq!(f.evidence.len(), 2);
     }
 }

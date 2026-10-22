@@ -118,7 +118,7 @@ pub fn run_audit(probe: &dyn SystemProbe, today: CivilDate) -> AuditReport {
     );
     handle(
         CheckId::Hags,
-        probe.hags().map(|s| vec![rules::check_hags(s)]),
+        probe.hags().map(|h| vec![rules::check_hags(&h)]),
     );
 
     // Стабільне сортування: спершу вплив, потім впевненість; порядок перевірок зберігається.
@@ -202,8 +202,11 @@ mod tests {
         fn game_mode(&self) -> Result<GameModeState, CoreError> {
             Ok(GameModeState::Disabled)
         }
-        fn hags(&self) -> Result<HagsState, CoreError> {
-            Ok(HagsState::Disabled)
+        fn hags(&self) -> Result<HagsInfo, CoreError> {
+            Ok(HagsInfo {
+                registry: HagsState::Disabled,
+                adapters: None,
+            })
         }
     }
 
@@ -276,9 +279,63 @@ mod tests {
         let variants = [
             rules::check_game_mode(GameModeState::Enabled),
             rules::check_game_mode(GameModeState::Default),
-            rules::check_hags(HagsState::Enabled),
-            rules::check_hags(HagsState::NotSet),
-            rules::check_hags(HagsState::Unexpected(3)),
+            rules::check_hags(&HagsInfo {
+                registry: HagsState::Enabled,
+                adapters: None,
+            }),
+            rules::check_hags(&HagsInfo {
+                registry: HagsState::NotSet,
+                adapters: None,
+            }),
+            rules::check_hags(&HagsInfo {
+                registry: HagsState::Unexpected(3),
+                adapters: None,
+            }),
+            rules::check_hags(&HagsInfo {
+                registry: HagsState::NotSet,
+                adapters: Some(vec![HagsAdapter {
+                    name: "A".into(),
+                    supported: true,
+                    enabled: true,
+                    enabled_by_default: true,
+                }]),
+            }),
+            rules::check_hags(&HagsInfo {
+                registry: HagsState::NotSet,
+                adapters: Some(vec![HagsAdapter {
+                    name: "A".into(),
+                    supported: true,
+                    enabled: false,
+                    enabled_by_default: false,
+                }]),
+            }),
+            rules::check_hags(&HagsInfo {
+                registry: HagsState::Enabled,
+                adapters: Some(vec![HagsAdapter {
+                    name: "A".into(),
+                    supported: true,
+                    enabled: false,
+                    enabled_by_default: false,
+                }]),
+            }),
+            rules::check_hags(&HagsInfo {
+                registry: HagsState::Disabled,
+                adapters: Some(vec![HagsAdapter {
+                    name: "A".into(),
+                    supported: true,
+                    enabled: true,
+                    enabled_by_default: false,
+                }]),
+            }),
+            rules::check_hags(&HagsInfo {
+                registry: HagsState::NotSet,
+                adapters: Some(vec![HagsAdapter {
+                    name: "A".into(),
+                    supported: false,
+                    enabled: false,
+                    enabled_by_default: false,
+                }]),
+            }),
             rules::check_power_plan(&PowerPlan {
                 guid: power_guids::BALANCED.into(),
                 name: None,

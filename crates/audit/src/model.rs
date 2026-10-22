@@ -216,6 +216,28 @@ pub enum HagsState {
     Unexpected(u32),
 }
 
+/// Реальний стан HAGS одного адаптера за даними драйвера (`D3DKMT_WDDM_2_7_CAPS`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HagsAdapter {
+    /// Назва адаптера.
+    pub name: String,
+    /// Драйвер підтримує HAGS.
+    pub supported: bool,
+    /// HAGS діє зараз (у поточному сеансі, після останнього перезавантаження).
+    pub enabled: bool,
+    /// Драйвер вмикає HAGS за замовчуванням.
+    pub enabled_by_default: bool,
+}
+
+/// Повна картина HAGS: налаштування в реєстрі + що реально діє.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HagsInfo {
+    /// Значення `HwSchMode` у реєстрі.
+    pub registry: HagsState,
+    /// Стан за адаптерами; `None`, якщо запит до драйвера недоступний.
+    pub adapters: Option<Vec<HagsAdapter>>,
+}
+
 /// Форматує GUID із `u128` у канонічний вигляд у нижньому регістрі.
 pub fn format_guid(v: u128) -> String {
     let h = format!("{v:032x}");

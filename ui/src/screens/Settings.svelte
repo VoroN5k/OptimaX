@@ -42,6 +42,13 @@
         </div>
         <Toggle label={tk("ui.settings.economy")} bind:checked={ui.settings.economy} onchange={() => save()} />
       </div>
+      <div class="row">
+        <div>
+          <strong>{tk("ui.settings.record_sound")}</strong>
+          <p class="small muted">{tk("ui.settings.record_sound_hint")}</p>
+        </div>
+        <Toggle label={tk("ui.settings.record_sound")} bind:checked={ui.settings.record_sound} onchange={() => save()} />
+      </div>
       {#if dotsStats}
         <p class="small dim mono">
           {tk("ui.settings.anim_stats", { dots: dotsStats.dots, ms: dotsStats.avgFrameMs.toFixed(2), fps: dotsStats.fps.toFixed(0) })}

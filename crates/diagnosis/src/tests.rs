@@ -558,6 +558,8 @@ fn timeline_from_recording_sorts_filters_and_aligns() {
         skipped_lines: 0,
         presentmon_messages: vec![],
         cancelled: false,
+        segments: vec![],
+        end_reason: optimax_frametime::EndReason::Completed,
     };
     let tl = Timeline::from_recording(&rec).unwrap();
     assert_eq!(tl.game_pid, 100);
@@ -589,9 +591,52 @@ fn empty_recording_is_insufficient() {
         skipped_lines: 0,
         presentmon_messages: vec![],
         cancelled: false,
+        segments: vec![],
+        end_reason: optimax_frametime::EndReason::Completed,
     };
     assert_eq!(
         diagnose(&rec, &Context::default()).bottleneck,
         Bottleneck::InsufficientData
     );
+}
+
+#[test]
+fn frames_outside_counted_segments_are_ignored() {
+    // 3 с у меню/Alt+Tab (довгі кадри), потім 20 с гри; зараховано лише гру.
+    let freq = 1000;
+    let mut frames = Vec::new();
+    let mut t = 0i64;
+    for _ in 0..30 {
+        t += 100;
+        frames.push(frame(100, "0xA", "game.exe", t, 100.0)); // 10 FPS у меню
+    }
+    let game_start = t;
+    for _ in 0..2500 {
+        t += 8;
+        frames.push(frame(100, "0xA", "game.exe", t, 8.0));
+    }
+    let snaps: Vec<Snapshot> = (0..115).map(|i| snapshot(i * 200, vec![])).collect();
+    let rec = Recording {
+        target: Target::ProcessName("game.exe".into()),
+        qpc_frequency: freq,
+        start_qpc: 0,
+        frames,
+        snapshots: snaps,
+        skipped_lines: 0,
+        presentmon_messages: vec![],
+        cancelled: false,
+        segments: vec![(game_start + 1, t + 1)],
+        end_reason: optimax_frametime::EndReason::Completed,
+    };
+    let tl = Timeline::from_recording(&rec).unwrap();
+    assert_eq!(tl.frames.len(), 2500);
+    assert!(tl.samples.iter().all(|s| s.t_ms >= game_start as f64));
+    let d = diagnose(&rec, &Context::default());
+    let s = d.stats.unwrap();
+    assert!(
+        (s.avg_fps - 125.0).abs() < 0.5,
+        "меню не тягне FPS вниз: {}",
+        s.avg_fps
+    );
+    assert!(s.low_1pct_fps > 100.0);
 }

@@ -26,6 +26,14 @@ for (const s of ["laptop", "network", "cleanup", "apps", "startup", "appearance"
 for (const k of ["power_scheme", "process_priority", "service", "standby_list"]) used.add(`ui.target.${k}`);
 for (const k of ["pending", "applied", "performed", "rolled_back", "failed"]) used.add(`ui.backups.state.${k}`);
 for (const k of ["WSearch", "SysMain"]) used.add(`ui.games.service.${k}`);
+for (const k of ["waiting_for_game", "waiting_for_hotkey", "warmup", "recording", "paused", "done"]) {
+  used.add(`ui.rec.phase.${k}`);
+  used.add(`ui.rec.hint.${k}`);
+}
+for (const k of ["completed", "hotkey", "game_exited", "cancelled", "wait_timeout"]) {
+  used.add(`ui.rec.end.${k}`);
+  used.add(`ui.rec.not_started.${k}`);
+}
 
 const missing = [...used].filter((k) => !(k in catalog)).sort();
 if (missing.length) {

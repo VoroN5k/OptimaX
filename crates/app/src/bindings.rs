@@ -15,12 +15,43 @@ fn out_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ui/src/lib/bindings")
 }
 
+/// Вміст без різниці в кінцях рядків (у робочій копії Windows вони можуть бути CRLF).
+fn normalized(path: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.replace("\r\n", "\n"))
+}
+
+/// Переносить згенероване з `tmp` у `dir`: пише лише змінені файли й видаляє застарілі,
+/// щоб не «змінювати» в git файли з тим самим вмістом.
+fn sync_dir(tmp: &std::path::Path, dir: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let fresh: Vec<_> = std::fs::read_dir(tmp)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    for src in &fresh {
+        let Some(name) = src.file_name() else {
+            continue;
+        };
+        let dst = dir.join(name);
+        if normalized(src) != normalized(&dst) {
+            std::fs::copy(src, &dst)?;
+        }
+    }
+    for old in std::fs::read_dir(dir)?.filter_map(|e| e.ok().map(|e| e.path())) {
+        if !fresh.iter().any(|f| f.file_name() == old.file_name()) {
+            std::fs::remove_file(old)?;
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn export_typescript_bindings() {
     let dir = out_dir();
-    // Перегенеровуємо з нуля, щоб не лишалося файлів від видалених типів.
-    let _ = std::fs::remove_dir_all(&dir);
-    let cfg = Config::new().with_large_int("number").with_out_dir(&dir);
+    let tmp = std::env::temp_dir().join(format!("optimax-bindings-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let cfg = Config::new().with_large_int("number").with_out_dir(&tmp);
     macro_rules! export {
         ($($t:ty),* $(,)?) => {$(
             <$t>::export_all(&cfg).unwrap_or_else(|e| panic!("{}: {e}", stringify!($t)));
@@ -36,7 +67,7 @@ fn export_typescript_bindings() {
         HardwareInfo,
         optimax_metrics::Snapshot,
         ProcessEntry,
-        RecordingProgress,
+        optimax_frametime::RecordProgress,
         DiagnosisResult,
         PowerSchemes,
         UiDesired,
@@ -50,6 +81,8 @@ fn export_typescript_bindings() {
         ProfilePreview,
         GameModeEvent,
     );
+    sync_dir(&tmp, &dir).unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
     assert!(dir.join("Finding.ts").is_file());
     assert!(dir.join("Text.ts").is_file());
 }

@@ -28,8 +28,8 @@ pub const SESSION_NAME: &str = "OptimaX";
 
 const EMBEDDED: &[u8] = include_bytes!("../bin/PresentMon-2.6.0-x64.exe");
 
-/// Найдовший дозволений запис.
-pub const MAX_CAPTURE: Duration = Duration::from_secs(600);
+/// Найдовша робота PresentMon (очікування гри + запис).
+pub const MAX_CAPTURE: Duration = Duration::from_secs(45 * 60);
 
 /// SHA-256 у нижньому регістрі hex.
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -84,7 +84,9 @@ impl Target {
 }
 
 /// Аргументи командного рядка для запису (чиста функція — легко перевірити тестом).
-pub fn capture_args(target: &Target, duration: Duration) -> Vec<String> {
+/// `terminate_on_exit` — завершитись разом із грою (лише коли гра вже запущена: у режимах
+/// очікування гри ще може не бути, тоді вихід відстежує OptimaX сам).
+pub fn capture_args(target: &Target, duration: Duration, terminate_on_exit: bool) -> Vec<String> {
     let secs = duration
         .clamp(Duration::from_secs(1), MAX_CAPTURE)
         .as_secs();
@@ -100,11 +102,13 @@ pub fn capture_args(target: &Target, duration: Duration) -> Vec<String> {
             "--session_name",
             SESSION_NAME,
             "--stop_existing_session",
-            "--terminate_on_proc_exit",
-            "--timed",
         ]
         .map(String::from),
     );
+    if terminate_on_exit {
+        args.push("--terminate_on_proc_exit".into());
+    }
+    args.push("--timed".into());
     args.push(secs.to_string());
     args.push("--terminate_after_timed".into());
     args
@@ -228,10 +232,13 @@ impl BundledPresentMon {
         &self,
         target: &Target,
         duration: Duration,
+        terminate_on_exit: bool,
     ) -> Result<Child, FrametimeError> {
         target.validate()?;
         let lock = self.verified_handle()?;
-        let child = self.command(&capture_args(target, duration)).spawn()?;
+        let child = self
+            .command(&capture_args(target, duration, terminate_on_exit))
+            .spawn()?;
         // Образ уже завантажено системою — далі файл змінити неможливо.
         drop(lock);
         Ok(child)
@@ -294,16 +301,20 @@ mod tests {
         let a = capture_args(
             &Target::ProcessName("game.exe".into()),
             Duration::from_secs(30),
+            true,
         );
         assert_eq!(&a[..2], &["--process_name", "game.exe"]);
         assert!(a.contains(&"--qpc_time".to_string()));
         assert!(a.contains(&"--output_stdout".to_string()));
+        assert!(a.contains(&"--terminate_on_proc_exit".to_string()));
         let timed = a.iter().position(|s| s == "--timed").unwrap();
         assert_eq!(a[timed + 1], "30");
-        let a = capture_args(&Target::ProcessId(42), Duration::from_secs(100_000));
+        // У режимах очікування гри ще може не бути — PresentMon не має завершуватись сам.
+        let a = capture_args(&Target::ProcessId(42), Duration::from_secs(100_000), false);
         assert_eq!(&a[..2], &["--process_id", "42"]);
+        assert!(!a.contains(&"--terminate_on_proc_exit".to_string()));
         let timed = a.iter().position(|s| s == "--timed").unwrap();
-        assert_eq!(a[timed + 1], "600");
+        assert_eq!(a[timed + 1], "2700");
     }
 
     #[test]

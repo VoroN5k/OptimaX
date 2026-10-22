@@ -1,0 +1,50 @@
+# --- Rust ---
+# Артефакти збірки (усі профілі й таргети, зокрема *.pdb, *.exe).
+/target/
+# Резервні копії rustfmt.
+**/*.rs.bk
+# Профілювання / покриття.
+*.profraw
+*.profdata
+/coverage/
+# Cargo.lock НЕ ігноруємо: це застосунок, збірки мають бути відтворюваними.
+
+# --- Tauri / фронтенд (етап 5) ---
+/ui/node_modules/
+/ui/dist/
+/ui/.vite/
+/crates/app/target/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+
+# --- Локальні дані та секрети ---
+.env
+.env.*
+!.env.example
+*.log
+# Сертифікати й ключі підпису збірок.
+*.pfx
+*.p12
+*.key
+
+# --- IDE ---
+/.idea/
+*.iml
+/.vscode/
+!/.vscode/extensions.json
+*.code-workspace
+*.swp
+*~
+
+# --- Claude Code (локальні налаштування користувача) ---
+/.claude/settings.local.json
+
+# --- ОС ---
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store

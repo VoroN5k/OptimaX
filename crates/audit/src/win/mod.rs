@@ -1,0 +1,61 @@
+//! Реалізація [`SystemProbe`] для Windows. Лише читання, жодних змін у системі.
+#![allow(unsafe_code)]
+
+mod devices;
+mod display;
+mod firmware;
+mod power;
+
+use crate::model::{DisplayInfo, FirmwareInfo, GameModeState, GpuAdapter, HagsState, PowerPlan};
+use crate::probe::{read_game_mode, read_hags, SystemProbe};
+use nvml_wrapper::Nvml;
+use optimax_core::registry::WinRegistry;
+use optimax_core::CoreError;
+
+/// Проба реальної системи Windows.
+pub struct WindowsProbe {
+    registry: WinRegistry,
+    nvml: Option<Nvml>,
+}
+
+impl WindowsProbe {
+    /// Створює пробу. NVML (для Resizable BAR і VRAM на NVIDIA) відкривається, якщо доступний.
+    pub fn new() -> Self {
+        Self {
+            registry: WinRegistry,
+            nvml: optimax_metrics::open_nvml(),
+        }
+    }
+}
+
+impl Default for WindowsProbe {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SystemProbe for WindowsProbe {
+    fn firmware(&self) -> Result<FirmwareInfo, CoreError> {
+        firmware::read()
+    }
+
+    fn displays(&self) -> Result<Vec<DisplayInfo>, CoreError> {
+        display::read()
+    }
+
+    fn gpus(&self) -> Result<Vec<GpuAdapter>, CoreError> {
+        devices::read(self.nvml.as_ref())
+    }
+
+    fn power_plan(&self) -> Result<PowerPlan, CoreError> {
+        power::read()
+    }
+
+    fn game_mode(&self) -> Result<GameModeState, CoreError> {
+        read_game_mode(&self.registry)
+    }
+
+    fn hags(&self) -> Result<HagsState, CoreError> {
+        read_hags(&self.registry)
+    }
+}

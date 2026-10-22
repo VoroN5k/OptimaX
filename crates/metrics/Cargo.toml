@@ -1,0 +1,22 @@
+[package]
+name = "optimax-metrics"
+description = "Легкий збір системних метрик (CPU по ядрах, RAM, диск, GPU) для OptimaX"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+optimax-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+sysinfo.workspace = true
+nvml-wrapper.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+
+[lints]
+workspace = true

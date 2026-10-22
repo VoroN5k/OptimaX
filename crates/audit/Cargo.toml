@@ -1,0 +1,32 @@
+[package]
+name = "optimax-audit"
+description = "Аудит конфігурації ігрового ПК (RAM, монітор, PCIe, драйвер, BIOS, живлення) для OptimaX"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+optimax-core.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+optimax-metrics.workspace = true
+nvml-wrapper.workspace = true
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Power",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Properties",
+] }
+
+[dev-dependencies]
+anyhow.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,121 @@
+{
+  "impact.high": "Високий вплив",
+  "impact.moderate": "Помірний вплив",
+  "impact.info": "Інформаційно",
+  "value.raw": "{v}",
+  "value.unknown": "невідомо",
+  "value.mts": "{v} MT/s",
+
+  "audit.title": "Аудит конфігурації",
+  "audit.nothing_to_fix": "Помітних втрат у конфігурації не знайдено. Покращувати тут нічого — і це теж результат.",
+  "audit.confidence": "впевненість {v}%",
+  "audit.skipped": "Не вдалося перевірити «{check}»: {error}",
+  "audit.check.firmware": "Пам'ять і BIOS",
+  "audit.check.displays": "Монітори",
+  "audit.check.gpus": "Відеокарта",
+  "audit.check.power_plan": "Схема живлення",
+  "audit.check.game_mode": "Ігровий режим",
+  "audit.check.hags": "Апаратне планування GPU",
+
+  "audit.ev.module": "Слот {slot}",
+  "audit.ev.module_value": "{size_gb} ГБ {type}, зараз {configured} MT/s, модуль повідомляє {rated} MT/s, {vendor} {part}",
+  "audit.ev.output": "Вихід",
+  "audit.ev.mode": "Поточний режим",
+  "audit.ev.mode_value": "{width}×{height} @ {hz} Гц",
+  "audit.ev.pcie_width": "Ширина PCIe (зараз / максимум)",
+  "audit.ev.pcie_gen": "Покоління PCIe (зараз / максимум)",
+  "audit.ev.of": "{cur} / {max}",
+  "audit.ev.guid": "GUID схеми",
+
+  "audit.ram.below_rated.title": "Пам'ять працює нижче своєї частоти: {configured} замість {rated} MT/s",
+  "audit.ram.below_rated.detail": "Модулі зараз працюють на {configured} MT/s, хоча самі повідомляють про підтримку {rated} MT/s. Нижча частота пам'яті найбільше б'є по 1% low у процесорозалежних іграх.",
+  "audit.ram.below_rated.advice": "Увімкніть профіль XMP (Intel) або EXPO (AMD) у BIOS/UEFI і перевірте стабільність тестом пам'яті. OptimaX налаштування BIOS не змінює.",
+
+  "audit.ram.jedec_base.title": "Пам'ять, імовірно, працює на базовій частоті ({configured} MT/s)",
+  "audit.ram.jedec_base.detail": "{type} на {configured} MT/s — це стандартна частота JEDEC без профілю розгону. Більшість ігрових наборів розраховані на вищу частоту з XMP/EXPO, але свою XMP-частоту модулі Windows не повідомляють, тож напевно сказати неможливо.",
+  "audit.ram.jedec_base.advice": "Звірте частоту на наклейці модуля або за партномером {part}. Якщо вона вища — увімкніть XMP/EXPO у BIOS/UEFI. На ноутбуках із розпаяною пам'яттю це зазвичай недоступно.",
+
+  "audit.ram.ok.title": "Частота пам'яті: {configured} MT/s",
+  "audit.ram.ok.detail": "Ознак роботи нижче номіналу не знайдено.",
+
+  "audit.ram.unknown_speed.title": "Частоту пам'яті визначити не вдалося",
+  "audit.ram.unknown_speed.detail": "BIOS не заповнив поля швидкості в таблиці SMBIOS. Перевірте частоту в BIOS/UEFI або іншою утилітою.",
+
+  "audit.display.low_refresh.title": "Монітор працює на {current} Гц, хоча доступно {max} Гц",
+  "audit.display.low_refresh.detail": "{monitor} ({width}×{height}) підтримує до {max} Гц, але зараз працює на {current} Гц. Це обмежує плавність незалежно від FPS у грі.",
+  "audit.display.low_refresh.advice": "Параметри → Система → Дисплей → Розширені параметри дисплея → виберіть {max} Гц. Також перевірте частоту в панелі драйвера відеокарти.",
+
+  "audit.display.ok.title": "Монітор {monitor}: {current} Гц",
+  "audit.display.ok.detail": "Це максимум, який Windows пропонує для {width}×{height}. Якщо за специфікацією монітор підтримує більше, а Windows не пропонує — причина зазвичай у кабелі чи порті (потрібен DisplayPort або HDMI 2.0+).",
+
+  "audit.gpu.pcie_narrow.title": "Відеокарта працює на PCIe x{current} замість x{max}",
+  "audit.gpu.pcie_narrow.detail": "{gpu} підтримує x{max}, але з'єднання встановлене на x{current}. Типові причини: карта не в головному слоті, слот ділить лінії з M.2-накопичувачем або іншою картою, погано вставлена карта чи райзер.",
+  "audit.gpu.pcie_narrow.advice": "Перевірте, що карта стоїть у верхньому слоті x16 (найближчому до процесора), і в інструкції до материнської плати — чи не забирають лінії цього слота M.2-накопичувачі. Після змін запустіть аудит ще раз.",
+
+  "audit.gpu.pcie_ok.title": "PCIe: x{current} (максимум для карти — x{max})",
+  "audit.gpu.pcie_ok.detail": "Ширина з'єднання {gpu} відповідає максимуму. Покоління PCIe у простої може бути нижчим — це штатне енергозбереження, під навантаженням воно піднімається.",
+
+  "audit.gpu.rebar_off.title": "Resizable BAR, схоже, вимкнено",
+  "audit.gpu.rebar_off.detail": "Вікно BAR1 у {gpu} — {bar1} МіБ при {vram} МіБ відеопам'яті. З увімкненим Resizable BAR воно зазвичай не менше за обсяг VRAM.",
+  "audit.gpu.rebar_off.advice": "У BIOS/UEFI увімкніть «Above 4G Decoding» і «Re-Size BAR Support» (потрібен режим UEFI без CSM). Приріст залежить від гри: для багатьох ігор драйвер NVIDIA його не використовує. Перевірити поточний стан: Панель керування NVIDIA → Інформація про систему → Resizable BAR. Ефект варто перевірити A/B-тестом.",
+
+  "audit.gpu.rebar_on.title": "Resizable BAR увімкнено",
+  "audit.gpu.rebar_on.detail": "Вікно BAR1 у {gpu} — {bar1} МіБ при {vram} МіБ відеопам'яті.",
+
+  "audit.gpu.rebar_unknown.title": "Стан Resizable BAR невідомий",
+  "audit.gpu.rebar_unknown.detail": "Для {gpu} визначити стан не вдалося: поки це вміємо лише для NVIDIA. Перевірте в панелі драйвера (AMD Adrenalin / Intel Arc Control).",
+
+  "audit.driver.old.title": "Драйверу відеокарти понад рік ({days} {days|день|дні|днів})",
+  "audit.driver.old.detail": "{gpu}: драйвер {version} від {date}. Нові ігри часто отримують виправлення продуктивності саме в нових драйверах.",
+  "audit.driver.old.advice": "Оновіть драйвер з офіційного сайту виробника (NVIDIA / AMD / Intel). OptimaX драйвери не завантажує.",
+
+  "audit.driver.aging.title": "Драйверу відеокарти понад пів року ({days} {days|день|дні|днів})",
+  "audit.driver.aging.detail": "{gpu}: драйвер {version} від {date}.",
+  "audit.driver.aging.advice": "Якщо граєте в нові ігри — варто перевірити оновлення на сайті виробника.",
+
+  "audit.driver.ok.title": "Драйвер відеокарти: {version}",
+  "audit.driver.ok.detail": "{gpu}: драйвер від {date} ({days} {days|день|дні|днів} тому).",
+
+  "audit.bios.info.title": "BIOS: {version} від {date}",
+  "audit.bios.info.detail": "Виробник: {vendor}.",
+
+  "audit.bios.old.title": "BIOS старший за {years} {years|рік|роки|років} ({date})",
+  "audit.bios.old.detail": "{vendor} {version} від {date}. Оновлення BIOS часто покращують сумісність пам'яті (XMP/EXPO) і стабільність, але приросту FPS не гарантують.",
+  "audit.bios.old.advice": "Перевірте сторінку підтримки вашої материнської плати. Оновлення BIOS — ризикована операція: робіть його лише за інструкцією виробника. OptimaX BIOS не змінює.",
+
+  "audit.power.saver.title": "Активна схема живлення «{name}» (економія енергії)",
+  "audit.power.saver.detail": "Ця схема обмежує частоти процесора й гальмує вихід із простою — у іграх це прямі втрати FPS.",
+  "audit.power.saver.advice": "Увімкніть «Збалансовану» схему: Панель керування → Електроживлення. Для ноутбука — ще й режим живлення «Найкраща продуктивність» у Параметрах.",
+
+  "audit.power.balanced.title": "Схема живлення: «{name}»",
+  "audit.power.balanced.detail": "На сучасних процесорах «Збалансована» схема зазвичай не обмежує ігри. Чи дасть щось «Висока продуктивність» — перевіримо A/B-тестом, а не обіцянками.",
+
+  "audit.power.high.title": "Схема живлення: «{name}»",
+  "audit.power.high.detail": "Процесор тримає високі частоти — у простої це трохи більше нагріву й споживання.",
+
+  "audit.power.custom.title": "Схема живлення: «{name}»",
+  "audit.power.custom.detail": "Нестандартна схема (від виробника ПК або іншої утиліти). Її параметри поки не аналізуються.",
+
+  "audit.os.game_mode_on.title": "Ігровий режим Windows увімкнено",
+  "audit.os.game_mode_on.detail": "Під час гри Windows знижує пріоритет фонових задач і відкладає оновлення.",
+
+  "audit.os.game_mode_default.title": "Ігровий режим Windows: типове значення",
+  "audit.os.game_mode_default.detail": "Значення не задане явно — Windows 10 (1903+) і 11 у такому разі вважають ігровий режим увімкненим.",
+
+  "audit.os.game_mode_off.title": "Ігровий режим Windows вимкнено",
+  "audit.os.game_mode_off.detail": "Ігровий режим знижує пріоритет фонових задач і оновлень під час гри. Ефект зазвичай невеликий і залежить від системи.",
+  "audit.os.game_mode_off.advice": "Параметри → Ігри → Ігровий режим. Чи є ефект саме у вас — покаже A/B-тест.",
+
+  "audit.os.hags_on.title": "Апаратне планування GPU (HAGS) увімкнено",
+  "audit.os.hags_on.detail": "Потрібне для генерації кадрів DLSS 3 на RTX 40 і новіших.",
+
+  "audit.os.hags_off.title": "Апаратне планування GPU (HAGS) вимкнено",
+  "audit.os.hags_off.detail": "Вплив на FPS залежить від гри і зазвичай малий. Але генерація кадрів DLSS 3 (RTX 40 і новіші) працює лише з увімкненим HAGS.",
+  "audit.os.hags_off.advice": "Параметри → Система → Дисплей → Графіка → Додаткові параметри графіки. Потрібне перезавантаження.",
+
+  "audit.os.hags_default.title": "HAGS: значення не задане явно",
+  "audit.os.hags_default.detail": "Діє типове значення драйвера й Windows. Поточний стан видно в Параметрах → Система → Дисплей → Графіка.",
+
+  "audit.os.hags_unexpected.title": "HAGS: неочікуване значення ({value})",
+  "audit.os.hags_unexpected.detail": "У реєстрі HwSchMode = {value}; відомі значення — 1 (вимкнено) і 2 (увімкнено)."
+}

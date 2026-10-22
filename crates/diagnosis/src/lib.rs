@@ -22,6 +22,9 @@ pub const MIN_FRAMES: usize = 200;
 pub const MIN_SAMPLES: usize = 10;
 /// Мінімальна тривалість запису, мс.
 pub const MIN_DURATION_MS: f64 = 10_000.0;
+/// Допуск до мінімальної тривалості: сума frametime зарахованих кадрів трохи менша за
+/// зарахований час (перший кадр відрізка рахується від попереднього кадру поза ним).
+const DURATION_TOLERANCE: f64 = 0.95;
 
 /// Виміряний ефект зміни (заповнюється A/B-тестом, не діагностикою).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -138,7 +141,7 @@ pub fn diagnose_timeline(tl: &Timeline, ctx: &Context) -> Diagnosis {
     let enough = analysis.is_some()
         && tl.frames.len() >= MIN_FRAMES
         && tl.samples.len() >= MIN_SAMPLES
-        && tl.duration_ms() >= MIN_DURATION_MS;
+        && tl.duration_ms() >= MIN_DURATION_MS * DURATION_TOLERANCE;
     let Some(a) = analysis.filter(|_| enough) else {
         return Diagnosis {
             game: tl.game_name.clone(),

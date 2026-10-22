@@ -2,6 +2,7 @@
 import type { Arm } from "./Arm";
 import type { Plan } from "./Plan";
 import type { RunResult } from "./RunResult";
+import type { StartMode } from "./StartMode";
 
 /**
  * Стан A/B-тесту для UI.
@@ -27,6 +28,10 @@ next: number,
  * Тривалість прогону, с.
  */
 seconds: number, 
+/**
+ * Спосіб старту прогонів.
+ */
+start: StartMode, 
 /**
  * Результати виконаних прогонів.
  */

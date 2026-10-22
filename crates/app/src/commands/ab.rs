@@ -6,14 +6,14 @@ use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState, FlagConfirm};
 use optimax_core::Catalog;
 use optimax_diagnosis::{diagnose, Bottleneck, Context};
-use optimax_frametime::{record, CancelToken, RecordOptions, Target};
+use optimax_frametime::{record_with, CancelToken, RecordOptions, StartMode, Target};
 use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
 use optimax_tweaks::ab::{
     evaluate, render_markdown, schedule, Arm, Decision, RunConditions, RunResult,
 };
 use optimax_tweaks::{Desired, Plan, TweakError};
 use std::time::Duration;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Сесія A/B.
 pub struct AbSession {
@@ -23,6 +23,9 @@ pub struct AbSession {
     order: Vec<Arm>,
     next: usize,
     seconds: u32,
+    /// Спосіб старту — однаковий для всіх прогонів тесту.
+    start: StartMode,
+    sound: bool,
     results: Vec<RunResult>,
     /// Запис журналу, якщо зміна (варіант B) зараз застосована.
     active_entry: Option<u64>,
@@ -38,6 +41,7 @@ impl AbSession {
             order: self.order.clone(),
             next: u32::try_from(self.next).unwrap_or(u32::MAX),
             seconds: self.seconds,
+            start: self.start,
             results: self.results.clone(),
         }
     }
@@ -66,7 +70,13 @@ pub fn ab_start(
             "система вже у стані «після» — порівнювати нічого".into(),
         ));
     }
+    let (start, sound) = {
+        let st = lock(&state.settings);
+        (st.record_start, st.record_sound)
+    };
     let session = AbSession {
+        start,
+        sound,
         game,
         desired,
         plan,
@@ -94,7 +104,7 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
     blocking(move || {
         let state = app.state::<AppState>();
         // 1. Привести систему до потрібного варіанта (під замком сесії, недовго).
-        let (arm, game, seconds, cancel) = {
+        let (arm, game, seconds, start, sound, cancel) = {
             let mut guard = lock(&state.ab);
             let s = guard
                 .as_mut()
@@ -127,19 +137,24 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
             }
             let cancel = CancelToken::new();
             s.cancel = Some(cancel.clone());
-            (arm, s.game.clone(), s.seconds, cancel)
+            (arm, s.game.clone(), s.seconds, s.start, s.sound, cancel)
         };
         // 2. Запис (довго, без замків).
         let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
-        let rec = record(
+        let options = RecordOptions::new(
+            Target::ProcessName(game),
+            Duration::from_secs(u64::from(seconds)),
+        )
+        .with_start(start, sound);
+        let rec = record_with(
             state.presentmon()?,
-            &RecordOptions::new(
-                Target::ProcessName(game),
-                Duration::from_secs(u64::from(seconds)),
-            ),
+            &options,
             Box::new(SysinfoSource::new()),
             gpu,
             &cancel,
+            &mut |p| {
+                let _ = app.emit("ab-progress", p);
+            },
         )?;
         if rec.cancelled {
             return Err(CmdError::Cancelled("прогін зупинено".into()));

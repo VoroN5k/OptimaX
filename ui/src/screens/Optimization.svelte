@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, asCmdError } from "../lib/api";
+  import { api, asCmdError, on } from "../lib/api";
   import type { AbFinal } from "../lib/bindings/AbFinal";
   import type { AbView } from "../lib/bindings/AbView";
   import type { PowerSchemes } from "../lib/bindings/PowerSchemes";
+  import type { RecordProgress } from "../lib/bindings/RecordProgress";
   import type { UiDesired } from "../lib/bindings/UiDesired";
   import { tk } from "../lib/i18n";
   import { flashBg, logLocal, ui } from "../lib/state.svelte";
@@ -13,6 +14,8 @@
   import Modal from "../components/Modal.svelte";
   import Page from "../components/Page.svelte";
   import ProcessPicker from "../components/ProcessPicker.svelte";
+  import RecordStatus from "../components/RecordStatus.svelte";
+  import StartModePicker from "../components/StartModePicker.svelte";
   import Segmented from "../components/Segmented.svelte";
   import TweakApplyModal from "../components/TweakApplyModal.svelte";
 
@@ -34,11 +37,16 @@
   let error = $state<string | null>(null);
   let restoreReason = $state<string | null>(null);
   let expertDesired = $state<UiDesired | null>(null);
+  let runProgress = $state<RecordProgress | null>(null);
 
-  onMount(async () => {
-    schemes = await api.powerSchemes().catch(() => null);
-    ab = await api.abState().catch(() => null);
-    if (ab) step = 3;
+  onMount(() => {
+    void (async () => {
+      schemes = await api.powerSchemes().catch(() => null);
+      ab = await api.abState().catch(() => null);
+      if (ab) step = 3;
+    })();
+    const sub = on("ab-progress", (p) => (runProgress = p));
+    return () => void sub.then((u) => u());
   });
 
   const choices = $derived<Choice[]>([
@@ -84,6 +92,7 @@
   async function runNext(allow = false) {
     error = null;
     running = true;
+    runProgress = null;
     ui.measuring = true;
     try {
       ab = await api.abRunNext(allow);
@@ -91,6 +100,7 @@
     } catch (e) {
       const err = asCmdError(e);
       if (err.kind === "restore_point") restoreReason = err.message;
+      else if (err.kind === "not_started") error = tk(`ui.rec.not_started.${err.message || "wait_timeout"}`);
       else {
         error = err.message;
         flashBg("warn");
@@ -187,6 +197,7 @@
             />
           </div>
         </div>
+        <div class="hint"><StartModePicker /></div>
         <p class="small dim hint">{tk("ui.opt.ab_rules")}</p>
       </Card>
     {:else if step === 3 && ab}
@@ -203,6 +214,9 @@
             </li>
           {/each}
         </ol>
+        {#if running}
+          <div class="run-status"><RecordStatus progress={runProgress} game={ab.game} /></div>
+        {/if}
         {#if nextArm && ab.plan.info.restart_game_between_runs}
           <p class="warn small">{tk("ui.opt.restart_game")}</p>
         {/if}
@@ -378,6 +392,13 @@
   }
   .hint {
     margin-top: calc(var(--space) * 4);
+  }
+  .run-status {
+    margin-top: calc(var(--space) * 4);
+    padding: calc(var(--space) * 4);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-input);
   }
   .runs {
     list-style: none;

@@ -122,16 +122,6 @@ pub struct HardwareInfo {
     pub gpus: Vec<GpuAdapter>,
 }
 
-/// Хід запису.
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-pub struct RecordingProgress {
-    /// Минуло, с.
-    pub elapsed_s: u32,
-    /// Усього, с.
-    pub total_s: u32,
-}
-
 /// Результат діагностики для UI.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -144,6 +134,10 @@ pub struct DiagnosisResult {
     pub presentmon_messages: Vec<String>,
     /// Запис зупинено раніше.
     pub cancelled: bool,
+    /// Зараховано чистої гри, с (без Alt+Tab, меню й прогріву).
+    pub counted_s: f64,
+    /// Чому запис завершився.
+    pub end_reason: optimax_frametime::EndReason,
 }
 
 /// Процес для вибору гри.
@@ -211,6 +205,8 @@ pub struct AbView {
     pub next: u32,
     /// Тривалість прогону, с.
     pub seconds: u32,
+    /// Спосіб старту прогонів.
+    pub start: optimax_frametime::StartMode,
     /// Результати виконаних прогонів.
     pub results: Vec<optimax_tweaks::ab::RunResult>,
 }

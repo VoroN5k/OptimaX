@@ -101,17 +101,23 @@ fn primary_gpu_index(snapshots: &[Snapshot]) -> Option<u32> {
 
 impl Timeline {
     /// Будує шкалу з запису. `None`, якщо кадрів немає.
+    /// Береться лише зарахована гра (відрізки [`Recording::segments`]): Alt+Tab, меню
+    /// й завантаження, що потрапили в запис, на результат не впливають.
     pub fn from_recording(rec: &Recording) -> Option<Self> {
-        let (pid, swap_chain) = main_swap_chain(&rec.frames)?;
-        let game_name = rec
+        let counted: Vec<optimax_frametime::FrameRecord> = rec
             .frames
+            .iter()
+            .filter(|f| rec.frame_counted(f))
+            .cloned()
+            .collect();
+        let (pid, swap_chain) = main_swap_chain(&counted)?;
+        let game_name = counted
             .iter()
             .find(|f| f.process_id == pid)
             .map(|f| f.application.clone())
             .unwrap_or_default();
         // PresentMon видає кадри не за порядком часу — сортуємо.
-        let mut frames: Vec<FramePoint> = rec
-            .frames
+        let mut frames: Vec<FramePoint> = counted
             .iter()
             .filter(|f| f.process_id == pid && f.swap_chain == swap_chain)
             .map(|f| FramePoint {
@@ -127,6 +133,7 @@ impl Timeline {
         let mut samples: Vec<SamplePoint> = rec
             .snapshots
             .iter()
+            .filter(|s| rec.in_segments(s.qpc))
             .map(|s| {
                 let (busiest_core, busiest_core_pct) = s.cpu.busiest_core().unwrap_or((0, 0.0));
                 let mut background: HashMap<String, f32> = HashMap::new();

@@ -3,6 +3,7 @@
   import { api, asCmdError, on } from "../lib/api";
   import type { CmdError } from "../lib/bindings/CmdError";
   import type { DiagnosisResult } from "../lib/bindings/DiagnosisResult";
+  import type { RecordProgress } from "../lib/bindings/RecordProgress";
   import { t, tk } from "../lib/i18n";
   import { flashBg, logLocal, ui } from "../lib/state.svelte";
   import Button from "../components/Button.svelte";
@@ -10,19 +11,21 @@
   import FindingCard from "../components/FindingCard.svelte";
   import Page from "../components/Page.svelte";
   import ProcessPicker from "../components/ProcessPicker.svelte";
+  import RecordStatus from "../components/RecordStatus.svelte";
+  import StartModePicker from "../components/StartModePicker.svelte";
   import Segmented from "../components/Segmented.svelte";
   import StateView from "../components/StateView.svelte";
 
   let exe = $state("");
   let seconds = $state(60);
   let recording = $state(false);
-  let progress = $state({ elapsed: 0, total: 60 });
+  let progress = $state<RecordProgress | null>(null);
   let result = $state<DiagnosisResult | null>(null);
   let error = $state<CmdError | null>(null);
 
   onMount(() => {
     const subs = [
-      on("diag-progress", (p) => (progress = { elapsed: p.elapsed_s, total: p.total_s })),
+      on("diag-progress", (p) => (progress = p)),
       on("diag-done", (r) => {
         result = r;
         recording = false;
@@ -48,7 +51,7 @@
       await api.diagStart(exe.trim(), seconds);
       recording = true;
       ui.measuring = true;
-      progress = { elapsed: 0, total: seconds };
+      progress = null;
     } catch (e) {
       error = asCmdError(e);
     }
@@ -76,21 +79,21 @@
         />
       </div>
     </div>
+    <div class="mode"><StartModePicker /></div>
   </Card>
 
   {#if recording}
-    <Card>
-      <div class="progress" role="progressbar" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.elapsed}>
-        <div class="bar" style:transform="scaleX({progress.total ? progress.elapsed / progress.total : 0})"></div>
-      </div>
-      <p class="muted">{tk("ui.diag.recording", { game: exe, s: progress.elapsed, total: progress.total })}</p>
-    </Card>
+    <Card><RecordStatus {progress} game={exe} /></Card>
   {:else if error?.kind === "no_frames"}
     <Card>
       <StateView kind="error" title={tk("ui.diag.no_frames_title")} text={tk("ui.diag.no_frames_text")} />
       {#if error.message}
         <details class="pm small muted"><summary>{tk("ui.diag.pm_messages")}</summary><pre class="mono">{error.message}</pre></details>
       {/if}
+    </Card>
+  {:else if error?.kind === "not_started"}
+    <Card>
+      <StateView kind="error" title={tk("ui.rec.not_started_title")} text={tk(`ui.rec.not_started.${error.message || "wait_timeout"}`)} />
     </Card>
   {:else if error}
     <Card><StateView kind="error" title={tk("ui.common.error")} text={error.message} /></Card>
@@ -111,7 +114,8 @@
       <p class="small dim">
         {tk("ui.diag.confidence", { v: summary.confidence })}
         {#if result.display_hz} · {tk("ui.diag.hz", { hz: result.display_hz })}{/if}
-        {#if result.cancelled} · {tk("ui.diag.cancelled")}{/if}
+        · {tk("ui.rec.counted_total", { s: Math.round(result.counted_s) })}
+        {#if result.end_reason !== "completed"} · {tk(`ui.rec.end.${result.end_reason}`)}{/if}
       </p>
     </Card>
     <div class="list">
@@ -150,19 +154,8 @@
     display: grid;
     gap: calc(var(--space) * 2);
   }
-  .progress {
-    height: 6px;
-    border-radius: 999px;
-    background: var(--bg-input);
-    overflow: hidden;
-    margin-bottom: calc(var(--space) * 3);
-  }
-  .bar {
-    height: 100%;
-    width: 100%;
-    transform-origin: left;
-    background: var(--accent-gradient);
-    transition: transform var(--dur-slow) var(--ease);
+  .mode {
+    margin-top: calc(var(--space) * 5);
   }
   .stats {
     display: grid;

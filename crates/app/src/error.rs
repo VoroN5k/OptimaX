@@ -18,6 +18,8 @@ pub enum CmdError {
     NotFound(String),
     /// Гра не малювала кадрів під час запису (не запущена, згорнута, на паузі).
     NoFrames(String),
+    /// Зараховування не почалось: причина `wait_timeout` / `cancelled` / `game_exited`.
+    NotStarted(String),
     /// Інша помилка.
     Failed(String),
 }
@@ -52,6 +54,12 @@ impl From<optimax_frametime::FrametimeError> for CmdError {
     fn from(e: optimax_frametime::FrametimeError) -> Self {
         match e {
             optimax_frametime::FrametimeError::NoFrames(details) => Self::NoFrames(details),
+            optimax_frametime::FrametimeError::NotStarted(reason) => Self::NotStarted(
+                serde_json::to_value(reason)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_default(),
+            ),
             other => Self::Failed(other.to_string()),
         }
     }

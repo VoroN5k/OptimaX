@@ -9,7 +9,9 @@
 
 use optimax_core::{Catalog, Impact, Text};
 use optimax_diagnosis::{diagnose, Context};
-use optimax_frametime::{record, BundledPresentMon, CancelToken, RecordOptions, Recording, Target};
+use optimax_frametime::{
+    record_with, BundledPresentMon, CancelToken, RecordOptions, Recording, StartMode, Target,
+};
 use std::time::Duration;
 
 fn arg_value(args: &[String], name: &str) -> Option<String> {
@@ -67,14 +69,35 @@ fn capture(args: &[String]) -> anyhow::Result<Recording> {
     let gpu =
         optimax_metrics::NvmlGpu::open().map(|g| Box::new(g) as Box<dyn optimax_metrics::GpuApi>);
     println!("Запис {game} протягом {seconds} с… грайте, не згортайте гру.");
-    let options = RecordOptions::new(Target::ProcessName(game), Duration::from_secs(seconds));
-    let rec = record(
+    let start = match arg_value(args, "--start").as_deref() {
+        Some("auto") => StartMode::Auto,
+        Some("hotkey") => StartMode::Hotkey,
+        _ => StartMode::Immediate,
+    };
+    let options = RecordOptions::new(Target::ProcessName(game), Duration::from_secs(seconds))
+        .with_start(start, true);
+    let mut last_phase = None;
+    let rec = record_with(
         &pm,
         &options,
         Box::new(optimax_metrics::SysinfoSource::new()),
         gpu,
         &CancelToken::new(),
+        &mut |p| {
+            if last_phase != Some(p.phase) {
+                println!(
+                    "  [{:>5.1} с] фаза: {:?}, зараховано {:.1} / {:.0} с",
+                    p.elapsed_s, p.phase, p.counted_s, p.target_s
+                );
+                last_phase = Some(p.phase);
+            }
+        },
     )?;
+    println!(
+        "Зараховано чистої гри: {:.1} с, завершення: {:?}",
+        rec.counted_seconds(),
+        rec.end_reason
+    );
     println!(
         "Записано {} кадрів і {} знімків метрик (пропущено рядків CSV: {}).",
         rec.frames.len(),

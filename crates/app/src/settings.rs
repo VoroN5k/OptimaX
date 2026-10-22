@@ -18,7 +18,7 @@ pub enum AnimationLevel {
 }
 
 /// Налаштування.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Settings {
     /// Фонова анімація.
@@ -27,6 +27,27 @@ pub struct Settings {
     /// Економний режим: без анімацій, рідше оновлення метрик.
     #[serde(default)]
     pub economy: bool,
+    /// Як починати запис гри (діагностика й A/B).
+    #[serde(default)]
+    pub record_start: optimax_frametime::StartMode,
+    /// Звукові сигнали на старті й зупинці запису.
+    #[serde(default = "yes")]
+    pub record_sound: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            animation: AnimationLevel::default(),
+            economy: false,
+            record_start: optimax_frametime::StartMode::Auto,
+            record_sound: true,
+        }
+    }
 }
 
 fn path() -> Option<PathBuf> {

@@ -18,7 +18,7 @@ import type { PlanHandle } from "./bindings/PlanHandle";
 import type { PowerSchemes } from "./bindings/PowerSchemes";
 import type { ProcessEntry } from "./bindings/ProcessEntry";
 import type { ProfilePreview } from "./bindings/ProfilePreview";
-import type { RecordingProgress } from "./bindings/RecordingProgress";
+import type { RecordProgress } from "./bindings/RecordProgress";
 import type { RollbackResult } from "./bindings/RollbackResult";
 import type { Settings } from "./bindings/Settings";
 import type { Snapshot } from "./bindings/Snapshot";
@@ -77,7 +77,8 @@ type Events = {
   metrics: Snapshot;
   log: LogLine;
   gamemode: GameModeEvent;
-  "diag-progress": RecordingProgress;
+  "diag-progress": RecordProgress;
+  "ab-progress": RecordProgress;
   "diag-done": DiagnosisResult;
   "diag-error": CmdError;
 };

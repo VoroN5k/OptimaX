@@ -3,4 +3,4 @@
 /**
  * Помилка команди.
  */
-export type CmdError = { "kind": "restore_point", "message": string } | { "kind": "cancelled", "message": string } | { "kind": "forbidden", "message": string } | { "kind": "not_found", "message": string } | { "kind": "no_frames", "message": string } | { "kind": "failed", "message": string };
+export type CmdError = { "kind": "restore_point", "message": string } | { "kind": "cancelled", "message": string } | { "kind": "forbidden", "message": string } | { "kind": "not_found", "message": string } | { "kind": "no_frames", "message": string } | { "kind": "not_started", "message": string } | { "kind": "failed", "message": string };

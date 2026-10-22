@@ -10,6 +10,7 @@
 
 pub mod csv;
 pub mod frame;
+pub mod gate;
 pub mod presentmon;
 pub mod recording;
 pub mod stats;
@@ -18,8 +19,9 @@ pub mod stats;
 mod acl;
 
 pub use frame::{FrameRecord, FrameTimestamp};
+pub use gate::{EndReason, Gate, Observation, Phase, StartMode};
 pub use presentmon::{BundledPresentMon, Target};
-pub use recording::{record, CancelToken, RecordOptions, Recording};
+pub use recording::{record, record_with, CancelToken, RecordOptions, RecordProgress, Recording};
 pub use stats::{find_spikes, frame_stats, main_swap_chain, FrameStats, Spike};
 
 use optimax_core::CoreError;
@@ -57,6 +59,12 @@ pub enum FrametimeError {
     /// Некоректна ціль запису.
     #[error("некоректна ціль запису: {0}")]
     InvalidTarget(String),
+    /// Глобальну гарячу клавішу не вдалося зареєструвати (зайнята іншою програмою).
+    #[error("гаряча клавіша Ctrl+Shift+F9 недоступна: {0}")]
+    Hotkey(String),
+    /// Зараховування так і не почалось (гру не відкрили / клавішу не натиснули / скасовано).
+    #[error("запис не почався: {0:?}")]
+    NotStarted(gate::EndReason),
     /// PresentMon не записав жодного кадру.
     #[error("PresentMon не записав жодного кадру. Повідомлення PresentMon: {0}")]
     NoFrames(String),

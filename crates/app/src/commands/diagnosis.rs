@@ -2,18 +2,16 @@
 //! Події: `diag-progress` (щосекунди), `diag-done` (результат), `diag-error`.
 
 use super::blocking;
-use crate::dto::{DiagnosisResult, ProcessEntry, RecordingProgress};
+use crate::dto::{DiagnosisResult, ProcessEntry};
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
 use optimax_audit::{run_audit, SystemProbe, WindowsProbe};
 use optimax_core::{CivilDate, Impact};
 use optimax_diagnosis::{diagnose, Context};
-use optimax_frametime::{record, CancelToken, RecordOptions, Target};
+use optimax_frametime::{record_with, CancelToken, RecordOptions, Target};
 use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Процеси для вибору гри: унікальні імена, найважчі за CPU зверху.
@@ -95,51 +93,40 @@ pub fn diag_start(
     drop(slot);
     let total = seconds.clamp(10, 300);
 
+    let (start_mode, sound) = {
+        let st = lock(&state.settings);
+        (st.record_start, st.record_sound)
+    };
+
     std::thread::Builder::new()
         .name("optimax-diagnosis".into())
         .spawn(move || {
-            let done = Arc::new(AtomicBool::new(false));
-            {
-                let (app, done) = (app.clone(), done.clone());
-                let _ = std::thread::Builder::new()
-                    .name("optimax-diag-progress".into())
-                    .spawn(move || {
-                        let start = Instant::now();
-                        while !done.load(Ordering::SeqCst) {
-                            let elapsed_s = u32::try_from(start.elapsed().as_secs())
-                                .unwrap_or(u32::MAX)
-                                .min(total);
-                            let _ = app.emit(
-                                "diag-progress",
-                                RecordingProgress {
-                                    elapsed_s,
-                                    total_s: total,
-                                },
-                            );
-                            std::thread::sleep(Duration::from_millis(500));
-                        }
-                    });
-            }
             let result = (|| -> CmdResult<DiagnosisResult> {
                 let state = app.state::<AppState>();
                 let pm = state.presentmon()?;
                 let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
-                let rec = record(
+                let options = RecordOptions::new(target, Duration::from_secs(u64::from(total)))
+                    .with_start(start_mode, sound);
+                let rec = record_with(
                     pm,
-                    &RecordOptions::new(target, Duration::from_secs(u64::from(total))),
+                    &options,
                     Box::new(SysinfoSource::new()),
                     gpu,
                     &cancel,
+                    &mut |p| {
+                        let _ = app.emit("diag-progress", p);
+                    },
                 )?;
                 let (ctx, display_hz) = context();
                 Ok(DiagnosisResult {
                     diagnosis: diagnose(&rec, &ctx),
                     display_hz,
-                    presentmon_messages: rec.presentmon_messages,
+                    presentmon_messages: rec.presentmon_messages.clone(),
                     cancelled: rec.cancelled,
+                    counted_s: rec.counted_seconds(),
+                    end_reason: rec.end_reason,
                 })
             })();
-            done.store(true, Ordering::SeqCst);
             *lock(&app.state::<AppState>().recording) = None;
             let _ = match result {
                 Ok(r) => app.emit("diag-done", r),

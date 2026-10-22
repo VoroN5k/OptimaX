@@ -19,6 +19,9 @@ pub enum CoreError {
     /// Функція недоступна на цій платформі.
     #[error("не підтримується на цій платформі: {0}")]
     Unsupported(&'static str),
+    /// Об'єкта (процесу, служби) більше немає.
+    #[error("не знайдено: {0}")]
+    NotFound(String),
     /// Помилка розбору JSON.
     #[error("помилка JSON: {0}")]
     Json(#[from] serde_json::Error),

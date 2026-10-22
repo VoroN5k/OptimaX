@@ -405,3 +405,162 @@ fn pending_entry_that_never_happened_is_marked_failed() {
         EntryState::Failed { .. }
     ));
 }
+
+mod gamemode_targets {
+    use super::*;
+    use crate::TweakId;
+    use optimax_core::process::{MemProcesses, PriorityClass, ProcessApi};
+    use optimax_core::service::{MemServices, ServiceApi, ServiceState};
+
+    #[test]
+    fn process_priority_apply_rollback_and_exit() {
+        let reg = registry_with_gamebar(None);
+        let power = MemPower::new(guids::BALANCED);
+        let restore = CountingRestore::ok();
+        let store = MemStore::new();
+        let procs = MemProcesses::new();
+        let game = procs.spawn(100, "game.exe", 1);
+        let chrome = procs.spawn(200, "chrome.exe", 2);
+        let mut e = Engine::new(&reg, &power, &restore, &store)
+            .unwrap()
+            .with_processes(&procs);
+
+        let up = e
+            .plan(&Desired::ProcessPriority {
+                process: game.clone(),
+                priority: PriorityClass::AboveNormal,
+            })
+            .unwrap();
+        let down = e
+            .plan(&Desired::ProcessPriority {
+                process: chrome.clone(),
+                priority: PriorityClass::BelowNormal,
+            })
+            .unwrap();
+        let a = e.apply(&up, &Answer(false)).unwrap().entry_ids[0];
+        let b = e.apply(&down, &Answer(false)).unwrap().entry_ids[0];
+        assert_eq!(procs.priority(&game).unwrap(), PriorityClass::AboveNormal);
+        assert_eq!(procs.priority(&chrome).unwrap(), PriorityClass::BelowNormal);
+
+        // Гру закрили до відкату — це не помилка, просто нічого відновлювати.
+        procs.kill(100);
+        let s = e.rollback_ids(&[a, b]);
+        assert_eq!(s.failed, vec![]);
+        assert_eq!(s.rolled_back, vec![b, a]);
+        assert_eq!(procs.priority(&chrome).unwrap(), PriorityClass::Normal);
+    }
+
+    #[test]
+    fn protected_and_realtime_are_forbidden() {
+        let reg = registry_with_gamebar(None);
+        let power = MemPower::new(guids::BALANCED);
+        let restore = CountingRestore::ok();
+        let store = MemStore::new();
+        let procs = MemProcesses::new();
+        let audio = procs.spawn(5, "audiodg.exe", 1);
+        let game = procs.spawn(6, "game.exe", 1);
+        let e = Engine::new(&reg, &power, &restore, &store)
+            .unwrap()
+            .with_processes(&procs);
+        assert!(matches!(
+            e.plan(&Desired::ProcessPriority {
+                process: audio,
+                priority: PriorityClass::BelowNormal
+            }),
+            Err(TweakError::Forbidden(_))
+        ));
+        assert!(matches!(
+            e.plan(&Desired::ProcessPriority {
+                process: game,
+                priority: PriorityClass::Realtime
+            }),
+            Err(TweakError::Forbidden(_))
+        ));
+    }
+
+    #[test]
+    fn service_stop_and_restart() {
+        let reg = registry_with_gamebar(None);
+        let power = MemPower::new(guids::BALANCED);
+        let restore = CountingRestore::ok();
+        let store = MemStore::new();
+        let svc = MemServices::new(&[
+            ("WSearch", ServiceState::Running),
+            ("SysMain", ServiceState::Stopped),
+            ("wuauserv", ServiceState::Running),
+        ]);
+        let mut e = Engine::new(&reg, &power, &restore, &store)
+            .unwrap()
+            .with_services(&svc);
+        let stop = |name: &str| Desired::Service {
+            name: name.into(),
+            state: ServiceState::Stopped,
+        };
+        let plan = e.plan(&stop("WSearch")).unwrap();
+        let id = e.apply(&plan, &Answer(false)).unwrap().entry_ids[0];
+        assert_eq!(svc.state("WSearch").unwrap(), ServiceState::Stopped);
+        // Уже зупинена служба — нічого не робимо (і не запустимо її потім).
+        assert!(e.plan(&stop("SysMain")).unwrap().is_noop());
+        // Оновлення Windows не чіпаємо ніколи.
+        assert!(matches!(
+            e.plan(&stop("wuauserv")),
+            Err(TweakError::Forbidden(_))
+        ));
+        e.rollback(id).unwrap();
+        assert_eq!(svc.state("WSearch").unwrap(), ServiceState::Running);
+    }
+
+    #[test]
+    fn missing_platform_api_is_reported() {
+        let reg = registry_with_gamebar(None);
+        let power = MemPower::new(guids::BALANCED);
+        let restore = CountingRestore::ok();
+        let store = MemStore::new();
+        let e = Engine::new(&reg, &power, &restore, &store).unwrap();
+        assert!(matches!(
+            e.plan(&Desired::Service {
+                name: "WSearch".into(),
+                state: ServiceState::Stopped
+            }),
+            Err(TweakError::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn one_shot_action_is_journaled_but_not_rolled_back() {
+        let reg = registry_with_gamebar(None);
+        let power = MemPower::new(guids::HIGH_PERFORMANCE);
+        let restore = CountingRestore::ok();
+        let store = MemStore::new();
+        let mut e = Engine::new(&reg, &power, &restore, &store).unwrap();
+        // Зміна користувача поза сесією гри — rollback_ids сесії її не зачепить.
+        let user = e
+            .plan(&Desired::PowerScheme(guids::BALANCED.into()))
+            .unwrap();
+        e.apply(&user, &Answer(false)).unwrap();
+
+        let id = e
+            .perform(TweakId::StandbyPurge, SettingTarget::StandbyList, || Ok(()))
+            .unwrap();
+        assert_eq!(
+            store.snapshot().last().unwrap().state,
+            EntryState::Performed
+        );
+        assert!(e.active().all(|x| x.id != id));
+        let failed = e.perform(TweakId::StandbyPurge, SettingTarget::StandbyList, || {
+            Err(CoreError::Os {
+                api: "NtSetSystemInformation",
+                code: 5,
+            })
+        });
+        assert!(failed.is_err());
+        assert!(matches!(
+            store.snapshot().last().unwrap().state,
+            EntryState::Failed { .. }
+        ));
+
+        let s = e.rollback_ids(&[id]);
+        assert!(s.rolled_back.is_empty());
+        assert_eq!(power.active_scheme().unwrap(), guids::BALANCED);
+    }
+}

@@ -1,6 +1,8 @@
 //! Перевірений набір змін. Кожна має опис впливу на продуктивність, нагрів і безпеку
 //! (тексти в каталозі `tweak.<id>.*`). Нічого небезпечного: Defender, VBS, UAC тощо тут немає.
 
+use optimax_core::process::{PriorityClass, ProcessInfo};
+use optimax_core::service::ServiceState;
 use optimax_core::Text;
 use serde::{Deserialize, Serialize};
 
@@ -12,17 +14,32 @@ pub enum TweakId {
     PowerScheme,
     /// Ігровий режим Windows.
     GameMode,
+    /// Пріоритет процесу (режим гри OptimaX).
+    ProcessPriority,
+    /// Тимчасова зупинка служби (режим гри OptimaX).
+    Service,
+    /// Очищення standby-пам'яті (режим гри OptimaX).
+    StandbyPurge,
 }
 
 impl TweakId {
     /// Усі твіки каталогу.
-    pub const ALL: [TweakId; 2] = [TweakId::PowerScheme, TweakId::GameMode];
+    pub const ALL: [TweakId; 5] = [
+        TweakId::PowerScheme,
+        TweakId::GameMode,
+        TweakId::ProcessPriority,
+        TweakId::Service,
+        TweakId::StandbyPurge,
+    ];
 
     /// Рядковий ідентифікатор (для журналу й ключів тексту).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::PowerScheme => "power_scheme",
             Self::GameMode => "game_mode",
+            Self::ProcessPriority => "process_priority",
+            Self::Service => "service",
+            Self::StandbyPurge => "standby_purge",
         }
     }
 
@@ -78,6 +95,20 @@ pub enum Desired {
     PowerScheme(String),
     /// Увімкнути / вимкнути ігровий режим.
     GameMode(bool),
+    /// Пріоритет процесу.
+    ProcessPriority {
+        /// Процес.
+        process: ProcessInfo,
+        /// Новий пріоритет.
+        priority: PriorityClass,
+    },
+    /// Стан служби (лише зі списку дозволених).
+    Service {
+        /// Ім'я.
+        name: String,
+        /// Бажаний стан.
+        state: ServiceState,
+    },
 }
 
 impl Desired {
@@ -86,6 +117,8 @@ impl Desired {
         match self {
             Self::PowerScheme(_) => TweakId::PowerScheme,
             Self::GameMode(_) => TweakId::GameMode,
+            Self::ProcessPriority { .. } => TweakId::ProcessPriority,
+            Self::Service { .. } => TweakId::Service,
         }
     }
 }

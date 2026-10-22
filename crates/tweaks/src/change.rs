@@ -1,7 +1,9 @@
 //! Що саме змінюється: місце, старе та нове значення.
 
 use crate::catalog::TweakInfo;
+use optimax_core::process::{PriorityClass, ProcessInfo};
 use optimax_core::registry::{RegHive, RegValue};
+use optimax_core::service::ServiceState;
 use optimax_core::Text;
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +22,18 @@ pub enum SettingTarget {
     },
     /// Активна схема живлення.
     PowerScheme,
+    /// Пріоритет конкретного процесу (PID + час створення).
+    ProcessPriority {
+        /// Процес.
+        process: ProcessInfo,
+    },
+    /// Стан служби Windows.
+    Service {
+        /// Ім'я служби.
+        name: String,
+    },
+    /// Standby-список пам'яті (лише разова дія, без відкату).
+    StandbyList,
 }
 
 impl SettingTarget {
@@ -34,6 +48,11 @@ impl SettingTarget {
                 format!("{root}\\{path}\\{name}")
             }
             Self::PowerScheme => "powercfg: активна схема живлення".into(),
+            Self::ProcessPriority { process } => {
+                format!("процес {} (PID {}): пріоритет", process.name, process.pid)
+            }
+            Self::Service { name } => format!("служба {name}: стан"),
+            Self::StandbyList => "пам'ять: standby-список".into(),
         }
     }
 }
@@ -46,6 +65,12 @@ pub enum SettingValue {
     Registry(Option<RegValue>),
     /// GUID схеми живлення.
     PowerScheme(String),
+    /// Клас пріоритету процесу.
+    Priority(PriorityClass),
+    /// Стан служби.
+    Service(ServiceState),
+    /// Разова дія без значення (очищення standby).
+    Action,
 }
 
 /// Одна запланована зміна.
@@ -89,6 +114,15 @@ pub fn describe_registry(value: Option<&RegValue>) -> Text {
         Some(RegValue::Qword(v)) => Text::raw(format!("REG_QWORD {v}")),
         Some(RegValue::String(s)) => Text::raw(format!("REG_SZ \"{s}\"")),
         Some(other) => Text::raw(other.type_name()),
+    }
+}
+
+/// Опис стану служби.
+pub fn describe_service(state: ServiceState) -> Text {
+    match state {
+        ServiceState::Running => Text::new("service.running"),
+        ServiceState::Stopped => Text::new("service.stopped"),
+        ServiceState::Other(code) => Text::new("service.other").arg("code", code),
     }
 }
 

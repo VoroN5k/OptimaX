@@ -1,10 +1,10 @@
-//! Direct3D 11: пристрій, компіляція HLSL системним `d3dcompiler_47.dll`, прохід масштабування.
+//! Direct3D 11: пристрій, компіляція HLSL системним `d3dcompiler_47.dll`, текстури, буфери
+//! констант і два види проходів — піксельний (у задній буфер) і обчислювальний (у текстуру).
 
 use super::os;
 use crate::error::UpscaleError;
 use crate::geometry::{Rect, Size};
-use crate::settings::Filter;
-use windows::core::{s, Interface, PCSTR};
+use windows::core::{Interface, PCSTR};
 use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::Fxc::{D3DCompile, D3DCOMPILE_OPTIMIZATION_LEVEL3};
@@ -13,18 +13,21 @@ use windows::Win32::Graphics::Direct3D::{
     D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
 };
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader,
-    ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D,
-    ID3D11VertexShader, D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_COMPARISON_NEVER,
-    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_FILTER, D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-    D3D11_FILTER_MIN_MAG_MIP_POINT, D3D11_FLOAT32_MAX, D3D11_SAMPLER_DESC, D3D11_SDK_VERSION,
-    D3D11_TEXTURE2D_DESC, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
+    D3D11CreateDevice, ID3D11Buffer, ID3D11ComputeShader, ID3D11Device, ID3D11DeviceContext,
+    ID3D11PixelShader, ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView,
+    ID3D11Texture2D, ID3D11UnorderedAccessView, ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER,
+    D3D11_BIND_SHADER_RESOURCE, D3D11_BIND_UNORDERED_ACCESS, D3D11_BOX, D3D11_BUFFER_DESC,
+    D3D11_COMPARISON_NEVER, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_FILTER,
+    D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_FILTER_MIN_MAG_MIP_POINT, D3D11_FLOAT32_MAX,
+    D3D11_SAMPLER_DESC, D3D11_SDK_VERSION, D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE2D_DESC,
+    D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DEFAULT, D3D11_USAGE_IMMUTABLE, D3D11_VIEWPORT,
 };
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+use windows::Win32::Graphics::Dxgi::Common::{
+    DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R32G32B32A32_FLOAT,
+    DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC,
+};
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice;
-
-const BLIT_HLSL: &str = include_str!("../shaders/blit.hlsl");
 
 /// Пристрій D3D11 і його WinRT-обгортка (для пулу кадрів WGC).
 pub(super) struct Gpu {
@@ -69,13 +72,13 @@ impl Gpu {
     }
 }
 
-/// Компілює HLSL у байткод.
-pub(super) fn compile(
-    source: &str,
-    name: PCSTR,
-    entry: PCSTR,
-    target: PCSTR,
-) -> Result<Vec<u8>, UpscaleError> {
+/// Порожній результат `Create*` (не мав би траплятися при успішному HRESULT).
+fn missing(api: &'static str) -> UpscaleError {
+    UpscaleError::Os { api, code: 0 }
+}
+
+/// Компілює HLSL у байткод. `source` має бути без `#include` (див. `shaders::expand_includes`).
+pub(super) fn compile(source: &str, entry: PCSTR, target: PCSTR) -> Result<Vec<u8>, UpscaleError> {
     let mut code: Option<ID3DBlob> = None;
     let mut errors: Option<ID3DBlob> = None;
     // SAFETY: джерело — наш &str (вказівник і довжина узгоджені), рядки — статичні PCSTR,
@@ -84,7 +87,7 @@ pub(super) fn compile(
         D3DCompile(
             source.as_ptr().cast(),
             source.len(),
-            name,
+            PCSTR::null(),
             None,
             None,
             entry,
@@ -116,6 +119,175 @@ fn blob_bytes(blob: &ID3DBlob) -> &[u8] {
     }
 }
 
+pub(super) fn vertex_shader(
+    gpu: &Gpu,
+    source: &str,
+    entry: PCSTR,
+) -> Result<ID3D11VertexShader, UpscaleError> {
+    let code = compile(source, entry, windows::core::s!("vs_5_0"))?;
+    let mut shader = None;
+    // SAFETY: байткод щойно скомпільований для цієї стадії.
+    unsafe {
+        gpu.device
+            .CreateVertexShader(&code, None, Some(&mut shader))
+    }
+    .map_err(os("CreateVertexShader"))?;
+    shader.ok_or_else(|| missing("CreateVertexShader"))
+}
+
+pub(super) fn pixel_shader(
+    gpu: &Gpu,
+    source: &str,
+    entry: PCSTR,
+) -> Result<ID3D11PixelShader, UpscaleError> {
+    let code = compile(source, entry, windows::core::s!("ps_5_0"))?;
+    let mut shader = None;
+    // SAFETY: байткод щойно скомпільований для цієї стадії.
+    unsafe { gpu.device.CreatePixelShader(&code, None, Some(&mut shader)) }
+        .map_err(os("CreatePixelShader"))?;
+    shader.ok_or_else(|| missing("CreatePixelShader"))
+}
+
+pub(super) fn compute_shader(gpu: &Gpu, source: &str) -> Result<ID3D11ComputeShader, UpscaleError> {
+    let code = compile(
+        source,
+        windows::core::s!("main"),
+        windows::core::s!("cs_5_0"),
+    )?;
+    let mut shader = None;
+    // SAFETY: байткод щойно скомпільований для цієї стадії.
+    unsafe {
+        gpu.device
+            .CreateComputeShader(&code, None, Some(&mut shader))
+    }
+    .map_err(os("CreateComputeShader"))?;
+    shader.ok_or_else(|| missing("CreateComputeShader"))
+}
+
+pub(super) fn sampler(gpu: &Gpu, linear: bool) -> Result<ID3D11SamplerState, UpscaleError> {
+    let filter: D3D11_FILTER = if linear {
+        D3D11_FILTER_MIN_MAG_MIP_LINEAR
+    } else {
+        D3D11_FILTER_MIN_MAG_MIP_POINT
+    };
+    let desc = D3D11_SAMPLER_DESC {
+        Filter: filter,
+        AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
+        AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+        AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
+        MipLODBias: 0.0,
+        MaxAnisotropy: 1,
+        ComparisonFunc: D3D11_COMPARISON_NEVER,
+        BorderColor: [0.0; 4],
+        MinLOD: 0.0,
+        MaxLOD: D3D11_FLOAT32_MAX,
+    };
+    let mut state = None;
+    // SAFETY: опис локальний.
+    unsafe { gpu.device.CreateSamplerState(&desc, Some(&mut state)) }
+        .map_err(os("CreateSamplerState"))?;
+    state.ok_or_else(|| missing("CreateSamplerState"))
+}
+
+/// Буфер констант із 32-бітних слів (розмір кратний 16 байтам).
+pub(super) struct Constants {
+    buffer: ID3D11Buffer,
+    words: usize,
+}
+
+impl Constants {
+    pub fn new(gpu: &Gpu, words: usize) -> Result<Self, UpscaleError> {
+        let words = words.div_ceil(4) * 4;
+        let desc = D3D11_BUFFER_DESC {
+            ByteWidth: u32::try_from(words * 4).unwrap_or(u32::MAX),
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+            StructureByteStride: 0,
+        };
+        let mut buffer = None;
+        // SAFETY: опис локальний, без початкових даних.
+        unsafe { gpu.device.CreateBuffer(&desc, None, Some(&mut buffer)) }
+            .map_err(os("CreateBuffer"))?;
+        Ok(Self {
+            buffer: buffer.ok_or_else(|| missing("CreateBuffer"))?,
+            words,
+        })
+    }
+
+    /// Записує значення (решта буфера — нулі).
+    pub fn update(&self, gpu: &Gpu, values: &[u32]) {
+        let mut data = vec![0u32; self.words];
+        let n = values.len().min(self.words);
+        data[..n].copy_from_slice(&values[..n]);
+        // SAFETY: `data` має рівно розмір буфера й живе до кінця виклику.
+        unsafe {
+            gpu.context
+                .UpdateSubresource(&self.buffer, 0, None, data.as_ptr().cast(), 0, 0);
+        }
+    }
+
+    pub fn buffer(&self) -> &ID3D11Buffer {
+        &self.buffer
+    }
+}
+
+fn texture(
+    gpu: &Gpu,
+    size: Size,
+    format: DXGI_FORMAT,
+    bind: u32,
+    init: Option<(&[f32], u32)>,
+) -> Result<ID3D11Texture2D, UpscaleError> {
+    let desc = D3D11_TEXTURE2D_DESC {
+        Width: size.width,
+        Height: size.height,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: format,
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
+        Usage: if init.is_some() {
+            D3D11_USAGE_IMMUTABLE
+        } else {
+            D3D11_USAGE_DEFAULT
+        },
+        BindFlags: bind,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
+    };
+    let data = init.map(|(values, pitch)| D3D11_SUBRESOURCE_DATA {
+        pSysMem: values.as_ptr().cast(),
+        SysMemPitch: pitch,
+        SysMemSlicePitch: 0,
+    });
+    let mut tex = None;
+    // SAFETY: опис і дані локальні; дані (якщо є) покривають усю текстуру (див. викликачів).
+    unsafe {
+        gpu.device.CreateTexture2D(
+            &desc,
+            data.as_ref().map(|d| d as *const D3D11_SUBRESOURCE_DATA),
+            Some(&mut tex),
+        )
+    }
+    .map_err(os("CreateTexture2D"))?;
+    tex.ok_or_else(|| missing("CreateTexture2D"))
+}
+
+fn srv(gpu: &Gpu, tex: &ID3D11Texture2D) -> Result<ID3D11ShaderResourceView, UpscaleError> {
+    let mut view = None;
+    // SAFETY: текстура створена з BIND_SHADER_RESOURCE.
+    unsafe {
+        gpu.device
+            .CreateShaderResourceView(tex, None, Some(&mut view))
+    }
+    .map_err(os("CreateShaderResourceView"))?;
+    view.ok_or_else(|| missing("CreateShaderResourceView"))
+}
+
 /// Кадр гри (клієнтська область), скопійований з кадру захоплення.
 pub(super) struct SourceTexture {
     pub texture: ID3D11Texture2D,
@@ -125,40 +297,14 @@ pub(super) struct SourceTexture {
 
 impl SourceTexture {
     pub fn new(gpu: &Gpu, size: Size) -> Result<Self, UpscaleError> {
-        let desc = D3D11_TEXTURE2D_DESC {
-            Width: size.width,
-            Height: size.height,
-            MipLevels: 1,
-            ArraySize: 1,
-            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC {
-                Count: 1,
-                Quality: 0,
-            },
-            Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-            CPUAccessFlags: 0,
-            MiscFlags: 0,
-        };
-        let mut texture = None;
-        // SAFETY: опис локальний, без початкових даних.
-        unsafe { gpu.device.CreateTexture2D(&desc, None, Some(&mut texture)) }
-            .map_err(os("CreateTexture2D"))?;
-        let texture = texture.ok_or(UpscaleError::Os {
-            api: "CreateTexture2D",
-            code: 0,
-        })?;
-        let mut view = None;
-        // SAFETY: текстура щойно створена з BIND_SHADER_RESOURCE.
-        unsafe {
-            gpu.device
-                .CreateShaderResourceView(&texture, None, Some(&mut view))
-        }
-        .map_err(os("CreateShaderResourceView"))?;
-        let view = view.ok_or(UpscaleError::Os {
-            api: "CreateShaderResourceView",
-            code: 0,
-        })?;
+        let texture = texture(
+            gpu,
+            size,
+            DXGI_FORMAT_B8G8R8A8_UNORM,
+            D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            None,
+        )?;
+        let view = srv(gpu, &texture)?;
         Ok(Self {
             texture,
             view,
@@ -187,53 +333,74 @@ impl SourceTexture {
     }
 }
 
-/// Прохід «намалювати кадр у прямокутнику з фільтром».
-pub(super) struct Blitter {
-    vs: ID3D11VertexShader,
-    ps: ID3D11PixelShader,
-    point: ID3D11SamplerState,
-    linear: ID3D11SamplerState,
+/// Проміжна текстура між проходами: пишеться обчислювальним шейдером, читається наступним.
+/// RGBA8 — формат, який гарантовано підтримує запис з UAV на рівні 11.0.
+pub(super) struct Intermediate {
+    pub view: ID3D11ShaderResourceView,
+    pub uav: ID3D11UnorderedAccessView,
+    pub size: Size,
 }
 
-impl Blitter {
-    pub fn new(gpu: &Gpu) -> Result<Self, UpscaleError> {
-        let vs_code = compile(BLIT_HLSL, s!("blit.hlsl"), s!("vs_main"), s!("vs_5_0"))?;
-        let ps_code = compile(BLIT_HLSL, s!("blit.hlsl"), s!("ps_main"), s!("ps_5_0"))?;
-        let mut vs = None;
-        let mut ps = None;
-        // SAFETY: байткод щойно скомпільований для цих стадій.
+impl Intermediate {
+    pub fn new(gpu: &Gpu, size: Size) -> Result<Self, UpscaleError> {
+        let tex = texture(
+            gpu,
+            size,
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_UNORDERED_ACCESS.0) as u32,
+            None,
+        )?;
+        let view = srv(gpu, &tex)?;
+        let mut uav = None;
+        // SAFETY: текстура створена з BIND_UNORDERED_ACCESS.
         unsafe {
             gpu.device
-                .CreateVertexShader(&vs_code, None, Some(&mut vs))
-                .map_err(os("CreateVertexShader"))?;
-            gpu.device
-                .CreatePixelShader(&ps_code, None, Some(&mut ps))
-                .map_err(os("CreatePixelShader"))?;
+                .CreateUnorderedAccessView(&tex, None, Some(&mut uav))
         }
-        let (Some(vs), Some(ps)) = (vs, ps) else {
-            return Err(UpscaleError::Shader("порожній шейдер".into()));
-        };
+        .map_err(os("CreateUnorderedAccessView"))?;
         Ok(Self {
-            vs,
-            ps,
-            point: sampler(gpu, D3D11_FILTER_MIN_MAG_MIP_POINT)?,
-            linear: sampler(gpu, D3D11_FILTER_MIN_MAG_MIP_LINEAR)?,
+            view,
+            uav: uav.ok_or_else(|| missing("CreateUnorderedAccessView"))?,
+            size,
         })
     }
+}
 
-    /// Очищує ціль чорним і малює `source` у прямокутнику `dest`.
-    pub fn draw(
-        &self,
-        gpu: &Gpu,
-        source: &SourceTexture,
-        target: &ID3D11RenderTargetView,
-        dest: Rect,
-        filter: Filter,
-    ) {
-        let sampler = match filter {
-            Filter::Nearest => &self.point,
-            Filter::Bilinear => &self.linear,
-        };
+/// Незмінна текстура float4 з таблицею (коефіцієнти NIS). `values.len()` = ширина × висота × 4.
+pub(super) fn table_texture(
+    gpu: &Gpu,
+    size: Size,
+    values: &[f32],
+) -> Result<ID3D11ShaderResourceView, UpscaleError> {
+    let expected = size.width as usize * size.height as usize * 4;
+    if values.len() != expected {
+        return Err(UpscaleError::Shader(format!(
+            "таблиця має {} значень замість {expected}",
+            values.len()
+        )));
+    }
+    let tex = texture(
+        gpu,
+        size,
+        DXGI_FORMAT_R32G32B32A32_FLOAT,
+        D3D11_BIND_SHADER_RESOURCE.0 as u32,
+        Some((values, size.width * 16)),
+    )?;
+    srv(gpu, &tex)
+}
+
+/// Піксельний прохід: повноекранний трикутник у межах `dest`.
+pub(super) struct Draw<'a> {
+    pub vs: &'a ID3D11VertexShader,
+    pub ps: &'a ID3D11PixelShader,
+    pub source: &'a ID3D11ShaderResourceView,
+    pub sampler: Option<&'a ID3D11SamplerState>,
+    pub constants: Option<&'a Constants>,
+}
+
+impl Draw<'_> {
+    /// Очищує ціль чорним і малює.
+    pub fn run(&self, gpu: &Gpu, target: &ID3D11RenderTargetView, dest: Rect) {
         let viewport = D3D11_VIEWPORT {
             TopLeftX: dest.x as f32,
             TopLeftY: dest.y as f32,
@@ -250,36 +417,45 @@ impl Blitter {
             ctx.RSSetViewports(Some(&[viewport]));
             ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             ctx.IASetInputLayout(None);
-            ctx.VSSetShader(&self.vs, None);
-            ctx.PSSetShader(&self.ps, None);
-            ctx.PSSetShaderResources(0, Some(&[Some(source.view.clone())]));
-            ctx.PSSetSamplers(0, Some(&[Some(sampler.clone())]));
+            ctx.VSSetShader(self.vs, None);
+            ctx.PSSetShader(self.ps, None);
+            ctx.PSSetShaderResources(0, Some(&[Some(self.source.clone())]));
+            ctx.PSSetSamplers(0, Some(&[self.sampler.cloned()]));
+            ctx.PSSetConstantBuffers(0, Some(&[self.constants.map(|c| c.buffer().clone())]));
             ctx.Draw(3, 0);
-            // Відв'язуємо кадр, щоб наступне копіювання в нього не конфліктувало з вибіркою.
+            // Відв'язуємо вхід, щоб наступний запис у цю текстуру не конфліктував з читанням.
             ctx.PSSetShaderResources(0, Some(&[None]));
         }
     }
 }
 
-fn sampler(gpu: &Gpu, filter: D3D11_FILTER) -> Result<ID3D11SamplerState, UpscaleError> {
-    let desc = D3D11_SAMPLER_DESC {
-        Filter: filter,
-        AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
-        AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
-        AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
-        MipLODBias: 0.0,
-        MaxAnisotropy: 1,
-        ComparisonFunc: D3D11_COMPARISON_NEVER,
-        BorderColor: [0.0; 4],
-        MinLOD: 0.0,
-        MaxLOD: D3D11_FLOAT32_MAX,
-    };
-    let mut state = None;
-    // SAFETY: опис локальний.
-    unsafe { gpu.device.CreateSamplerState(&desc, Some(&mut state)) }
-        .map_err(os("CreateSamplerState"))?;
-    state.ok_or(UpscaleError::Os {
-        api: "CreateSamplerState",
-        code: 0,
-    })
+/// Обчислювальний прохід у проміжну текстуру.
+pub(super) struct Dispatch<'a> {
+    pub cs: &'a ID3D11ComputeShader,
+    pub sources: &'a [Option<ID3D11ShaderResourceView>],
+    pub sampler: Option<&'a ID3D11SamplerState>,
+    pub constants: &'a Constants,
+    pub output: &'a Intermediate,
+    pub groups: (u32, u32),
+}
+
+impl Dispatch<'_> {
+    pub fn run(&self, gpu: &Gpu) {
+        let ctx = &gpu.context;
+        let uav = [Some(self.output.uav.clone())];
+        let none_uav: [Option<ID3D11UnorderedAccessView>; 1] = [None];
+        let none_srv = vec![None; self.sources.len()];
+        // SAFETY: усі об'єкти створені на цьому пристрої; масиви живуть до кінця блоку.
+        unsafe {
+            ctx.CSSetShader(self.cs, None);
+            ctx.CSSetShaderResources(0, Some(self.sources));
+            ctx.CSSetSamplers(0, Some(&[self.sampler.cloned()]));
+            ctx.CSSetConstantBuffers(0, Some(&[Some(self.constants.buffer().clone())]));
+            ctx.CSSetUnorderedAccessViews(0, 1, Some(uav.as_ptr()), None);
+            ctx.Dispatch(self.groups.0, self.groups.1, 1);
+            // Відв'язуємо вихід і входи: далі текстура читається піксельним проходом.
+            ctx.CSSetUnorderedAccessViews(0, 1, Some(none_uav.as_ptr()), None);
+            ctx.CSSetShaderResources(0, Some(&none_srv));
+        }
+    }
 }

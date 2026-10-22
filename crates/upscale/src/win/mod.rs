@@ -6,6 +6,7 @@
 mod capture;
 mod d3d;
 mod overlay;
+mod pipeline;
 mod render;
 mod window;
 

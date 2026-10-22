@@ -2,13 +2,14 @@
 //! область кадру, малюємо її збільшеною в оверлеї. Оверлей видно, лише поки гра на передньому плані.
 
 use super::capture::Capture;
-use super::d3d::{Blitter, Gpu, SourceTexture};
+use super::d3d::{Gpu, SourceTexture};
 use super::overlay::Overlay;
+use super::pipeline::Pipeline;
 use super::window::{self, Geometry};
 use super::Event;
 use crate::error::UpscaleError;
 use crate::geometry::{client_crop, dest_rect, needs_upscale, Rect};
-use crate::session::{EndReason, Shared};
+use crate::session::{EndReason, Layout, Shared};
 use crate::settings::UpscaleSettings;
 use crate::window::WindowId;
 use std::sync::atomic::Ordering;
@@ -57,12 +58,13 @@ struct Renderer {
     hwnd: HWND,
     settings: UpscaleSettings,
     gpu: Gpu,
-    blitter: Blitter,
+    pipeline: Pipeline,
     overlay: Overlay,
     capture: Capture,
     geometry: Geometry,
     source: Option<SourceTexture>,
     dest: Rect,
+    layout: Layout,
 }
 
 impl Renderer {
@@ -91,19 +93,20 @@ impl Renderer {
         }
 
         let gpu = Gpu::new()?;
-        let blitter = Blitter::new(&gpu)?;
+        let pipeline = Pipeline::new(&gpu, &settings)?;
         let overlay = Overlay::new(&gpu, geometry.monitor)?;
         let capture = Capture::start(&gpu, hwnd, settings.capture_cursor, wake.raw())?;
         Ok(Self {
             hwnd,
             settings,
             gpu,
-            blitter,
+            pipeline,
             overlay,
             capture,
             geometry,
             source: None,
             dest: Rect::default(),
+            layout: Layout::default(),
         })
     }
 
@@ -191,11 +194,7 @@ impl Renderer {
         if self.source.as_ref().map(|s| s.size) != Some(crop.size()) {
             self.source = Some(SourceTexture::new(&self.gpu, crop.size())?);
         }
-        let dest = dest_rect(crop.size(), self.overlay.rect().size(), self.settings.fit);
-        if dest != self.dest {
-            self.dest = dest;
-            shared.set_geometry(crop.size(), dest);
-        }
+        self.dest = dest_rect(crop.size(), self.overlay.rect().size(), self.settings.fit);
         if let Some(source) = &self.source {
             source.copy_from(&self.gpu, &frame.texture, crop);
         }
@@ -206,9 +205,20 @@ impl Renderer {
         let (Some(source), Some(target)) = (&self.source, self.overlay.target()) else {
             return Ok(());
         };
-        self.blitter
-            .draw(&self.gpu, source, target, self.dest, self.settings.filter);
+        self.pipeline.prepare(&self.gpu, source.size, self.dest)?;
+        self.pipeline.render(&self.gpu, source, target, self.dest);
         self.overlay.present()?;
+        let applied = self.pipeline.applied();
+        let layout = Layout {
+            source: source.size,
+            dest: self.dest,
+            filter: applied.filter,
+            partial: applied.partial,
+        };
+        if layout != self.layout {
+            self.layout = layout;
+            shared.set_layout(layout);
+        }
         shared.presented.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }

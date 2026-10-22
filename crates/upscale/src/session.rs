@@ -4,7 +4,7 @@
 use crate::error::UpscaleError;
 use crate::geometry::{Rect, Size};
 use crate::imp;
-use crate::settings::UpscaleSettings;
+use crate::settings::{Filter, UpscaleSettings};
 use crate::window::WindowId;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -42,8 +42,21 @@ pub struct UpscaleStats {
     pub source: Size,
     /// Куди малюється кадр (координати монітора).
     pub dest: Rect,
+    /// Фільтр, що фактично застосовано (NIS поза ×1…×2 замінюється білінійним).
+    pub filter: Filter,
+    /// Фільтр зробив лише частину масштабу (NIS понад ×2), решту — білінійний прохід.
+    pub partial: bool,
     /// Чи оверлей зараз видно (гра на передньому плані).
     pub visible: bool,
+}
+
+/// Поточна розкладка: розміри й фактичний фільтр.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(crate) struct Layout {
+    pub(crate) source: Size,
+    pub(crate) dest: Rect,
+    pub(crate) filter: Filter,
+    pub(crate) partial: bool,
 }
 
 /// Спільний стан між потоком апскейлу й власником [`Upscaler`].
@@ -53,14 +66,14 @@ pub(crate) struct Shared {
     pub(crate) captured: AtomicU64,
     pub(crate) presented: AtomicU64,
     pub(crate) visible: AtomicBool,
-    pub(crate) geometry: Mutex<(Size, Rect)>,
+    pub(crate) layout: Mutex<Layout>,
     pub(crate) end: Mutex<Option<EndReason>>,
 }
 
 impl Shared {
-    pub(crate) fn set_geometry(&self, source: Size, dest: Rect) {
-        if let Ok(mut g) = self.geometry.lock() {
-            *g = (source, dest);
+    pub(crate) fn set_layout(&self, layout: Layout) {
+        if let Ok(mut l) = self.layout.lock() {
+            *l = layout;
         }
     }
 
@@ -113,12 +126,14 @@ impl Upscaler {
 
     /// Поточні лічильники.
     pub fn stats(&self) -> UpscaleStats {
-        let (source, dest) = self.shared.geometry.lock().map(|g| *g).unwrap_or_default();
+        let layout = self.shared.layout.lock().map(|l| *l).unwrap_or_default();
         UpscaleStats {
             captured: self.shared.captured.load(Ordering::Relaxed),
             presented: self.shared.presented.load(Ordering::Relaxed),
-            source,
-            dest,
+            source: layout.source,
+            dest: layout.dest,
+            filter: layout.filter,
+            partial: layout.partial,
             visible: self.shared.visible.load(Ordering::Relaxed),
         }
     }

@@ -1,7 +1,8 @@
-//! Ручна перевірка апскейлу (етап 6, крок 1):
+//! Ручна перевірка апскейлу (етап 6):
 //!
 //! ```text
-//! cargo run --release -p optimax-upscale --example upscale -- [--filter nearest|bilinear]
+//! cargo run --release -p optimax-upscale --example upscale -- [--filter nearest|bilinear|lanczos|fsr|nis]
+//!     [--sharpness 0.5]
 //!     [--fit aspect|integer|stretch] [--delay 5] [--seconds 60] [--no-cursor] [--pid N]
 //! ```
 //!
@@ -12,7 +13,8 @@
 
 use optimax_upscale::{
     foreground_window, geometry::scale_factor, is_supported, main_window_of,
-    window::enable_per_monitor_dpi, Filter, FitMode, UpscaleSettings, Upscaler,
+    settings::DEFAULT_SHARPNESS, window::enable_per_monitor_dpi, Filter, FitMode, UpscaleSettings,
+    Upscaler,
 };
 use std::time::{Duration, Instant};
 
@@ -25,8 +27,11 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let filter = match arg_value(&args, "--filter").as_deref() {
-        None | Some("bilinear") => Filter::Bilinear,
+        None | Some("fsr") => Filter::Fsr,
+        Some("bilinear") => Filter::Bilinear,
         Some("nearest") => Filter::Nearest,
+        Some("lanczos") => Filter::Lanczos,
+        Some("nis") => Filter::Nis,
         Some(other) => anyhow::bail!("невідомий фільтр: {other}"),
     };
     let fit = match arg_value(&args, "--fit").as_deref() {
@@ -41,9 +46,13 @@ fn main() -> anyhow::Result<()> {
     let seconds: u64 = arg_value(&args, "--seconds")
         .and_then(|s| s.parse().ok())
         .unwrap_or(60);
+    let sharpness: f32 = arg_value(&args, "--sharpness")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_SHARPNESS);
     let settings = UpscaleSettings {
         filter,
         fit,
+        sharpness,
         capture_cursor: !args.iter().any(|a| a == "--no-cursor"),
     };
 
@@ -76,7 +85,7 @@ fn main() -> anyhow::Result<()> {
     let started = Instant::now();
     let upscaler = Upscaler::start(window.id, settings)?;
     println!(
-        "Старт за {:.0} мс. Фільтр {filter:?}, вписування {fit:?}. Зупинка через {seconds} с або коли гру закрито.",
+        "Старт за {:.0} мс. Фільтр {filter:?}, різкість {sharpness}, вписування {fit:?}. Зупинка через {seconds} с або коли гру закрито.",
         started.elapsed().as_secs_f64() * 1000.0
     );
 
@@ -86,7 +95,7 @@ fn main() -> anyhow::Result<()> {
         std::thread::sleep(Duration::from_secs(1));
         let s = upscaler.stats();
         println!(
-            "захоплено {:>4}/с, показано {:>4}/с | {}×{} → {}×{} (×{:.2}) {}",
+            "захоплено {:>4}/с, показано {:>4}/с | {}×{} → {}×{} (×{:.2}) {:?}{} {}",
             s.captured - prev.captured,
             s.presented - prev.presented,
             s.source.width,
@@ -94,6 +103,12 @@ fn main() -> anyhow::Result<()> {
             s.dest.width,
             s.dest.height,
             scale_factor(s.source, s.dest),
+            s.filter,
+            if s.partial {
+                " (до ×2) + білінійний"
+            } else {
+                ""
+            },
             if s.visible {
                 ""
             } else {

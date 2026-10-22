@@ -45,6 +45,7 @@ windows = { workspace = true, features = [
 [dev-dependencies]
 anyhow.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

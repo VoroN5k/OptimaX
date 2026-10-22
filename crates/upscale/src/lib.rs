@@ -6,7 +6,7 @@
 //! Ігри в ексклюзивному повноекранному режимі захопити неможливо — це обмеження Windows.
 //!
 //! - [`geometry`]: що вирізати з кадру й куди малювати (чисті функції, тести).
-//! - [`settings`]: фільтр, спосіб вписування, курсор.
+//! - [`settings`]: фільтр (точковий, білінійний, Lanczos, FSR 1, NIS), різкість, вписування, курсор.
 //! - [`Upscaler`]: запущений сеанс в окремому потоці.
 //!
 //! `unsafe` дозволено лише в платформному модулі `imp` (FFI до WinAPI, Direct3D 11, WinRT).
@@ -15,6 +15,7 @@ pub mod error;
 pub mod geometry;
 pub mod session;
 pub mod settings;
+mod shaders;
 pub mod window;
 
 #[cfg(windows)]

@@ -20,6 +20,7 @@ const SPIKE_MIN_EXCESS_MS: f64 = 4.0;
 
 /// Підсумкова статистика кадрів.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct FrameStats {
     /// Кількість кадрів.
     pub frames: usize,

@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Додано
+- Інтерфейс на Tauri 2.12 (Svelte 5, TypeScript strict, Vite 8): 7 робочих екранів
+  (Аналіз, Діагностика, Оптимізація з A/B-майстром, Ігри, Залізо, Резервні копії, Налаштування),
+  чесні заглушки для решти; маніфест `requireAdministrator`.
+- Шрифти Inter і JetBrains Mono 5.3.0 (@fontsource, SIL OFL 1.1), вбудовані локально.
 - Бандл PresentMon **2.6.0** (`crates/frametime/bin/PresentMon-2.6.0-x64.exe`), офіційний реліз
   GameTechDev/PresentMon, підпис Intel Corporation.
   SHA-256 `b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af` (збігається з дайджестом GitHub).

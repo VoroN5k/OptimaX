@@ -8,6 +8,7 @@ members = [
     "crates/diagnosis",
     "crates/tweaks",
     "crates/gamemode",
+    "crates/app",
 ]
 
 [workspace.package]
@@ -36,6 +37,9 @@ sysinfo = { version = "0.39.6", default-features = false, features = ["system", 
 nvml-wrapper = "0.13.0"
 windows = "0.62.2"
 sha2 = "0.11.1"
+tauri = "2.12.5"
+tauri-build = "2.7.4"
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

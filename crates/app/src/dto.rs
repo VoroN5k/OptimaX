@@ -1,0 +1,248 @@
+//! Типи обміну з інтерфейсом, специфічні для застосунку.
+
+use optimax_audit::model::{DisplayInfo, FirmwareInfo, GpuAdapter};
+use optimax_core::Text;
+use optimax_diagnosis::Diagnosis;
+use optimax_tweaks::{Plan, RestorePointStatus};
+use serde::{Deserialize, Serialize};
+
+/// Відомості про програму.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct AppInfo {
+    /// Версія.
+    pub version: String,
+    /// Запущено з правами адміністратора.
+    pub elevated: bool,
+    /// Версія вбудованого PresentMon.
+    pub presentmon_version: String,
+}
+
+/// Невдалий відкат.
+#[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct RollbackFailure {
+    /// Запис журналу.
+    pub id: u64,
+    /// Причина.
+    pub error: String,
+}
+
+/// Результат відкату.
+#[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct RollbackResult {
+    /// Відкочені записи.
+    pub rolled_back: Vec<u64>,
+    /// Невдалі.
+    pub failed: Vec<RollbackFailure>,
+}
+
+impl From<optimax_tweaks::engine::RollbackSummary> for RollbackResult {
+    fn from(s: optimax_tweaks::engine::RollbackSummary) -> Self {
+        Self {
+            rolled_back: s.rolled_back,
+            failed: s
+                .failed
+                .into_iter()
+                .map(|(id, error)| RollbackFailure { id, error })
+                .collect(),
+        }
+    }
+}
+
+/// Що зроблено при старті програми (відновлення після збою).
+#[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct StartupReport {
+    /// Оброблено «завислих» записів журналу.
+    pub recovered_pending: u32,
+    /// Повернуто змін режиму гри, що лишилися з минулого запуску.
+    pub restored_gamemode: RollbackResult,
+    /// Помилка відновлення, якщо була.
+    pub error: Option<String>,
+}
+
+/// Зміни, які можна запросити з інтерфейсу. Пріоритети процесів і служби — лише через
+/// профіль режиму гри, напряму з UI їх змінити не можна.
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "tweak", content = "value", rename_all = "snake_case")]
+pub enum UiDesired {
+    /// Схема живлення (GUID).
+    PowerScheme(String),
+    /// Ігровий режим Windows.
+    GameMode(bool),
+}
+
+impl From<UiDesired> for optimax_tweaks::Desired {
+    fn from(d: UiDesired) -> Self {
+        match d {
+            UiDesired::PowerScheme(g) => Self::PowerScheme(g),
+            UiDesired::GameMode(on) => Self::GameMode(on),
+        }
+    }
+}
+
+/// План із номером: застосувати можна лише план, який бекенд сам показав.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct PlanHandle {
+    /// Номер плану.
+    pub id: u64,
+    /// План.
+    pub plan: Plan,
+}
+
+/// Результат застосування.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ApplyResult {
+    /// Записи журналу.
+    pub entry_ids: Vec<u64>,
+    /// Точка відновлення, якщо створена саме зараз.
+    pub restore_point: Option<RestorePointStatus>,
+}
+
+/// Залізо для екрана «Залізо».
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct HardwareInfo {
+    /// Модель CPU.
+    pub cpu_name: String,
+    /// Логічних ядер.
+    pub logical_cores: u32,
+    /// Фізичних ядер.
+    pub physical_cores: Option<u32>,
+    /// SMBIOS: пам'ять і BIOS.
+    pub firmware: Option<FirmwareInfo>,
+    /// Монітори.
+    pub displays: Vec<DisplayInfo>,
+    /// Відеокарти.
+    pub gpus: Vec<GpuAdapter>,
+}
+
+/// Хід запису.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct RecordingProgress {
+    /// Минуло, с.
+    pub elapsed_s: u32,
+    /// Усього, с.
+    pub total_s: u32,
+}
+
+/// Результат діагностики для UI.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct DiagnosisResult {
+    /// Діагноз.
+    pub diagnosis: Diagnosis,
+    /// Частота монітора, використана для аналізу.
+    pub display_hz: Option<u32>,
+    /// Повідомлення PresentMon.
+    pub presentmon_messages: Vec<String>,
+    /// Запис зупинено раніше.
+    pub cancelled: bool,
+}
+
+/// Процес для вибору гри.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ProcessEntry {
+    /// Ім'я exe.
+    pub name: String,
+    /// CPU, % усього процесора (за останню секунду).
+    pub cpu_percent: f32,
+    /// Пам'ять, МіБ.
+    pub memory_mib: u64,
+}
+
+/// Подія режиму гри.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GameModeEvent {
+    /// Стежник запущено.
+    Watching {
+        /// Профілі, за якими стежимо.
+        games: Vec<String>,
+    },
+    /// Гра запустилась і режим гри ввімкнено.
+    Started {
+        /// Гра.
+        game: String,
+        /// PID.
+        pid: u32,
+        /// Застосовано.
+        applied: Vec<Text>,
+        /// Пропущено.
+        skipped: Vec<Text>,
+    },
+    /// Точку відновлення не створено — потрібна згода користувача.
+    NeedsConfirmation {
+        /// Гра.
+        game: String,
+        /// Причина.
+        reason: String,
+    },
+    /// Гру закрито, усе повернуто.
+    Ended {
+        /// Гра.
+        game: String,
+        /// Результат відкату.
+        result: RollbackResult,
+    },
+    /// Стежник зупинено.
+    Stopped,
+}
+
+/// Стан A/B-тесту для UI.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct AbView {
+    /// Гра.
+    pub game: String,
+    /// Опис зміни.
+    pub plan: Plan,
+    /// Порядок прогонів.
+    pub order: Vec<optimax_tweaks::ab::Arm>,
+    /// Наступний прогін (індекс у `order`).
+    pub next: u32,
+    /// Тривалість прогону, с.
+    pub seconds: u32,
+    /// Результати виконаних прогонів.
+    pub results: Vec<optimax_tweaks::ab::RunResult>,
+}
+
+/// Підсумок A/B.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct AbFinal {
+    /// Звіт.
+    pub report: optimax_tweaks::ab::AbReport,
+    /// Звіт Markdown для форуму.
+    pub markdown: String,
+    /// Чи залишено зміну.
+    pub kept: bool,
+}
+
+/// Схеми живлення.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct PowerSchemes {
+    /// Усі схеми.
+    pub schemes: Vec<optimax_core::power::PowerScheme>,
+    /// GUID активної.
+    pub active: String,
+}
+
+/// Профіль після перевірки безпеки + попередження.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ProfilePreview {
+    /// Що буде збережено й застосовано.
+    pub profile: optimax_gamemode::GameProfile,
+    /// Що виправлено й чому.
+    pub warnings: Vec<Text>,
+}

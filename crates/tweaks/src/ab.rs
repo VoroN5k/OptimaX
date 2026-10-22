@@ -24,6 +24,7 @@ const MIN_FRAMES_PER_RUN: usize = 1000;
 
 /// Варіант: A — як було, B — зі зміною.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Arm {
     /// Без зміни.
     A,
@@ -39,6 +40,7 @@ pub fn schedule(runs_per_arm: usize) -> Vec<Arm> {
 
 /// Умови прогону — щоб помітити, якщо вони відрізнялися.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RunConditions {
     /// Тривалість, с.
     pub duration_s: f64,
@@ -52,6 +54,7 @@ pub struct RunConditions {
 
 /// Результат одного прогону.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RunResult {
     /// Варіант.
     pub arm: Arm,
@@ -65,6 +68,7 @@ pub struct RunResult {
 
 /// Описова статистика одного варіанта.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Summary {
     /// Середнє.
     pub mean: f64,
@@ -102,6 +106,7 @@ impl Summary {
 
 /// Висновок для однієї метрики.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
     /// Стало краще.
@@ -114,6 +119,7 @@ pub enum Outcome {
 
 /// Порівняння варіантів за однією метрикою.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Comparison {
     /// Без зміни.
     pub a: Summary,
@@ -131,6 +137,7 @@ pub struct Comparison {
 
 /// Рішення щодо зміни.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum Decision {
     /// Залишити.
@@ -141,6 +148,7 @@ pub enum Decision {
 
 /// Звіт A/B.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct AbReport {
     /// Середній FPS.
     pub avg_fps: Comparison,

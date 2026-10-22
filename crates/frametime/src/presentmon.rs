@@ -53,6 +53,7 @@ fn verify_bytes(bytes: &[u8]) -> Result<(), FrametimeError> {
 
 /// Що записувати.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Target {
     /// За іменем exe, напр. `GeometryDash.exe`.
     ProcessName(String),

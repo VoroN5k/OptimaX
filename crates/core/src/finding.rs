@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Рівень впливу знахідки на продуктивність.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum Impact {
     /// Інформаційно: стан у нормі або вплив не доведено.
@@ -28,6 +29,7 @@ impl Impact {
 
 /// Впевненість у знахідці, 0–100 %.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(transparent)]
 pub struct Confidence(u8);
 
@@ -45,6 +47,7 @@ impl Confidence {
 
 /// Область, до якої належить знахідка.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum Category {
     /// Оперативна пам'ять.
@@ -79,6 +82,7 @@ pub enum Category {
 
 /// Один доказ: підпис і значення (обидва локалізовані).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Evidence {
     /// Що саме виміряно.
     pub label: Text,
@@ -186,6 +190,7 @@ impl FindingBuilder {
 
 /// Знахідка аудиту або діагностики.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Finding {
     /// Стабільний ідентифікатор (напр. `ram.below_rated`), до нього прив'язуються виправлення.
     pub id: String,

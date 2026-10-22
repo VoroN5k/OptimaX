@@ -10,10 +10,11 @@ use std::sync::{Mutex, PoisonError};
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use self::windows::WinProcesses;
+pub use self::windows::{is_elevated, WinProcesses};
 
 /// Клас пріоритету процесу Windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum PriorityClass {
     /// Idle
@@ -46,6 +47,7 @@ impl PriorityClass {
 
 /// Запущений процес.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ProcessInfo {
     /// PID.
     pub pid: u32,
@@ -96,7 +98,7 @@ pub fn is_protected_process(name: &str) -> bool {
 }
 
 /// Доступ до процесів.
-pub trait ProcessApi {
+pub trait ProcessApi: Send + Sync {
     /// Процеси з таким ім'ям exe (без урахування регістру).
     fn find_by_name(&self, name: &str) -> Result<Vec<ProcessInfo>, CoreError>;
     /// Пріоритет процесу. [`CoreError::NotFound`], якщо процес завершився.

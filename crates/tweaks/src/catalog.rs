@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// Ідентифікатор твіку.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum TweakId {
     /// Активна схема живлення.
@@ -68,6 +69,7 @@ impl TweakId {
 
 /// Опис твіку для показу «що зміниться».
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct TweakInfo {
     /// Ідентифікатор.
     pub id: TweakId,
@@ -89,6 +91,7 @@ pub struct TweakInfo {
 
 /// Бажаний стан.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "tweak", content = "value", rename_all = "snake_case")]
 pub enum Desired {
     /// Зробити активною схему з цим GUID.

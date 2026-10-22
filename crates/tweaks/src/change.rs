@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Де зберігається налаштування.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SettingTarget {
     /// Значення реєстру.
@@ -59,6 +60,7 @@ impl SettingTarget {
 
 /// Значення налаштування.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum SettingValue {
     /// Значення реєстру; `None` — значення відсутнє (відкат = видалити).
@@ -75,6 +77,7 @@ pub enum SettingValue {
 
 /// Одна запланована зміна.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct PlannedChange {
     /// Твік, до якого належить зміна.
     pub tweak_id: String,
@@ -92,6 +95,7 @@ pub struct PlannedChange {
 
 /// План: що зміниться і як це впливає. Показується користувачу **до** застосування.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Plan {
     /// Опис твіку (вплив на продуктивність, нагрів, безпеку).
     pub info: TweakInfo,

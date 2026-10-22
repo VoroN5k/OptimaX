@@ -5,6 +5,7 @@ use std::time::Duration;
 
 /// Один знімок усіх метрик.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Snapshot {
     /// Мілісекунди від старту семплера (монотонний годинник).
     pub elapsed_ms: u64,
@@ -25,6 +26,7 @@ pub struct Snapshot {
 
 /// Завантаження CPU.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct CpuSnapshot {
     /// Середнє по всіх логічних ядрах, %.
     pub total_percent: f32,
@@ -47,6 +49,7 @@ impl CpuSnapshot {
 
 /// Стан RAM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct MemorySnapshot {
     /// Усього, байт.
     pub total_bytes: u64,
@@ -58,6 +61,7 @@ pub struct MemorySnapshot {
 
 /// Активність дисків.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct DiskSnapshot {
     /// Читання, байт/с.
     pub read_bytes_per_sec: u64,
@@ -67,6 +71,7 @@ pub struct DiskSnapshot {
 
 /// Причина зниження частоти GPU (NVML `ClocksThrottleReasons`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ThrottleReason {
     /// GPU простоює.
@@ -91,6 +96,7 @@ pub enum ThrottleReason {
 
 /// Метрики однієї відеокарти. Поля `None` — джерело не повернуло значення.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GpuSnapshot {
     /// Індекс у джерелі (NVML).
     pub index: u32,
@@ -120,6 +126,7 @@ pub struct GpuSnapshot {
 
 /// Процес у топі за CPU.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ProcessSample {
     /// PID.
     pub pid: u32,

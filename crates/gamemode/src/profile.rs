@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 /// Пріоритет гри.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum GamePriority {
     /// Не змінювати.
@@ -35,6 +36,7 @@ impl GamePriority {
 
 /// Профіль гри.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GameProfile {
     /// Ім'я exe гри, напр. `GeometryDash.exe`.
     pub exe: String,

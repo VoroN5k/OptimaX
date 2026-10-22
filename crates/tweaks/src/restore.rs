@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Що сталося з точкою відновлення.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum RestorePointStatus {
     /// Windows повідомила про створення точки з цим номером.
@@ -20,7 +21,7 @@ pub enum RestorePointStatus {
 }
 
 /// Створення точки відновлення.
-pub trait RestorePointApi {
+pub trait RestorePointApi: Send + Sync {
     /// Створює точку й повертає її номер.
     fn create(&self, description: &str) -> Result<i64, CoreError>;
 }

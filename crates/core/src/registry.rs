@@ -17,6 +17,7 @@ pub use self::windows::WinRegistry;
 
 /// Корінь реєстру.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum RegHive {
     /// `HKEY_LOCAL_MACHINE`
     LocalMachine,
@@ -26,6 +27,7 @@ pub enum RegHive {
 
 /// Значення реєстру з типом.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "type", content = "value")]
 pub enum RegValue {
     /// `REG_DWORD`
@@ -149,7 +151,8 @@ fn utf16_until_nul(data: &[u8]) -> String {
 }
 
 /// Доступ до реєстру лише для читання.
-pub trait RegistryApi {
+/// `Send + Sync`: один екземпляр використовують UI і фонові потоки.
+pub trait RegistryApi: Send + Sync {
     /// Читає значення. `Ok(None)`, якщо ключа чи значення немає.
     fn read_value(
         &self,

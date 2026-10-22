@@ -3,7 +3,7 @@ use crate::journal::MemStore;
 use optimax_core::power::{guids, MemPower};
 use optimax_core::registry::{MemRegistry, RegistryApi};
 use optimax_core::CoreError;
-use std::cell::Cell;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 struct Answer(bool);
 impl Confirm for Answer {
@@ -15,28 +15,28 @@ impl Confirm for Answer {
 /// Точка відновлення з лічильником викликів.
 struct CountingRestore {
     result: Result<i64, u32>,
-    calls: Cell<u32>,
+    calls: AtomicU32,
 }
 
 impl CountingRestore {
     fn ok() -> Self {
         Self {
             result: Ok(7),
-            calls: Cell::new(0),
+            calls: AtomicU32::new(0),
         }
     }
     fn failing() -> Self {
         Self {
             // ERROR_SERVICE_DISABLED: захист системи вимкнено.
             result: Err(1058),
-            calls: Cell::new(0),
+            calls: AtomicU32::new(0),
         }
     }
 }
 
 impl RestorePointApi for CountingRestore {
     fn create(&self, _d: &str) -> Result<i64, CoreError> {
-        self.calls.set(self.calls.get() + 1);
+        self.calls.fetch_add(1, Ordering::SeqCst);
         self.result.map_err(|code| CoreError::Os {
             api: "SRSetRestorePointW",
             code,
@@ -147,7 +147,7 @@ fn already_in_desired_state_is_noop() {
         .is_noop());
     e.apply(&plan, &Answer(false)).unwrap();
     // Порожній план не створює точку відновлення і не пише в журнал.
-    assert_eq!(restore.calls.get(), 0);
+    assert_eq!(restore.calls.load(Ordering::SeqCst), 0);
     assert!(store.snapshot().is_empty());
 }
 
@@ -250,7 +250,7 @@ fn restore_point_only_once_per_session() {
         let out = e.apply(&plan, &Answer(false)).unwrap();
         e.rollback(out.entry_ids[0]).unwrap();
     }
-    assert_eq!(restore.calls.get(), 1);
+    assert_eq!(restore.calls.load(Ordering::SeqCst), 1);
     assert_eq!(game_mode(&reg), None);
     assert_eq!(store.snapshot().len(), 3);
 }

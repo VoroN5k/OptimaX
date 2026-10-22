@@ -24,6 +24,7 @@ pub fn is_stoppable_service(name: &str) -> bool {
 
 /// Стан служби.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceState {
     /// Працює.
@@ -35,7 +36,7 @@ pub enum ServiceState {
 }
 
 /// Керування службами.
-pub trait ServiceApi {
+pub trait ServiceApi: Send + Sync {
     /// Поточний стан.
     fn state(&self, name: &str) -> Result<ServiceState, CoreError>;
     /// Зупиняє службу й чекає, доки вона зупиниться.

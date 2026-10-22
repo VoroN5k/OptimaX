@@ -8,6 +8,7 @@ const UK_JSON: &str = include_str!("../locales/uk.json");
 
 /// Локалізований текст: ключ каталогу + іменовані аргументи для `{name}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Text {
     /// Ключ у каталозі, напр. `audit.ram.below_rated.title`.
     pub key: String,
@@ -55,6 +56,11 @@ impl Catalog {
         Ok(Self {
             entries: serde_json::from_str(json)?,
         })
+    }
+
+    /// Усі записи (для передачі в інтерфейс, який рендерить тексти сам).
+    pub fn entries(&self) -> &HashMap<String, String> {
+        &self.entries
     }
 
     /// Чи є ключ у каталозі.

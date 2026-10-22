@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Тип модуля пам'яті (SMBIOS Type 17, поле Memory Type).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryType {
     /// DDR3
@@ -49,6 +50,7 @@ impl MemoryType {
 
 /// Встановлений модуль пам'яті.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct MemoryModule {
     /// Слот (Device Locator), напр. `DIMM_A2`.
     pub locator: String,
@@ -68,6 +70,7 @@ pub struct MemoryModule {
 
 /// Відомості про BIOS/UEFI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct BiosInfo {
     /// Виробник.
     pub vendor: String,
@@ -79,6 +82,7 @@ pub struct BiosInfo {
 
 /// Дані з таблиці SMBIOS.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct FirmwareInfo {
     /// BIOS (Type 0).
     pub bios: Option<BiosInfo>,
@@ -88,6 +92,7 @@ pub struct FirmwareInfo {
 
 /// Активний монітор.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct DisplayInfo {
     /// Системне ім'я виходу, напр. `\\.\DISPLAY1`.
     pub device_name: String,
@@ -107,6 +112,7 @@ pub struct DisplayInfo {
 
 /// Виробник GPU за PCI Vendor ID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum GpuVendor {
     /// 0x10DE
@@ -133,6 +139,7 @@ impl GpuVendor {
 
 /// Стан з'єднання PCI Express.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct PcieLink {
     /// Поточна кількість ліній.
     pub current_width: u32,
@@ -146,6 +153,7 @@ pub struct PcieLink {
 
 /// Стан Resizable BAR.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case", tag = "state")]
 pub enum RebarState {
     /// Вікно BAR1 не менше за VRAM.
@@ -164,6 +172,7 @@ pub enum RebarState {
 
 /// Відеоадаптер.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GpuAdapter {
     /// Назва.
     pub name: String,
@@ -183,6 +192,7 @@ pub struct GpuAdapter {
 
 /// Активна схема живлення.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct PowerPlan {
     /// GUID у нижньому регістрі, `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`.
     pub guid: String,
@@ -192,6 +202,7 @@ pub struct PowerPlan {
 
 /// Ігровий режим Windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum GameModeState {
     /// Явно ввімкнено.
@@ -204,6 +215,7 @@ pub enum GameModeState {
 
 /// Апаратне планування GPU (HAGS), значення `HwSchMode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum HagsState {
     /// `HwSchMode = 2`
@@ -218,6 +230,7 @@ pub enum HagsState {
 
 /// Реальний стан HAGS одного адаптера за даними драйвера (`D3DKMT_WDDM_2_7_CAPS`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct HagsAdapter {
     /// Назва адаптера.
     pub name: String,
@@ -231,6 +244,7 @@ pub struct HagsAdapter {
 
 /// Повна картина HAGS: налаштування в реєстрі + що реально діє.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct HagsInfo {
     /// Значення `HwSchMode` у реєстрі.
     pub registry: HagsState,

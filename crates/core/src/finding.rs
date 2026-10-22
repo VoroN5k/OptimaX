@@ -61,6 +61,20 @@ pub enum Category {
     Power,
     /// Налаштування Windows.
     Os,
+    /// Процесор як вузьке місце.
+    Cpu,
+    /// Відеопам'ять.
+    Vram,
+    /// Тепловий або силовий тротлінг.
+    Throttling,
+    /// Нерівні кадри, мікрофризи.
+    Stutter,
+    /// Фонові процеси.
+    Background,
+    /// Обмеження частоти кадрів (V-Sync, ліміт FPS).
+    FrameCap,
+    /// Загальний результат діагностики.
+    Summary,
 }
 
 /// Один доказ: підпис і значення (обидва локалізовані).
@@ -76,6 +90,97 @@ impl Evidence {
     /// Створює доказ.
     pub fn new(label: Text, value: Text) -> Self {
         Self { label, value }
+    }
+}
+
+/// Будівник [`Finding`]: ключі тексту `<prefix>.<id>.title`, `.detail`, `.advice`
+/// з однаковими аргументами, щоб шаблони в каталозі могли використовувати будь-який з них.
+#[derive(Debug, Clone)]
+pub struct FindingBuilder {
+    prefix: &'static str,
+    id: &'static str,
+    category: Category,
+    impact: Impact,
+    confidence: u8,
+    args: Vec<(&'static str, String)>,
+    has_advice: bool,
+    evidence: Vec<Evidence>,
+}
+
+impl FindingBuilder {
+    /// Новий будівник.
+    pub fn new(
+        prefix: &'static str,
+        id: &'static str,
+        category: Category,
+        impact: Impact,
+        confidence: u8,
+    ) -> Self {
+        Self {
+            prefix,
+            id,
+            category,
+            impact,
+            confidence,
+            args: Vec::new(),
+            has_advice: false,
+            evidence: Vec::new(),
+        }
+    }
+
+    /// Аргумент для всіх текстів знахідки.
+    #[must_use]
+    pub fn arg(mut self, name: &'static str, value: impl ToString) -> Self {
+        self.args.push((name, value.to_string()));
+        self
+    }
+
+    /// Додати текст поради (`.advice`).
+    #[must_use]
+    pub fn advice(mut self) -> Self {
+        self.has_advice = true;
+        self
+    }
+
+    /// Додати доказ.
+    #[must_use]
+    pub fn evidence(mut self, label: Text, value: Text) -> Self {
+        self.evidence.push(Evidence::new(label, value));
+        self
+    }
+
+    /// Додати кілька доказів.
+    #[must_use]
+    pub fn evidence_list(mut self, items: impl IntoIterator<Item = Evidence>) -> Self {
+        self.evidence.extend(items);
+        self
+    }
+
+    /// Змінити впевненість (напр. після врахування додаткових ознак).
+    #[must_use]
+    pub fn confidence(mut self, percent: u8) -> Self {
+        self.confidence = percent;
+        self
+    }
+
+    /// Готова знахідка.
+    pub fn build(self) -> Finding {
+        let text = |suffix: &str| {
+            self.args.iter().fold(
+                Text::new(format!("{}.{}.{suffix}", self.prefix, self.id)),
+                |t, (k, v)| t.arg(*k, v),
+            )
+        };
+        Finding {
+            id: self.id.to_string(),
+            category: self.category,
+            impact: self.impact,
+            confidence: Confidence::new(self.confidence),
+            title: text("title"),
+            detail: text("detail"),
+            advice: self.has_advice.then(|| text("advice")),
+            evidence: self.evidence,
+        }
     }
 }
 

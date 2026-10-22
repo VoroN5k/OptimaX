@@ -77,6 +77,9 @@ impl Sampler {
                 let mut last = start;
                 let mut next = start + interval;
                 let mut tick: u64 = 0;
+                // CPU процесу — різниця між двома замірами; пробний замір, щоб перший знімок
+                // не показував усім процесам 0 %.
+                let _ = system.top_processes(config.top_processes);
                 let mut top: Vec<ProcessSample> = Vec::new();
                 loop {
                     let wait = next.saturating_duration_since(Instant::now());
@@ -95,7 +98,9 @@ impl Sampler {
                     }
                     tick = tick.wrapping_add(1);
 
+                    let qpc = optimax_core::clock::qpc_now();
                     let snapshot = Snapshot {
+                        qpc,
                         elapsed_ms: u64::try_from(now.duration_since(start).as_millis())
                             .unwrap_or(u64::MAX),
                         cpu: system.cpu(),
@@ -227,7 +232,7 @@ mod tests {
         assert!(snaps.windows(2).all(|w| w[0].elapsed_ms < w[1].elapsed_ms));
         assert_eq!(snaps[0].cpu.busiest_core(), Some((1, 96.0)));
         assert_eq!(snaps[0].gpus[0].utilization_percent, Some(99));
-        // 4 тіки при оновленні процесів кожні 3 тіки → 2 виклики (тіки 0 і 3).
-        assert!((2..=3).contains(&calls.load(Ordering::SeqCst)));
+        // Пробний замір + 4 тіки при оновленні процесів кожні 3 тіки (тіки 0 і 3) → 3 виклики.
+        assert!((3..=4).contains(&calls.load(Ordering::SeqCst)));
     }
 }

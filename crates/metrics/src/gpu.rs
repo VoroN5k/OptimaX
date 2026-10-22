@@ -112,6 +112,7 @@ impl GpuApi for NvmlGpu {
                     vram_used_bytes: mem.as_ref().map(|m| m.used),
                     vram_total_bytes: mem.as_ref().map(|m| m.total),
                     core_clock_mhz: dev.clock_info(Clock::Graphics).ok(),
+                    max_core_clock_mhz: dev.max_clock_info(Clock::Graphics).ok(),
                     memory_clock_mhz: dev.clock_info(Clock::Memory).ok(),
                     temperature_c: dev.temperature(TemperatureSensor::Gpu).ok(),
                     // NVML віддає мілівати.

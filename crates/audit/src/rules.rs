@@ -5,7 +5,7 @@ use crate::model::{
     BiosInfo, DisplayInfo, GameModeState, GpuAdapter, GpuVendor, HagsAdapter, HagsInfo, HagsState,
     MemoryModule, MemoryType, PowerPlan, RebarState,
 };
-use optimax_core::{Category, CivilDate, Confidence, Evidence, Finding, Impact, Text};
+use optimax_core::{Category, CivilDate, Evidence, Finding, FindingBuilder, Impact, Text};
 
 /// Допуск: пам'ять вважається нижче номіналу, якщо працює повільніше на ≥ 3 %.
 const RAM_BELOW_RATED_RATIO: f64 = 0.97;
@@ -34,63 +34,9 @@ pub mod power_guids {
     pub const ULTIMATE: &str = "e9a42b02-d5df-448d-aa00-03f14749eb61";
 }
 
-struct Draft {
-    id: &'static str,
-    category: Category,
-    impact: Impact,
-    confidence: u8,
-    args: Vec<(&'static str, String)>,
-    has_advice: bool,
-    evidence: Vec<Evidence>,
-}
-
-impl Draft {
-    fn new(id: &'static str, category: Category, impact: Impact, confidence: u8) -> Self {
-        Self {
-            id,
-            category,
-            impact,
-            confidence,
-            args: Vec::new(),
-            has_advice: false,
-            evidence: Vec::new(),
-        }
-    }
-
-    fn arg(mut self, name: &'static str, value: impl ToString) -> Self {
-        self.args.push((name, value.to_string()));
-        self
-    }
-
-    fn advice(mut self) -> Self {
-        self.has_advice = true;
-        self
-    }
-
-    fn evidence(mut self, label: Text, value: Text) -> Self {
-        self.evidence.push(Evidence::new(label, value));
-        self
-    }
-
-    /// Ключі: `audit.<id>.title`, `.detail`, `.advice` — з однаковими аргументами.
-    fn build(self) -> Finding {
-        let text = |suffix: &str| {
-            self.args.iter().fold(
-                Text::new(format!("audit.{}.{suffix}", self.id)),
-                |t, (k, v)| t.arg(*k, v),
-            )
-        };
-        Finding {
-            id: self.id.to_string(),
-            category: self.category,
-            impact: self.impact,
-            confidence: Confidence::new(self.confidence),
-            title: text("title"),
-            detail: text("detail"),
-            advice: self.has_advice.then(|| text("advice")),
-            evidence: self.evidence,
-        }
-    }
+/// Будівник знахідки аудиту: ключі тексту `audit.<id>.title` / `.detail` / `.advice`.
+fn draft(id: &'static str, category: Category, impact: Impact, confidence: u8) -> FindingBuilder {
+    FindingBuilder::new("audit", id, category, impact, confidence)
 }
 
 fn or_unknown<T: ToString>(v: Option<T>) -> String {
@@ -128,14 +74,16 @@ pub fn check_memory(modules: &[MemoryModule]) -> Vec<Finding> {
         .unwrap_or("—");
 
     let Some(configured) = configured else {
-        let mut d = Draft::new("ram.unknown_speed", Category::Memory, Impact::Info, 100);
-        d.evidence = evidence;
-        return vec![d.build()];
+        return vec![
+            draft("ram.unknown_speed", Category::Memory, Impact::Info, 100)
+                .evidence_list(evidence)
+                .build(),
+        ];
     };
 
     let draft = match rated {
         Some(rated) if f64::from(configured) < f64::from(rated) * RAM_BELOW_RATED_RATIO => {
-            Draft::new("ram.below_rated", Category::Memory, Impact::High, 85)
+            draft("ram.below_rated", Category::Memory, Impact::High, 85)
                 .arg("configured", configured)
                 .arg("rated", rated)
                 .advice()
@@ -147,20 +95,17 @@ pub fn check_memory(modules: &[MemoryModule]) -> Vec<Finding> {
                 _ => false,
             };
             if jedec_base {
-                Draft::new("ram.jedec_base", Category::Memory, Impact::Moderate, 55)
+                draft("ram.jedec_base", Category::Memory, Impact::Moderate, 55)
                     .arg("configured", configured)
                     .arg("type", mem_type.label())
                     .arg("part", part)
                     .advice()
             } else {
-                Draft::new("ram.ok", Category::Memory, Impact::Info, 80)
-                    .arg("configured", configured)
+                draft("ram.ok", Category::Memory, Impact::Info, 80).arg("configured", configured)
             }
         }
     };
-    let mut d = draft;
-    d.evidence = evidence;
-    vec![d.build()]
+    vec![draft.evidence_list(evidence).build()]
 }
 
 /// Монітори: частота нижча за доступну для поточної роздільності.
@@ -173,9 +118,9 @@ pub fn check_displays(displays: &[DisplayInfo]) -> Vec<Finding> {
                 && f64::from(d.max_hz_at_current_res)
                     >= f64::from(d.current_hz) * DISPLAY_MIN_GAIN_RATIO;
             let draft = if underused {
-                Draft::new("display.low_refresh", Category::Display, Impact::High, 95).advice()
+                draft("display.low_refresh", Category::Display, Impact::High, 95).advice()
             } else {
-                Draft::new("display.ok", Category::Display, Impact::Info, 90)
+                draft("display.ok", Category::Display, Impact::Info, 90)
             };
             draft
                 .arg("monitor", &d.monitor_name)
@@ -208,9 +153,9 @@ pub fn check_pcie(gpu: &GpuAdapter) -> Option<Finding> {
         } else {
             Impact::Moderate
         };
-        Draft::new("gpu.pcie_narrow", Category::Gpu, impact, 75).advice()
+        draft("gpu.pcie_narrow", Category::Gpu, impact, 75).advice()
     } else {
-        Draft::new("gpu.pcie_ok", Category::Gpu, Impact::Info, 85)
+        draft("gpu.pcie_ok", Category::Gpu, Impact::Info, 85)
     };
     Some(
         draft
@@ -238,15 +183,15 @@ pub fn check_rebar(gpu: &GpuAdapter) -> Option<Finding> {
     let vram = or_unknown(gpu.vram_mib);
     let draft = match gpu.rebar {
         RebarState::Enabled { bar1_mib } => {
-            Draft::new("gpu.rebar_on", Category::Gpu, Impact::Info, 80).arg("bar1", bar1_mib)
+            draft("gpu.rebar_on", Category::Gpu, Impact::Info, 80).arg("bar1", bar1_mib)
         }
         RebarState::Disabled { bar1_mib } => {
-            Draft::new("gpu.rebar_off", Category::Gpu, Impact::Moderate, 70)
+            draft("gpu.rebar_off", Category::Gpu, Impact::Moderate, 70)
                 .arg("bar1", bar1_mib)
                 .advice()
         }
         RebarState::Unknown if gpu.pcie.is_some() => {
-            Draft::new("gpu.rebar_unknown", Category::Gpu, Impact::Info, 100)
+            draft("gpu.rebar_unknown", Category::Gpu, Impact::Info, 100)
         }
         RebarState::Unknown => return None,
     };
@@ -263,11 +208,11 @@ pub fn check_driver(gpu: &GpuAdapter, today: CivilDate) -> Option<Finding> {
     };
     let days = date.days_until(today).max(0);
     let draft = if days > DRIVER_OLD_DAYS {
-        Draft::new("driver.old", Category::Driver, Impact::Moderate, 60).advice()
+        draft("driver.old", Category::Driver, Impact::Moderate, 60).advice()
     } else if days > DRIVER_AGING_DAYS {
-        Draft::new("driver.aging", Category::Driver, Impact::Info, 60).advice()
+        draft("driver.aging", Category::Driver, Impact::Info, 60).advice()
     } else {
-        Draft::new("driver.ok", Category::Driver, Impact::Info, 90)
+        draft("driver.ok", Category::Driver, Impact::Info, 90)
     };
     Some(
         draft
@@ -289,11 +234,11 @@ pub fn check_bios(bios: &BiosInfo, today: CivilDate) -> Finding {
         .release_date
         .is_some_and(|d| d.days_until(today) > BIOS_OLD_DAYS);
     let draft = if old {
-        Draft::new("bios.old", Category::Firmware, Impact::Info, 70)
+        draft("bios.old", Category::Firmware, Impact::Info, 70)
             .arg("years", BIOS_OLD_DAYS / 365)
             .advice()
     } else {
-        Draft::new("bios.info", Category::Firmware, Impact::Info, 95)
+        draft("bios.info", Category::Firmware, Impact::Info, 95)
     };
     draft
         .arg("vendor", &bios.vendor)
@@ -307,13 +252,13 @@ pub fn check_power_plan(plan: &PowerPlan) -> Finding {
     let name = plan.name.clone().unwrap_or_else(|| plan.guid.clone());
     let draft = match plan.guid.as_str() {
         power_guids::POWER_SAVER => {
-            Draft::new("power.saver", Category::Power, Impact::High, 85).advice()
+            draft("power.saver", Category::Power, Impact::High, 85).advice()
         }
-        power_guids::BALANCED => Draft::new("power.balanced", Category::Power, Impact::Info, 80),
+        power_guids::BALANCED => draft("power.balanced", Category::Power, Impact::Info, 80),
         power_guids::HIGH_PERFORMANCE | power_guids::ULTIMATE => {
-            Draft::new("power.high", Category::Power, Impact::Info, 90)
+            draft("power.high", Category::Power, Impact::Info, 90)
         }
-        _ => Draft::new("power.custom", Category::Power, Impact::Info, 70),
+        _ => draft("power.custom", Category::Power, Impact::Info, 70),
     };
     draft
         .arg("name", name)
@@ -324,12 +269,10 @@ pub fn check_power_plan(plan: &PowerPlan) -> Finding {
 /// Ігровий режим Windows. Вплив зазвичай малий — лише інформуємо.
 pub fn check_game_mode(state: GameModeState) -> Finding {
     match state {
-        GameModeState::Enabled => Draft::new("os.game_mode_on", Category::Os, Impact::Info, 90),
-        GameModeState::Default => {
-            Draft::new("os.game_mode_default", Category::Os, Impact::Info, 80)
-        }
+        GameModeState::Enabled => draft("os.game_mode_on", Category::Os, Impact::Info, 90),
+        GameModeState::Default => draft("os.game_mode_default", Category::Os, Impact::Info, 80),
         GameModeState::Disabled => {
-            Draft::new("os.game_mode_off", Category::Os, Impact::Info, 90).advice()
+            draft("os.game_mode_off", Category::Os, Impact::Info, 90).advice()
         }
     }
     .build()
@@ -347,13 +290,11 @@ pub fn check_hags(info: &HagsInfo) -> Finding {
 
     let Some(adapters) = &info.adapters else {
         let draft = match info.registry {
-            HagsState::Enabled => Draft::new("os.hags_on", Category::Os, Impact::Info, 90),
-            HagsState::Disabled => {
-                Draft::new("os.hags_off", Category::Os, Impact::Info, 90).advice()
-            }
-            HagsState::NotSet => Draft::new("os.hags_default", Category::Os, Impact::Info, 60),
+            HagsState::Enabled => draft("os.hags_on", Category::Os, Impact::Info, 90),
+            HagsState::Disabled => draft("os.hags_off", Category::Os, Impact::Info, 90).advice(),
+            HagsState::NotSet => draft("os.hags_default", Category::Os, Impact::Info, 60),
             HagsState::Unexpected(v) => {
-                Draft::new("os.hags_unexpected", Category::Os, Impact::Info, 50).arg("value", v)
+                draft("os.hags_unexpected", Category::Os, Impact::Info, 50).arg("value", v)
             }
         };
         return draft
@@ -364,17 +305,17 @@ pub fn check_hags(info: &HagsInfo) -> Finding {
     let supported: Vec<&HagsAdapter> = adapters.iter().filter(|a| a.supported).collect();
     let active = supported.iter().any(|a| a.enabled);
     let mut draft = if supported.is_empty() {
-        Draft::new("os.hags_unsupported", Category::Os, Impact::Info, 90)
+        draft("os.hags_unsupported", Category::Os, Impact::Info, 90)
     } else {
         match (active, info.registry) {
             (false, HagsState::Enabled) => {
-                Draft::new("os.hags_pending_on", Category::Os, Impact::Info, 90)
+                draft("os.hags_pending_on", Category::Os, Impact::Info, 90)
             }
             (true, HagsState::Disabled) => {
-                Draft::new("os.hags_pending_off", Category::Os, Impact::Info, 90)
+                draft("os.hags_pending_off", Category::Os, Impact::Info, 90)
             }
-            (true, _) => Draft::new("os.hags_on", Category::Os, Impact::Info, 95),
-            (false, _) => Draft::new("os.hags_off", Category::Os, Impact::Info, 95).advice(),
+            (true, _) => draft("os.hags_on", Category::Os, Impact::Info, 95),
+            (false, _) => draft("os.hags_off", Category::Os, Impact::Info, 95).advice(),
         }
     }
     .evidence(Text::new("audit.ev.hags_registry"), registry);

@@ -8,6 +8,8 @@ use std::time::Duration;
 pub struct Snapshot {
     /// Мілісекунди від старту семплера (монотонний годинник).
     pub elapsed_ms: u64,
+    /// Мітка QPC моменту знімка — та сама шкала, що й час кадрів PresentMon (`--qpc_time`).
+    pub qpc: i64,
     /// Процесор.
     pub cpu: CpuSnapshot,
     /// Оперативна пам'ять.
@@ -102,6 +104,8 @@ pub struct GpuSnapshot {
     pub vram_total_bytes: Option<u64>,
     /// Частота ядра, МГц.
     pub core_clock_mhz: Option<u32>,
+    /// Максимальна частота ядра, яку підтримує карта, МГц.
+    pub max_core_clock_mhz: Option<u32>,
     /// Частота пам'яті, МГц.
     pub memory_clock_mhz: Option<u32>,
     /// Температура ядра, °C.

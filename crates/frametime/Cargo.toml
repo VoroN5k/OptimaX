@@ -1,0 +1,33 @@
+[package]
+name = "optimax-frametime"
+description = "Запис кадрів через вбудований PresentMon, розбір CSV, FPS / 1% low / піки frametime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[dependencies]
+optimax-core.workspace = true
+optimax-metrics.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+sha2.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+] }
+
+[build-dependencies]
+sha2.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+
+[lints]
+workspace = true

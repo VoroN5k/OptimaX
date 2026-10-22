@@ -1,0 +1,23 @@
+[package]
+name = "optimax-diagnosis"
+description = "Правила визначення вузького місця («Чому лагає?») з рівнем впевненості. Лише чисті функції над даними."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+optimax-core.workspace = true
+optimax-metrics.workspace = true
+optimax-frametime.workspace = true
+serde.workspace = true
+
+
+[dev-dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+optimax-audit.workspace = true
+
+[lints]
+workspace = true

@@ -118,6 +118,7 @@ pub mod app {
                     let state = match &e.state {
                         EntryState::Pending => "очікує".to_string(),
                         EntryState::Applied => "ДІЄ".to_string(),
+                        EntryState::Performed => "виконано".to_string(),
                         EntryState::RolledBack { .. } => "відкочено".to_string(),
                         EntryState::Failed { error } => format!("помилка: {error}"),
                     };

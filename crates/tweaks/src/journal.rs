@@ -18,6 +18,8 @@ pub enum EntryState {
     Pending,
     /// Зміну застосовано й перевірено.
     Applied,
+    /// Разову дію виконано (відкату не потребує, напр. очищення standby).
+    Performed,
     /// Зміну відкочено.
     RolledBack {
         /// Unix-час відкату.

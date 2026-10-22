@@ -2,13 +2,17 @@
 
 use crate::catalog::Desired;
 use crate::change::{
-    describe_registry, describe_scheme, Plan, PlannedChange, SettingTarget, SettingValue,
+    describe_registry, describe_scheme, describe_service, Plan, PlannedChange, SettingTarget,
+    SettingValue,
 };
 use crate::journal::{EntryState, JournalEntry, JournalStore};
 use crate::restore::{RestorePointApi, RestorePointStatus};
 use crate::TweakError;
 use optimax_core::power::PowerApi;
+use optimax_core::process::{is_protected_process, PriorityClass, ProcessApi};
 use optimax_core::registry::{RegHive, RegValue, RegistryWriteApi};
+use optimax_core::service::{is_stoppable_service, ServiceApi};
+use optimax_core::{CoreError, Text};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Ключ ігрового режиму.
@@ -49,12 +53,19 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
+/// Ціль, що зникає сама (процес завершився) — тоді відкочувати нічого.
+fn is_ephemeral(target: &SettingTarget) -> bool {
+    matches!(target, SettingTarget::ProcessPriority { .. })
+}
+
 /// Рушій змін. Одна «сесія» = один екземпляр: точка відновлення створюється перед першою зміною.
 pub struct Engine<'a> {
     registry: &'a dyn RegistryWriteApi,
     power: &'a dyn PowerApi,
     restore: &'a dyn RestorePointApi,
     store: &'a dyn JournalStore,
+    processes: Option<&'a dyn ProcessApi>,
+    services: Option<&'a dyn ServiceApi>,
     entries: Vec<JournalEntry>,
     session_restore: Option<RestorePointStatus>,
 }
@@ -72,9 +83,35 @@ impl<'a> Engine<'a> {
             power,
             restore,
             store,
+            processes: None,
+            services: None,
             entries: store.load()?,
             session_restore: None,
         })
+    }
+
+    /// Дозволяє змінювати пріоритети процесів.
+    #[must_use]
+    pub fn with_processes(mut self, processes: &'a dyn ProcessApi) -> Self {
+        self.processes = Some(processes);
+        self
+    }
+
+    /// Дозволяє тимчасово зупиняти служби зі списку дозволених.
+    #[must_use]
+    pub fn with_services(mut self, services: &'a dyn ServiceApi) -> Self {
+        self.services = Some(services);
+        self
+    }
+
+    fn processes(&self) -> Result<&'a dyn ProcessApi, TweakError> {
+        self.processes
+            .ok_or(TweakError::Unavailable("керування процесами"))
+    }
+
+    fn services(&self) -> Result<&'a dyn ServiceApi, TweakError> {
+        self.services
+            .ok_or(TweakError::Unavailable("керування службами"))
     }
 
     /// Усі записи журналу.
@@ -99,6 +136,11 @@ impl<'a> Engine<'a> {
                 SettingValue::Registry(self.registry.read_value(*hive, path, name)?)
             }
             SettingTarget::PowerScheme => SettingValue::PowerScheme(self.power.active_scheme()?),
+            SettingTarget::ProcessPriority { process } => {
+                SettingValue::Priority(self.processes()?.priority(process)?)
+            }
+            SettingTarget::Service { name } => SettingValue::Service(self.services()?.state(name)?),
+            SettingTarget::StandbyList => SettingValue::Action,
         })
     }
 
@@ -112,6 +154,19 @@ impl<'a> Engine<'a> {
             }
             (SettingTarget::PowerScheme, SettingValue::PowerScheme(guid)) => {
                 Ok(self.power.set_active_scheme(guid)?)
+            }
+            (SettingTarget::ProcessPriority { process }, SettingValue::Priority(p)) => {
+                Ok(self.processes()?.set_priority(process, *p)?)
+            }
+            (SettingTarget::Service { name }, SettingValue::Service(state)) => {
+                let services = self.services()?;
+                match state {
+                    optimax_core::service::ServiceState::Running => Ok(services.start(name)?),
+                    optimax_core::service::ServiceState::Stopped => Ok(services.stop(name)?),
+                    optimax_core::service::ServiceState::Other(_) => Err(TweakError::Forbidden(
+                        format!("{name}: перехідний стан не встановлюється"),
+                    )),
+                }
             }
             _ => Err(TweakError::Journal(format!(
                 "{}: тип значення не відповідає місцю зберігання",
@@ -199,6 +254,55 @@ impl<'a> Engine<'a> {
                         new_display: describe_scheme(&guid, target_scheme.name.as_deref()),
                         old: SettingValue::PowerScheme(current),
                         new: SettingValue::PowerScheme(guid),
+                    }]
+                }
+            }
+            Desired::ProcessPriority { process, priority } => {
+                // Захищені процеси й Realtime — ніколи, хоч би що просили.
+                if is_protected_process(&process.name) {
+                    return Err(TweakError::Forbidden(format!(
+                        "{}: захищений процес",
+                        process.name
+                    )));
+                }
+                if *priority == PriorityClass::Realtime {
+                    return Err(TweakError::Forbidden(
+                        "пріоритет Realtime може заблокувати систему".into(),
+                    ));
+                }
+                let current = self.processes()?.priority(process)?;
+                if current == *priority {
+                    Vec::new()
+                } else {
+                    vec![PlannedChange {
+                        tweak_id,
+                        target: SettingTarget::ProcessPriority {
+                            process: process.clone(),
+                        },
+                        old_display: Text::new(current.text_key()),
+                        new_display: Text::new(priority.text_key()),
+                        old: SettingValue::Priority(current),
+                        new: SettingValue::Priority(*priority),
+                    }]
+                }
+            }
+            Desired::Service { name, state } => {
+                if !is_stoppable_service(name) {
+                    return Err(TweakError::Forbidden(format!(
+                        "служба {name} не входить до списку дозволених"
+                    )));
+                }
+                let current = self.services()?.state(name)?;
+                if current == *state {
+                    Vec::new()
+                } else {
+                    vec![PlannedChange {
+                        tweak_id,
+                        target: SettingTarget::Service { name: name.clone() },
+                        old_display: describe_service(current),
+                        new_display: describe_service(*state),
+                        old: SettingValue::Service(current),
+                        new: SettingValue::Service(*state),
                     }]
                 }
             }
@@ -312,6 +416,40 @@ impl<'a> Engine<'a> {
         result
     }
 
+    /// Виконує разову дію без відкату (очищення standby) і записує її в журнал.
+    pub fn perform(
+        &mut self,
+        tweak: crate::TweakId,
+        target: SettingTarget,
+        action: impl FnOnce() -> Result<(), CoreError>,
+    ) -> Result<u64, TweakError> {
+        let id = self.entries.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+        self.entries.push(JournalEntry {
+            id,
+            tweak_id: tweak.as_str().into(),
+            target: target.clone(),
+            old: SettingValue::Action,
+            new: SettingValue::Action,
+            created_unix: now_unix(),
+            state: EntryState::Pending,
+            restore_point: self.session_restore.clone(),
+        });
+        self.save()?;
+        let result = action();
+        let state = match &result {
+            Ok(()) => EntryState::Performed,
+            Err(e) => EntryState::Failed {
+                error: e.to_string(),
+            },
+        };
+        if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
+            e.state = state;
+        }
+        tracing::info!("дія #{id}: {} — {result:?}", target.location());
+        self.save()?;
+        result.map(|()| id).map_err(TweakError::from)
+    }
+
     /// Відкочує один запис. Якщо значення після нас хтось змінив — відмова (не затираємо чуже).
     pub fn rollback(&mut self, id: u64) -> Result<(), TweakError> {
         let entry = self
@@ -320,12 +458,17 @@ impl<'a> Engine<'a> {
             .find(|e| e.id == id && e.state == EntryState::Applied)
             .cloned()
             .ok_or(TweakError::NoSuchEntry(id))?;
-        if self.read(&entry.target)? != entry.new {
-            return Err(TweakError::Conflict {
-                location: entry.target.location(),
-            });
+        match self.read(&entry.target) {
+            Ok(current) if current != entry.new => {
+                return Err(TweakError::Conflict {
+                    location: entry.target.location(),
+                })
+            }
+            Ok(_) => self.write_verified(&entry.target, &entry.old)?,
+            // Процес уже завершився — його пріоритет відновлювати нікому.
+            Err(TweakError::Core(CoreError::NotFound(_))) if is_ephemeral(&entry.target) => {}
+            Err(e) => return Err(e),
         }
-        self.write_verified(&entry.target, &entry.old)?;
         if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
             e.state = EntryState::RolledBack {
                 at_unix: now_unix(),
@@ -337,8 +480,15 @@ impl<'a> Engine<'a> {
 
     /// Відкочує всі діючі зміни, від найновішої до найстарішої. Помилки не зупиняють решту.
     pub fn rollback_all(&mut self) -> RollbackSummary {
-        let mut ids: Vec<u64> = self.active().map(|e| e.id).collect();
+        let ids: Vec<u64> = self.active().map(|e| e.id).collect();
+        self.rollback_ids(&ids)
+    }
+
+    /// Відкочує задані записи (напр. лише зміни однієї ігрової сесії), від найновішого.
+    pub fn rollback_ids(&mut self, ids: &[u64]) -> RollbackSummary {
+        let mut ids = ids.to_vec();
         ids.sort_unstable_by(|a, b| b.cmp(a));
+        ids.dedup();
         let mut summary = RollbackSummary::default();
         for id in ids {
             match self.rollback(id) {
@@ -359,8 +509,23 @@ impl<'a> Engine<'a> {
             .cloned()
             .collect();
         for entry in &pending {
-            let current = self.read(&entry.target)?;
-            let state = if current == entry.new {
+            let current = match self.read(&entry.target) {
+                Ok(v) => v,
+                Err(TweakError::Core(CoreError::NotFound(_))) if is_ephemeral(&entry.target) => {
+                    if let Some(e) = self.entries.iter_mut().find(|e| e.id == entry.id) {
+                        e.state = EntryState::RolledBack {
+                            at_unix: now_unix(),
+                        };
+                    }
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+            let state = if entry.target == SettingTarget::StandbyList {
+                EntryState::Failed {
+                    error: "дію перервано збоєм; відкат не потрібен".into(),
+                }
+            } else if current == entry.new {
                 match self.write_verified(&entry.target, &entry.old) {
                     Ok(()) => EntryState::RolledBack {
                         at_unix: now_unix(),

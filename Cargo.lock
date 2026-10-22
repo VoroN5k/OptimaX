@@ -256,6 +256,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "optimax-gamemode"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "optimax-core",
+ "optimax-tweaks",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "optimax-metrics"
 version = "0.1.0"
 dependencies = [

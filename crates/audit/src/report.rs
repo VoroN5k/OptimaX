@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Група перевірок, що читає одне джерело даних.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum CheckId {
     /// SMBIOS: пам'ять і BIOS.
@@ -39,6 +40,7 @@ impl CheckId {
 
 /// Перевірка, яку не вдалося виконати. Показується користувачу, а не замовчується.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct SkippedCheck {
     /// Яка перевірка.
     pub check: CheckId,
@@ -48,6 +50,7 @@ pub struct SkippedCheck {
 
 /// Результат аудиту.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct AuditReport {
     /// Знахідки, від найвпливовіших.
     pub findings: Vec<Finding>,

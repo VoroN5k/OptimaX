@@ -1,0 +1,10 @@
+import { defineConfig } from "vite";
+import { svelte } from "@sveltejs/vite-plugin-svelte";
+
+// Tauri очікує фіксований порт; зовнішніх ресурсів немає — усе в бандлі.
+export default defineConfig({
+  plugins: [svelte()],
+  clearScreen: false,
+  server: { port: 1420, strictPort: true, host: "127.0.0.1" },
+  build: { target: "es2022", sourcemap: false, assetsInlineLimit: 0 },
+});

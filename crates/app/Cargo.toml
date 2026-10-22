@@ -1,0 +1,50 @@
+[package]
+name = "optimax-app"
+description = "OptimaX: Tauri-бекенд (команди й події для інтерфейсу)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+default-run = "optimax"
+
+[lib]
+name = "optimax_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "optimax"
+path = "src/main.rs"
+test = false
+
+[build-dependencies]
+tauri-build = { workspace = true, features = [] }
+
+[dependencies]
+optimax-core.workspace = true
+optimax-metrics.workspace = true
+optimax-audit.workspace = true
+optimax-frametime.workspace = true
+optimax-diagnosis.workspace = true
+optimax-tweaks.workspace = true
+optimax-gamemode.workspace = true
+tauri = { workspace = true, features = [] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+sysinfo.workspace = true
+
+[dev-dependencies]
+ts-rs.workspace = true
+optimax-core = { workspace = true, features = ["ts"] }
+optimax-metrics = { workspace = true, features = ["ts"] }
+optimax-audit = { workspace = true, features = ["ts"] }
+optimax-frametime = { workspace = true, features = ["ts"] }
+optimax-diagnosis = { workspace = true, features = ["ts"] }
+optimax-tweaks = { workspace = true, features = ["ts"] }
+optimax-gamemode = { workspace = true, features = ["ts"] }
+
+[lints]
+workspace = true

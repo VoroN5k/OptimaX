@@ -7,7 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Генерація TypeScript-типів для UI (вмикає лише крейт app у тестах).
+ts = ["dep:ts-rs", "optimax-core/ts"]
+
 [dependencies]
+ts-rs = { workspace = true, optional = true }
 optimax-core.workspace = true
 serde.workspace = true
 tracing.workspace = true

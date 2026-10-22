@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Дата за григоріанським календарем (UTC).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct CivilDate {
     /// Рік, напр. 2026.
     pub year: i32,

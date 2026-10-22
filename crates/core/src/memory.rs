@@ -20,6 +20,7 @@ pub const LOW_MEMORY_FRACTION: f64 = 0.05;
 
 /// Стан фізичної пам'яті.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct MemoryStatus {
     /// Усього, байт.
     pub total_bytes: u64,
@@ -36,7 +37,7 @@ impl MemoryStatus {
 }
 
 /// Доступ до пам'яті.
-pub trait MemoryApi {
+pub trait MemoryApi: Send + Sync {
     /// Поточний стан.
     fn status(&self) -> Result<MemoryStatus, CoreError>;
     /// Очищає standby-список. Потребує прав адміністратора.

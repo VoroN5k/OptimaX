@@ -12,6 +12,7 @@ use std::sync::{Mutex, PoisonError};
 
 /// Стан запису.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum EntryState {
     /// Записано перед зміною; якщо програма впала — зміна могла не завершитись.
@@ -34,6 +35,7 @@ pub enum EntryState {
 
 /// Запис журналу.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct JournalEntry {
     /// Номер (зростає).
     pub id: u64,
@@ -54,7 +56,7 @@ pub struct JournalEntry {
 }
 
 /// Сховище журналу.
-pub trait JournalStore {
+pub trait JournalStore: Send + Sync {
     /// Завантажує всі записи (порожньо, якщо журналу ще немає).
     fn load(&self) -> Result<Vec<JournalEntry>, TweakError>;
     /// Зберігає всі записи.

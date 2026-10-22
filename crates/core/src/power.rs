@@ -23,6 +23,7 @@ pub mod guids {
 
 /// Схема живлення.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct PowerScheme {
     /// GUID у нижньому регістрі.
     pub guid: String,
@@ -55,7 +56,7 @@ pub fn parse_guid(s: &str) -> Option<u128> {
 }
 
 /// Керування схемами живлення.
-pub trait PowerApi {
+pub trait PowerApi: Send + Sync {
     /// GUID активної схеми.
     fn active_scheme(&self) -> Result<String, CoreError>;
     /// Робить схему активною. Схема має існувати.

@@ -147,3 +147,31 @@ impl ProcessApi for WinProcesses {
         })
     }
 }
+
+/// Чи працює поточний процес із підвищеними правами (адміністратор після UAC).
+pub fn is_elevated() -> bool {
+    use windows::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    let mut token = HANDLE::default();
+    // SAFETY: псевдодескриптор поточного процесу; токен обгортається в Handle.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.is_err() {
+        return false;
+    }
+    let token = Handle(token);
+    let mut elevation = TOKEN_ELEVATION::default();
+    let mut len = 0u32;
+    // SAFETY: буфер — локальна структура рівно потрібного розміру.
+    let ok = unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenElevation,
+            Some((&mut elevation as *mut TOKEN_ELEVATION).cast()),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut len,
+        )
+    }
+    .is_ok();
+    ok && elevation.TokenIsElevated != 0
+}

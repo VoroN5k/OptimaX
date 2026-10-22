@@ -25,6 +25,7 @@ pub const MIN_DURATION_MS: f64 = 10_000.0;
 
 /// Виміряний ефект зміни (заповнюється A/B-тестом, не діагностикою).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct MeasuredGain {
     /// Зміна середнього FPS, %.
     pub avg_fps_change_pct: f64,
@@ -36,6 +37,7 @@ pub struct MeasuredGain {
 
 /// Вердикт: знахідка + виміряний ефект виправлення (якщо вже міряли).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Verdict {
     /// Знахідка з категорією, впливом, впевненістю й доказами.
     pub finding: Finding,
@@ -54,6 +56,7 @@ impl From<Finding> for Verdict {
 
 /// Головне обмеження продуктивності.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum Bottleneck {
     /// Відеокарта.
@@ -70,6 +73,7 @@ pub enum Bottleneck {
 
 /// Результат діагностики.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Diagnosis {
     /// Ім'я процесу гри.
     pub game: String,

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Головне вікно: лише події й власні команди OptimaX. Доступу до файлів, оболонки чи мережі немає.",
+  "windows": ["main"],
+  "permissions": ["core:event:default"]
+}

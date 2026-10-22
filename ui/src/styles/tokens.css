@@ -1,0 +1,39 @@
+/* Дизайн-токени OptimaX — єдине джерело істини (CLAUDE.md, розд. 10.2).
+   Компоненти використовують лише ці змінні, жодних «магічних» кольорів. */
+:root {
+  --bg-app:        #090B12;
+  --bg-sidebar:    #0C0E16;
+  --bg-card:       #12151F;
+  --bg-card-hover: #161A26;
+  --bg-input:      #0E111A;
+  --border:        #1D2233;
+  --border-strong: #2A3150;
+
+  --text:          #E8EAF2;
+  --text-muted:    #8A90A8;
+  --text-dim:      #5C6280;
+
+  --accent-from:   #6E7BFF;   /* синьо-фіолетовий */
+  --accent-to:     #8B5CF6;
+  --accent-glow:   rgba(110,123,255,.35);
+
+  --ok:            #4ADE80;   /* безпечно / успіх */
+  --warn:          #F5B84B;   /* помірний вплив */
+  --danger:        #F0616D;   /* впливає на звичні речі / небезпечно */
+  --info:          #6E7BFF;
+
+  --radius-sm: 8px;  --radius-md: 12px;  --radius-lg: 18px;
+  --space: 4px;      /* усі відступи кратні 4 */
+  --ease: cubic-bezier(.2,.8,.2,1);
+  --dur-fast: 120ms; --dur: 200ms; --dur-slow: 400ms;
+
+  /* Похідні (лише з токенів вище). */
+  --accent-gradient: linear-gradient(135deg, var(--accent-from), var(--accent-to));
+  --font-ui: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --sidebar-width: 225px;
+  --shadow-card: 0 1px 0 rgba(255,255,255,.02) inset, 0 8px 24px rgba(0,0,0,.25);
+  --shadow-modal: 0 24px 64px rgba(0,0,0,.5);
+  --on-accent: #FFFFFF; /* текст на градієнті акценту */
+  --card-sheen: rgba(255,255,255,.018); /* ледь помітний внутрішній градієнт картки */
+}

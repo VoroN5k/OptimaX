@@ -1,0 +1,12 @@
+# Усі текстові файли — з LF у репозиторії й робочій копії (незалежно від core.autocrlf),
+# щоб згенеровані файли (ui/src/lib/bindings) не «змінювалися» лише через кінці рядків.
+* text=auto eol=lf
+
+# Бінарні файли — без жодних перетворень.
+*.exe   binary
+*.dll   binary
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.woff  binary
+*.woff2 binary

@@ -28,8 +28,10 @@
   </div>
   {#if secondary || primary}
     <footer class="actionbar">
-      <div class="left">{#if secondary}{@render secondary()}{/if}</div>
-      <div class="right">{#if primary}{@render primary()}{/if}</div>
+      <div class="bar">
+        <div class="left">{#if secondary}{@render secondary()}{/if}</div>
+        <div class="right">{#if primary}{@render primary()}{/if}</div>
+      </div>
     </footer>
   {/if}
 </div>
@@ -53,18 +55,26 @@
     display: grid;
     gap: calc(var(--space) * 1.5);
     margin-bottom: calc(var(--space) * 6);
-    max-width: 1100px;
+  }
+  /* Заголовок, вміст і панель дій — одна колонка, по центру на широких екранах. */
+  header,
+  .content,
+  .bar {
+    width: 100%;
+    max-width: var(--content-width);
+    margin-inline: auto;
   }
   .content {
     display: grid;
     gap: calc(var(--space) * 5);
-    max-width: 1100px;
   }
-  .actionbar {
+  .bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: calc(var(--space) * 3);
+  }
+  .actionbar {
     padding: calc(var(--space) * 3) calc(var(--space) * 8);
     border-top: 1px solid var(--border);
     /* Без backdrop-filter: над анімованим фоном розмиття перераховувалося б щокадру. */

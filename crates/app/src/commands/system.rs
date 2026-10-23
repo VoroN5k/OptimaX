@@ -40,6 +40,9 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 #[tauri::command]
 pub fn set_settings(state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {
     settings.save()?;
+    if let Some(c) = lock(&state.upscale).as_ref() {
+        c.apply_settings(settings.upscale, settings.upscale_hotkey);
+    }
     *lock(&state.settings) = settings;
     Ok(())
 }

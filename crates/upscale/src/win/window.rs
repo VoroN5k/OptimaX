@@ -4,11 +4,15 @@ use crate::geometry::Rect;
 use crate::window::{WindowId, WindowInfo};
 use core::ffi::c_void;
 use windows::core::BOOL;
+use windows::core::PWSTR;
 use windows::Graphics::Capture::GraphicsCaptureSession;
-use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::Graphics::Gdi::{
     ClientToScreen, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
+use windows::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
@@ -105,6 +109,37 @@ pub(super) fn foreground_root() -> Option<HWND> {
     Some(if root.is_invalid() { fg } else { root })
 }
 
+/// Ім'я exe процесу `pid` (без шляху); порожнє, якщо процес недоступний.
+fn exe_name(pid: u32) -> String {
+    // SAFETY: лише право читання імені; дескриптор закривається нижче.
+    let Ok(process) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
+    else {
+        return String::new();
+    };
+    let mut buf = [0u16; 1024];
+    let mut len = buf.len() as u32;
+    // SAFETY: буфер локальний, `len` — його довжина в символах.
+    let ok = unsafe {
+        QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        )
+    }
+    .is_ok();
+    // SAFETY: дескриптор відкрито вище.
+    let _ = unsafe { CloseHandle(process) };
+    if !ok {
+        return String::new();
+    }
+    let path = String::from_utf16_lossy(&buf[..(len as usize).min(buf.len())]);
+    path.rsplit(['\\', '/'])
+        .next()
+        .unwrap_or_default()
+        .to_owned()
+}
+
 fn info(h: HWND) -> Option<WindowInfo> {
     let g = geometry(h)?;
     let mut pid = 0u32;
@@ -117,6 +152,7 @@ fn info(h: HWND) -> Option<WindowInfo> {
     Some(WindowInfo {
         id: WindowId(h.0 as isize),
         pid,
+        exe: exe_name(pid),
         title: String::from_utf16_lossy(&buf[..len]),
         client: g.client.size(),
         monitor: g.monitor,

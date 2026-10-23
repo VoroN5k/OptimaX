@@ -281,6 +281,7 @@ mod tests {
             ],
             stop_services: vec!["WSearch".into(), "SysMain".into()],
             purge_standby_when_low: true,
+            upscale: None,
         }
     }
 
@@ -488,6 +489,7 @@ mod localization {
                 ],
                 stop_services: vec!["WSearch".into(), "SysMain".into(), "wuauserv".into()],
                 purge_standby_when_low: true,
+                upscale: None,
             };
             let r = start_session(&mut engine, &procs, &mem, &profile, &game, &Yes).unwrap();
             texts.extend(r.applied);

@@ -27,7 +27,7 @@ pub fn run() -> anyhow::Result<()> {
 
 #[cfg(windows)]
 mod app {
-    use crate::commands::{ab, audit, diagnosis, gamemode, metrics, system, tweaks};
+    use crate::commands::{ab, audit, diagnosis, gamemode, metrics, system, tweaks, upscale};
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
     use crate::state::{lock, AppState};
@@ -63,6 +63,10 @@ mod app {
         }
         if let Some(s) = lock(&state.metrics).take() {
             s.stop();
+        }
+        // Апскейл зупиняється першим ділом: повертає курсор і прибирає оверлей.
+        if let Some(c) = lock(&state.upscale).take() {
+            c.shutdown();
         }
         if let Some(c) = lock(&state.recording).as_ref() {
             c.cancel();
@@ -145,7 +149,16 @@ mod app {
                             let _ = handle.emit("log", &line);
                         }
                     })?;
-                startup_recovery(&app.state::<AppState>());
+                let state = app.state::<AppState>();
+                startup_recovery(&state);
+                let (up, hotkey) = {
+                    let s = lock(&state.settings);
+                    (s.upscale, s.upscale_hotkey)
+                };
+                match upscale::Controller::spawn(app.handle().clone(), up, hotkey) {
+                    Ok(c) => *lock(&state.upscale) = Some(c),
+                    Err(e) => tracing::error!("апскейл недоступний: {e:?}"),
+                }
                 Ok(())
             })
             .invoke_handler(tauri::generate_handler![
@@ -180,6 +193,10 @@ mod app {
                 gamemode::gamemode_allow_without_restore_point,
                 gamemode::gamemode_start,
                 gamemode::gamemode_stop,
+                upscale::upscale_state,
+                upscale::upscale_start,
+                upscale::upscale_cancel,
+                upscale::upscale_stop,
             ])
             .build(tauri::generate_context!())?;
         app.run(|handle, event| {

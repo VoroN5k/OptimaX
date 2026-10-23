@@ -9,6 +9,8 @@ pub const WINDOW: usize = 1024;
 /// Зведення ряду замірів у мілісекундах.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+// В інтерфейсі вже є `Summary` (статистика A/B-тесту) — інше ім'я, щоб файли типів не збігались.
+#[cfg_attr(feature = "ts", ts(rename = "TimingSummary"))]
 pub struct Summary {
     /// Медіана.
     pub median: f64,

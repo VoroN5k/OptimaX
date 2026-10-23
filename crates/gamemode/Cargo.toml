@@ -9,12 +9,13 @@ publish.workspace = true
 
 [features]
 # Генерація TypeScript-типів для UI (вмикає лише крейт app у тестах).
-ts = ["dep:ts-rs", "optimax-core/ts", "optimax-tweaks/ts"]
+ts = ["dep:ts-rs", "optimax-core/ts", "optimax-tweaks/ts", "optimax-upscale/ts"]
 
 [dependencies]
 ts-rs = { workspace = true, optional = true }
 optimax-core.workspace = true
 optimax-tweaks.workspace = true
+optimax-upscale.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

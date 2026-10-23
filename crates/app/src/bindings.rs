@@ -78,6 +78,7 @@ fn export_typescript_bindings() {
         AbView,
         AbFinal,
         optimax_gamemode::GameProfile,
+        crate::commands::upscale::UpscaleView,
         ProfilePreview,
         GameModeEvent,
     );

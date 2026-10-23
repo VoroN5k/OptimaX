@@ -25,6 +25,7 @@ import type { Snapshot } from "./bindings/Snapshot";
 import type { StartupReport } from "./bindings/StartupReport";
 import type { Text } from "./bindings/Text";
 import type { UiDesired } from "./bindings/UiDesired";
+import type { UpscaleView } from "./bindings/UpscaleView";
 
 /** Помилка команди (те, що повертає бекенд, або транспортна). */
 export function asCmdError(e: unknown): CmdError {
@@ -71,6 +72,11 @@ export const api = {
   gamemodeStart: () => invoke<void>("gamemode_start"),
   gamemodeStop: () => invoke<void>("gamemode_stop"),
   gamemodeAllowWithoutRestorePoint: () => invoke<void>("gamemode_allow_without_restore_point"),
+
+  upscaleState: () => invoke<UpscaleView>("upscale_state"),
+  upscaleStart: (delayS: number) => invoke<void>("upscale_start", { delayS }),
+  upscaleCancel: () => invoke<void>("upscale_cancel"),
+  upscaleStop: () => invoke<void>("upscale_stop"),
 };
 
 type Events = {
@@ -81,6 +87,7 @@ type Events = {
   "ab-progress": RecordProgress;
   "diag-done": DiagnosisResult;
   "diag-error": CmdError;
+  upscale: UpscaleView;
 };
 
 /** Підписка на подію бекенду. Повертає функцію відписки. */

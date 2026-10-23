@@ -4,6 +4,7 @@ use crate::GameModeError;
 use optimax_core::process::{is_protected_process, PriorityClass};
 use optimax_core::service::is_stoppable_service;
 use optimax_core::Text;
+use optimax_upscale::UpscaleSettings;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -35,7 +36,7 @@ impl GamePriority {
 }
 
 /// Профіль гри.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GameProfile {
     /// Ім'я exe гри, напр. `GeometryDash.exe`.
@@ -52,6 +53,10 @@ pub struct GameProfile {
     /// Очищати standby-пам'ять на старті гри, **якщо вільної RAM мало**.
     #[serde(default)]
     pub purge_standby_when_low: bool,
+    /// Власні налаштування апскейлу для цієї гри; `None` — загальні з налаштувань програми.
+    /// Систему не змінює, тож у перегляді змін режиму гри не з'являється.
+    #[serde(default)]
+    pub upscale: Option<UpscaleSettings>,
 }
 
 fn valid_exe_name(name: &str) -> bool {
@@ -73,6 +78,7 @@ impl GameProfile {
             lower_background: Vec::new(),
             stop_services: Vec::new(),
             purge_standby_when_low: false,
+            upscale: None,
         }
     }
 
@@ -124,6 +130,14 @@ impl GameProfile {
                 lower_background: background,
                 stop_services: services,
                 purge_standby_when_low: self.purge_standby_when_low,
+                upscale: self.upscale.map(|u| UpscaleSettings {
+                    sharpness: if u.sharpness.is_finite() {
+                        u.sharpness.clamp(0.0, 1.0)
+                    } else {
+                        optimax_upscale::settings::DEFAULT_SHARPNESS
+                    },
+                    ..u
+                }),
             },
             warnings,
         ))
@@ -226,6 +240,7 @@ mod tests {
             ],
             stop_services: vec!["WSearch".into(), "wuauserv".into(), "WinDefend".into()],
             purge_standby_when_low: true,
+            upscale: None,
         };
         let (clean, warnings) = p.sanitized().unwrap();
         assert_eq!(clean.lower_background, vec!["chrome.exe"]);
@@ -242,6 +257,27 @@ mod tests {
                 "gm.warn.high_priority",
             ]
         );
+    }
+
+    #[test]
+    fn upscale_settings_are_kept_and_clamped() {
+        let mut p = GameProfile::new("Game.exe");
+        p.upscale = Some(UpscaleSettings {
+            filter: optimax_upscale::Filter::Nis,
+            sharpness: 3.0,
+            ..UpscaleSettings::default()
+        });
+        let (clean, warnings) = p.sanitized().unwrap();
+        let up = clean.upscale.unwrap();
+        assert_eq!(up.filter, optimax_upscale::Filter::Nis);
+        assert_eq!(up.sharpness, 1.0);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn profiles_without_upscale_still_load() {
+        let p: GameProfile = serde_json::from_str(r#"{"exe":"Old.exe"}"#).unwrap();
+        assert_eq!(p.upscale, None);
     }
 
     #[test]

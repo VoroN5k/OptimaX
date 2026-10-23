@@ -7,6 +7,7 @@ pub mod gamemode;
 pub mod metrics;
 pub mod system;
 pub mod tweaks;
+pub mod upscale;
 
 use crate::error::{CmdError, CmdResult};
 

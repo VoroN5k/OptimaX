@@ -14,6 +14,8 @@ pub struct WindowInfo {
     pub id: WindowId,
     /// PID процесу-власника.
     pub pid: u32,
+    /// Ім'я exe процесу (напр. `GeometryDash.exe`); порожнє, якщо визначити не вдалося.
+    pub exe: String,
     /// Заголовок.
     pub title: String,
     /// Розмір клієнтської області (без рамки й заголовка), фізичні пікселі.

@@ -206,6 +206,8 @@ pub fn diagnose_timeline(tl: &Timeline, ctx: &Context) -> Diagnosis {
             .then(y.confidence.cmp(&x.confidence))
     });
 
+    found.extend(upscale_advice(bottleneck, primary_conf));
+
     let mut verdicts: Vec<Verdict> = vec![summary(
         summary_id,
         primary_conf,
@@ -221,6 +223,24 @@ pub fn diagnose_timeline(tl: &Timeline, ctx: &Context) -> Diagnosis {
         bottleneck,
         verdicts,
     }
+}
+
+/// Чи допоможе апскейл (CLAUDE.md, розділ 11). Ставиться після решти вердиктів:
+/// - GPU-bound — нижча роздільність гри + апскейл знімає навантаження з GPU;
+/// - CPU-bound — чесно: апскейл FPS не підніме, бо обмежує процесор.
+///
+/// Очікуваного приросту не обіцяємо: він залежить від гри й з'являється лише після заміру.
+pub fn upscale_advice(bottleneck: Bottleneck, confidence: u8) -> Option<Finding> {
+    let (id, category) = match bottleneck {
+        Bottleneck::Gpu => ("upscale.helps", Category::Gpu),
+        Bottleneck::Cpu => ("upscale.no_help", Category::Cpu),
+        Bottleneck::FrameCap | Bottleneck::Unclear | Bottleneck::InsufficientData => return None,
+    };
+    let mut b = FindingBuilder::new("diag", id, category, Impact::Info, confidence);
+    if bottleneck == Bottleneck::Gpu {
+        b = b.advice();
+    }
+    Some(b.build())
 }
 
 /// Діагностика запису. Якщо кадрів гри немає — «недостатньо даних».

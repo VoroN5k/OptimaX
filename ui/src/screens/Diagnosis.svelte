@@ -62,6 +62,10 @@
   const rest = $derived(result?.diagnosis.verdicts.slice(1) ?? []);
 </script>
 
+{#snippet openUpscale()}
+  <Button small variant="secondary" icon="upscale" onclick={() => (ui.screen = "upscale")}>{tk("ui.up.open")}</Button>
+{/snippet}
+
 <Page title={tk("ui.diag.title")} subtitle={tk("ui.diag.subtitle")}>
   <Card title={tk("ui.diag.setup")} subtitle={tk("ui.diag.setup_hint")}>
     <div class="setup">
@@ -120,7 +124,7 @@
     </Card>
     <div class="list">
       {#each rest as v, i (i)}
-        <FindingCard finding={v.finding} />
+        <FindingCard finding={v.finding} action={v.finding.id === "upscale.helps" ? openUpscale : undefined} />
       {/each}
     </div>
     {#if result.presentmon_messages.length}

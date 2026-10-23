@@ -84,6 +84,8 @@ pub struct AppState {
     pub presentmon: OnceLock<BundledPresentMon>,
     /// Що зроблено при старті (відновлення після збою).
     pub startup: Mutex<crate::dto::StartupReport>,
+    /// Контролер апскейлу (запускається в `setup`, бо потребує дескриптора застосунку).
+    pub upscale: Mutex<Option<crate::commands::upscale::Controller>>,
 }
 
 impl AppState {
@@ -108,6 +110,7 @@ impl AppState {
             settings: Mutex::new(Settings::load()),
             presentmon: OnceLock::new(),
             startup: Mutex::new(crate::dto::StartupReport::default()),
+            upscale: Mutex::new(None),
         })
     }
 

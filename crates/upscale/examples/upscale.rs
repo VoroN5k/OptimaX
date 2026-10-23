@@ -89,8 +89,9 @@ fn main() -> anyhow::Result<()> {
         }
     };
     println!(
-        "Вікно: «{}» (PID {}), клієнт {}×{}, монітор {}×{} @ ({}, {})",
+        "Вікно: «{}» ({}, PID {}), клієнт {}×{}, монітор {}×{} @ ({}, {})",
         window.title,
+        window.exe,
         window.pid,
         window.client.width,
         window.client.height,
@@ -161,7 +162,11 @@ fn run_hotkey(settings: UpscaleSettings, total: Duration) -> anyhow::Result<()> 
             continue;
         };
         let (text, tone) = match &event {
-            ToggleEvent::Started { window, scale } => (
+            ToggleEvent::Started {
+                window,
+                scale,
+                settings,
+            } => (
                 Text::new("toast.upscale.on")
                     .arg("filter", catalog.render(&settings.filter.text()))
                     .arg("scale", format!("{scale:.2}"))

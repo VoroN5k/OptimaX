@@ -17,6 +17,8 @@ pub enum ToggleEvent {
         window: WindowInfo,
         /// Очікуваний множник (за розміром вікна й монітора).
         scale: f64,
+        /// З якими налаштуваннями (загальні або з профілю гри).
+        settings: UpscaleSettings,
     },
     /// Апскейл зупинено (натисканням або сам: гру закрили, збій).
     Stopped(EndReason),
@@ -24,10 +26,15 @@ pub enum ToggleEvent {
     Failed(UpscaleError),
 }
 
+/// Налаштування для конкретної гри (за вікном), напр. з профілю гри; `None` — загальні.
+pub type SettingsResolver = Box<dyn Fn(&WindowInfo) -> Option<UpscaleSettings> + Send>;
+
 /// Перемикач апскейлу: гаряча клавіша + поточний сеанс.
 pub struct HotkeyToggle {
-    hotkey: GlobalHotkey,
+    /// `None` — без гарячої клавіші (вимкнена в налаштуваннях або зайнята): лише кнопка в UI.
+    hotkey: Option<GlobalHotkey>,
     settings: UpscaleSettings,
+    resolver: Option<SettingsResolver>,
     active: Option<Upscaler>,
 }
 
@@ -37,10 +44,45 @@ impl HotkeyToggle {
         let hotkey =
             GlobalHotkey::ctrl_shift_f10().map_err(|e| UpscaleError::Hotkey(e.to_string()))?;
         Ok(Self {
-            hotkey,
+            hotkey: Some(hotkey),
             settings,
+            resolver: None,
             active: None,
         })
+    }
+
+    /// Перемикач без гарячої клавіші (керування лише з інтерфейсу).
+    pub fn without_hotkey(settings: UpscaleSettings) -> Self {
+        Self {
+            hotkey: None,
+            settings,
+            resolver: None,
+            active: None,
+        }
+    }
+
+    /// Чи зареєстрована гаряча клавіша.
+    pub fn has_hotkey(&self) -> bool {
+        self.hotkey.is_some()
+    }
+
+    /// Вмикає / вимикає гарячу клавішу. Помилка — комбінацію зайняла інша програма
+    /// (перемикач далі працює без неї).
+    pub fn set_hotkey(&mut self, enabled: bool) -> Result<(), UpscaleError> {
+        if enabled == self.hotkey.is_some() {
+            return Ok(());
+        }
+        self.hotkey = if enabled {
+            Some(GlobalHotkey::ctrl_shift_f10().map_err(|e| UpscaleError::Hotkey(e.to_string()))?)
+        } else {
+            None
+        };
+        Ok(())
+    }
+
+    /// Звідки брати налаштування для конкретної гри (перед кожним запуском).
+    pub fn set_resolver(&mut self, resolver: SettingsResolver) {
+        self.resolver = Some(resolver);
     }
 
     /// Налаштування для наступного запуску (поточний сеанс не змінюється).
@@ -59,7 +101,7 @@ impl HotkeyToggle {
             self.active = None;
             return Some(ToggleEvent::Stopped(reason));
         }
-        if self.hotkey.pressed() {
+        if self.hotkey.as_ref().is_some_and(GlobalHotkey::pressed) {
             return Some(self.toggle());
         }
         None
@@ -73,16 +115,31 @@ impl HotkeyToggle {
         }
     }
 
-    fn start_foreground(&mut self) -> ToggleEvent {
+    /// Вимикає поточний сеанс, якщо він є.
+    pub fn stop(&mut self) -> Option<ToggleEvent> {
+        self.active.take().map(|u| ToggleEvent::Stopped(u.stop()))
+    }
+
+    /// Вмикає апскейл для вікна на передньому плані (якщо вже працює — нічого не робить).
+    pub fn start_foreground(&mut self) -> ToggleEvent {
+        if self.active.is_some() {
+            return ToggleEvent::Failed(UpscaleError::Thread("апскейл уже працює".into()));
+        }
         let Some(window) = foreground_window() else {
             return ToggleEvent::Failed(UpscaleError::NoWindow);
         };
-        match Upscaler::start(window.id, self.settings) {
+        let settings = self
+            .resolver
+            .as_ref()
+            .and_then(|r| r(&window))
+            .unwrap_or(self.settings);
+        match Upscaler::start(window.id, settings) {
             Ok(upscaler) => {
                 self.active = Some(upscaler);
-                let dest = dest_rect(window.client, window.monitor.size(), self.settings.fit);
+                let dest = dest_rect(window.client, window.monitor.size(), settings.fit);
                 ToggleEvent::Started {
                     scale: scale_factor(window.client, dest),
+                    settings,
                     window,
                 }
             }

@@ -4,7 +4,7 @@
 //! cargo run --release -p optimax-upscale --example upscale -- [--filter nearest|bilinear|lanczos|fsr|nis]
 //!     [--sharpness 0.5]
 //!     [--fit aspect|integer|stretch] [--delay 5] [--seconds 60] [--no-cursor] [--pid N]
-//!     [--hotkey]
+//!     [--hotkey] [--bench]
 //! ```
 //!
 //! Після запуску є `--delay` секунд, щоб перейти у вікно гри (у віконному або borderless
@@ -12,6 +12,8 @@
 //! З `--pid` береться головне вікно процесу одразу, без відліку.
 //! З `--hotkey` апскейл вмикається й вимикається `Ctrl+Shift+F10` у грі (з повідомленнями
 //! поверх гри), приклад працює `--seconds` (за замовчуванням 300).
+//! З `--bench` по черзі проганяються всі фільтри (по `--seconds`, за замовчуванням 10 с) на тому
+//! самому вікні й друкується таблиця виміряної вартості. Не виходьте з гри під час заміру.
 //! Оверлей ховається, коли гра не в фокусі. Система нічого не змінює.
 
 use optimax_core::toast::{Toaster, Tone, DEFAULT_DURATION};
@@ -19,7 +21,7 @@ use optimax_core::{Catalog, Text};
 use optimax_upscale::{
     foreground_window, geometry::scale_factor, is_supported, main_window_of,
     settings::DEFAULT_SHARPNESS, window::enable_per_monitor_dpi, EndReason, Filter, FitMode,
-    HotkeyToggle, ToggleEvent, UpscaleSettings, Upscaler,
+    HotkeyToggle, Summary, ToggleEvent, UpscaleSettings, UpscaleStats, Upscaler, WindowInfo,
 };
 use std::time::{Duration, Instant};
 
@@ -49,9 +51,16 @@ fn main() -> anyhow::Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(5);
     let hotkey = args.iter().any(|a| a == "--hotkey");
+    let bench = args.iter().any(|a| a == "--bench");
     let seconds: u64 = arg_value(&args, "--seconds")
         .and_then(|s| s.parse().ok())
-        .unwrap_or(if hotkey { 300 } else { 60 });
+        .unwrap_or(if hotkey {
+            300
+        } else if bench {
+            10
+        } else {
+            60
+        });
     let sharpness: f32 = arg_value(&args, "--sharpness")
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_SHARPNESS);
@@ -90,6 +99,9 @@ fn main() -> anyhow::Result<()> {
         window.monitor.x,
         window.monitor.y,
     );
+    if bench {
+        return run_bench(&window, settings, Duration::from_secs(seconds));
+    }
 
     let started = Instant::now();
     let upscaler = Upscaler::start(window.id, settings)?;
@@ -104,9 +116,10 @@ fn main() -> anyhow::Result<()> {
         std::thread::sleep(Duration::from_secs(1));
         let s = upscaler.stats();
         println!(
-            "захоплено {:>4}/с, показано {:>4}/с | {}×{} → {}×{} (×{:.2}) {:?}{} {}",
+            "захоплено {:>4}/с, показано {:>4}/с, пропущено {:>3}/с | {}×{} → {}×{} (×{:.2}) {:?}{} {}",
             s.captured - prev.captured,
             s.presented - prev.presented,
+            s.skipped - prev.skipped,
             s.source.width,
             s.source.height,
             s.dest.width,
@@ -124,6 +137,7 @@ fn main() -> anyhow::Result<()> {
                 "[приховано: гра не в фокусі]"
             },
         );
+        println!("    {}", metrics_line(&s));
         prev = s;
     }
     let reason = upscaler.stop();
@@ -173,6 +187,99 @@ fn run_hotkey(settings: UpscaleSettings, total: Duration) -> anyhow::Result<()> 
         let line = catalog.render(&text);
         println!("{line}   [{event:?}]");
         toaster.show(&line, tone, DEFAULT_DURATION);
+    }
+    Ok(())
+}
+
+fn summary(s: Option<Summary>) -> String {
+    match s {
+        Some(s) => format!("{:.2} / {:.2} мс", s.median, s.p95),
+        None => "—".into(),
+    }
+}
+
+/// Виміри одним рядком: медіана / p95.
+fn metrics_line(s: &UpscaleStats) -> String {
+    let m = &s.metrics;
+    format!(
+        "GPU {} | обробка {} | додана затримка {} (пізніше: {}) | CPU {:.1}% ядра",
+        summary(m.gpu_ms),
+        summary(m.latency_ms),
+        summary(m.display_ms),
+        late(m.late_percent),
+        m.cpu_percent,
+    )
+}
+
+fn late(p: Option<f64>) -> String {
+    p.map_or_else(|| "—".into(), |p| format!("{p:.1}%"))
+}
+
+/// Порівняння фільтрів на одному вікні: по `each` на фільтр, таблиця вимірів.
+fn run_bench(window: &WindowInfo, base: UpscaleSettings, each: Duration) -> anyhow::Result<()> {
+    let filters = [
+        Filter::Nearest,
+        Filter::Bilinear,
+        Filter::Lanczos,
+        Filter::Fsr,
+        Filter::Nis,
+    ];
+    let mut rows = Vec::new();
+    for filter in filters {
+        let settings = UpscaleSettings { filter, ..base };
+        let upscaler = Upscaler::start(window.id, settings)?;
+        println!("{filter:?}: {} с…", each.as_secs());
+        std::thread::sleep(each);
+        let stats = upscaler.stats();
+        let reason = upscaler.stop();
+        anyhow::ensure!(reason == EndReason::Stopped, "замір перервано: {reason:?}");
+        if !stats.visible || stats.metrics.gpu_ms.is_none() {
+            println!("  ⚠ оверлей був прихований (гра не в фокусі) — замір неповний");
+        }
+        rows.push((filter, stats));
+    }
+    println!();
+    println!(
+        "{:<9} {:>7} {:>17} {:>17} {:>17} {:>9} {:>10} {:>7}",
+        "фільтр",
+        "кадрів",
+        "GPU мед/p95",
+        "обробка мед/p95",
+        "затримка мед/p95",
+        "пізніше",
+        "пропущено",
+        "CPU %"
+    );
+    for (filter, s) in rows {
+        let m = s.metrics;
+        println!(
+            "{:<9} {:>7} {:>17} {:>17} {:>17} {:>9} {:>10} {:>7.1}{}",
+            format!("{filter:?}"),
+            m.gpu_ms.map_or(0, |g| g.count),
+            summary(m.gpu_ms),
+            summary(m.latency_ms),
+            summary(m.display_ms),
+            late(m.late_percent),
+            s.skipped,
+            m.cpu_percent,
+            if s.partial {
+                "  (NIS до ×2 + білінійний)"
+            } else {
+                ""
+            },
+        );
+    }
+    println!();
+    for line in [
+        "GPU — час масштабування кадру на відеокарті (мітки часу D3D11).",
+        "Обробка — від отримання кадру гри до нашого Present (робота OptimaX).",
+        "Затримка — на скільки пізніше наш кадр з'явився на екрані, ніж Windows показав би кадр гри",
+        "без апскейлу (статистика показу DXGI); кратна періоду оновлення монітора.",
+        "«Пізніше» — частка кадрів, що з'явилися хоч на один V-Sync пізніше.",
+        "«Пропущено» — кадри гри, що вже не встигали на свій V-Sync (пропуск повертає синхронізацію).",
+        "CPU — потік апскейлу за весь замір, % одного ядра.",
+    ] {
+        println!("{line}");
     }
     Ok(())
 }

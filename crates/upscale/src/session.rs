@@ -4,6 +4,7 @@
 use crate::error::UpscaleError;
 use crate::geometry::{Rect, Size};
 use crate::imp;
+use crate::measure::Summary;
 use crate::settings::{Filter, UpscaleSettings};
 use crate::window::WindowId;
 use serde::{Deserialize, Serialize};
@@ -29,7 +30,7 @@ pub enum EndReason {
 }
 
 /// Лічильники сеансу (для статусу в UI і вимірювань).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct UpscaleStats {
     /// Кадрів отримано від захоплення.
@@ -38,6 +39,9 @@ pub struct UpscaleStats {
     /// Кадрів показано в оверлеї.
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub presented: u64,
+    /// Кадрів гри пропущено, бо вже не встигали на свій V-Sync (щоб не відставати на кадр).
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub skipped: u64,
     /// Розмір кадру гри (клієнтська область).
     pub source: Size,
     /// Куди малюється кадр (координати монітора).
@@ -48,6 +52,25 @@ pub struct UpscaleStats {
     pub partial: bool,
     /// Чи оверлей зараз видно (гра на передньому плані).
     pub visible: bool,
+    /// Виміри за останні ~5 с (див. [`Metrics`]).
+    pub metrics: Metrics,
+}
+
+/// Виміряна вартість апскейлу (останні ~1000 кадрів).
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Metrics {
+    /// GPU-час масштабування одного кадру, мс (мітки часу D3D11).
+    pub gpu_ms: Option<Summary>,
+    /// Обробка в OptimaX: від отримання кадру гри до нашого Present, мс.
+    pub latency_ms: Option<Summary>,
+    /// Додана затримка, мс: наш кадр на екрані (статистика DXGI) мінус момент, на який
+    /// Windows запланував показ кадру гри без апскейлу. `None` — статистики немає.
+    pub display_ms: Option<Summary>,
+    /// Частка кадрів, показаних хоч на один V-Sync пізніше, ніж без апскейлу, %.
+    pub late_percent: Option<f64>,
+    /// Завантаження потоку апскейлу за весь сеанс, % одного ядра CPU.
+    pub cpu_percent: f64,
 }
 
 /// Поточна розкладка: розміри й фактичний фільтр.
@@ -65,8 +88,10 @@ pub(crate) struct Shared {
     pub(crate) stop: AtomicBool,
     pub(crate) captured: AtomicU64,
     pub(crate) presented: AtomicU64,
+    pub(crate) skipped: AtomicU64,
     pub(crate) visible: AtomicBool,
     pub(crate) layout: Mutex<Layout>,
+    pub(crate) metrics: Mutex<Metrics>,
     pub(crate) end: Mutex<Option<EndReason>>,
 }
 
@@ -74,6 +99,12 @@ impl Shared {
     pub(crate) fn set_layout(&self, layout: Layout) {
         if let Ok(mut l) = self.layout.lock() {
             *l = layout;
+        }
+    }
+
+    pub(crate) fn set_metrics(&self, metrics: Metrics) {
+        if let Ok(mut m) = self.metrics.lock() {
+            *m = metrics;
         }
     }
 
@@ -130,11 +161,13 @@ impl Upscaler {
         UpscaleStats {
             captured: self.shared.captured.load(Ordering::Relaxed),
             presented: self.shared.presented.load(Ordering::Relaxed),
+            skipped: self.shared.skipped.load(Ordering::Relaxed),
             source: layout.source,
             dest: layout.dest,
             filter: layout.filter,
             partial: layout.partial,
             visible: self.shared.visible.load(Ordering::Relaxed),
+            metrics: self.shared.metrics.lock().map(|m| *m).unwrap_or_default(),
         }
     }
 

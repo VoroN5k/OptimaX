@@ -6,17 +6,22 @@ use super::os;
 use crate::error::UpscaleError;
 use crate::geometry::Rect;
 use windows::core::{w, Interface};
-use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{
+    CloseHandle, COLORREF, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WAIT_OBJECT_0, WPARAM,
+};
 use windows::Win32::Graphics::Direct3D11::{ID3D11RenderTargetView, ID3D11Texture2D};
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::{
-    IDXGIAdapter, IDXGIDevice, IDXGIFactory2, IDXGISwapChain1, DXGI_MWA_NO_ALT_ENTER,
-    DXGI_MWA_NO_WINDOW_CHANGES, DXGI_PRESENT, DXGI_SCALING_NONE, DXGI_SWAP_CHAIN_DESC1,
-    DXGI_SWAP_CHAIN_FLAG, DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT,
+    IDXGIAdapter, IDXGIDevice, IDXGIFactory2, IDXGISwapChain1, IDXGISwapChain2,
+    DXGI_MWA_NO_ALT_ENTER, DXGI_MWA_NO_WINDOW_CHANGES, DXGI_PRESENT, DXGI_SCALING_NONE,
+    DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
+    DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT, DXGI_SWAP_EFFECT_FLIP_DISCARD,
+    DXGI_USAGE_RENDER_TARGET_OUTPUT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Threading::WaitForSingleObject;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassExW, SetLayeredWindowAttributes,
     SetWindowPos, ShowWindow, HTTRANSPARENT, HWND_TOPMOST, LWA_ALPHA, MA_NOACTIVATE,
@@ -27,10 +32,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 const CLASS: windows::core::PCWSTR = w!("OptimaXUpscaleOverlay");
 const BUFFERS: u32 = 2;
+/// Черга показу — один кадр: якщо попередній ще не на екрані, новий не стає в чергу, а чекає,
+/// і показується найсвіжіший. Без цього черга (до 3 кадрів) набивається, і кожен кадр
+/// запізнюється на 1–2 періоди оновлення (виміряно на кроці 4).
+const MAX_LATENCY: u32 = 1;
+const SWAP_FLAGS: DXGI_SWAP_CHAIN_FLAG = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 
 pub(super) struct Overlay {
     hwnd: HWND,
     swap: IDXGISwapChain1,
+    /// Сигналізує, що в черзі показу є місце (див. [`MAX_LATENCY`]).
+    waitable: HANDLE,
     target: Option<ID3D11RenderTargetView>,
     rect: Rect,
     visible: bool,
@@ -117,7 +129,7 @@ impl Overlay {
             Scaling: DXGI_SCALING_NONE,
             SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
             AlphaMode: DXGI_ALPHA_MODE_IGNORE,
-            Flags: 0,
+            Flags: SWAP_FLAGS.0 as u32,
         };
         // SAFETY: пристрій і вікно дійсні; опис локальний.
         let swap = unsafe { factory.CreateSwapChainForHwnd(&gpu.device, hwnd, &desc, None, None) }
@@ -129,9 +141,17 @@ impl Overlay {
         }
         .map_err(os("MakeWindowAssociation"))?;
 
+        let swap2: IDXGISwapChain2 = swap.cast().map_err(os("IDXGISwapChain2"))?;
+        // SAFETY: swap chain створено з FRAME_LATENCY_WAITABLE_OBJECT.
+        unsafe { swap2.SetMaximumFrameLatency(MAX_LATENCY) }
+            .map_err(os("SetMaximumFrameLatency"))?;
+        // SAFETY: як вище; дескриптор закриваємо в Drop.
+        let waitable = unsafe { swap2.GetFrameLatencyWaitableObject() };
+
         let mut overlay = Self {
             hwnd,
             swap,
+            waitable,
             target: None,
             rect,
             visible: false,
@@ -155,6 +175,11 @@ impl Overlay {
             api: "CreateRenderTargetView",
             code: 0,
         })
+    }
+
+    /// Swap chain (для статистики показу кадрів).
+    pub fn swap(&self) -> &IDXGISwapChain1 {
+        &self.swap
     }
 
     /// Прямокутник вікна (монітор).
@@ -196,7 +221,7 @@ impl Overlay {
                 rect.width,
                 rect.height,
                 DXGI_FORMAT_B8G8R8A8_UNORM,
-                DXGI_SWAP_CHAIN_FLAG(0),
+                SWAP_FLAGS,
             )
         }
         .map_err(os("ResizeBuffers"))?;
@@ -230,6 +255,19 @@ impl Overlay {
         true
     }
 
+    /// Дескриптор «у черзі показу є місце» — для очікування разом з іншими подіями.
+    pub fn waitable(&self) -> HANDLE {
+        self.waitable
+    }
+
+    /// Чи можна показати кадр зараз, не ставлячи його в чергу за попереднім (не блокує).
+    /// Успішна перевірка «займає» місце, тож після неї кадр треба показати.
+    pub fn try_reserve(&self) -> bool {
+        // SAFETY: дескриптор дійсний до Drop; нульовий тайм-аут — без очікування.
+        let r = unsafe { WaitForSingleObject(self.waitable, 0) };
+        r == WAIT_OBJECT_0
+    }
+
     /// Показує намальований кадр. Синхронізація 0: DWM бере найсвіжіший кадр на V-Sync,
     /// без очікування в нашому потоці.
     pub fn present(&self) -> Result<(), UpscaleError> {
@@ -243,6 +281,8 @@ impl Overlay {
 impl Drop for Overlay {
     fn drop(&mut self) {
         self.target = None;
+        // SAFETY: дескриптор отримано від swap chain і більше ніде не закривається.
+        let _ = unsafe { CloseHandle(self.waitable) };
         // SAFETY: вікно створене цим самим потоком (оверлей не покидає потік апскейлу).
         let _ = unsafe { DestroyWindow(self.hwnd) };
     }

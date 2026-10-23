@@ -21,3 +21,8 @@ float4 ps_main(VsOut i) : SV_Target {
     // Альфа кадру гри не потрібна — вікно непрозоре.
     return float4(Source.Sample(Sampler, i.uv).rgb, 1.0);
 }
+
+// Курсор поверх кадру: зображення premultiplied, змішування ONE / INV_SRC_ALPHA задає CPU.
+float4 ps_cursor(VsOut i) : SV_Target {
+    return Source.Sample(Sampler, i.uv);
+}

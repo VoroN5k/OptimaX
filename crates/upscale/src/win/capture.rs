@@ -38,6 +38,12 @@ pub(super) struct Frame {
     _frame: Direct3D11CaptureFrame,
     pub texture: ID3D11Texture2D,
     pub content: Size,
+    /// Коли ми отримали кадр (тики QPC).
+    pub received_qpc: i64,
+    /// `SystemRelativeTime` кадру (QPC в одиницях по 100 нс). Заміри показують, що це момент
+    /// V-Sync, на який Windows запланував показ кадру гри (лежить на сітці кадрів монітора й
+    /// зазвичай трохи попереду моменту отримання) — тобто коли кадр з'явився б без апскейлу.
+    pub scheduled_hns: i64,
 }
 
 impl Capture {
@@ -126,7 +132,10 @@ impl Capture {
         // SAFETY: поверхня кадру WGC — це текстура D3D11 нашого пристрою.
         let texture: ID3D11Texture2D =
             unsafe { access.GetInterface() }.map_err(os("IDirect3DDxgiInterfaceAccess"))?;
+        let scheduled_hns = frame.SystemRelativeTime().map(|t| t.Duration).unwrap_or(0);
         Ok(Some(Frame {
+            received_qpc: optimax_core::clock::qpc_now(),
+            scheduled_hns,
             _frame: frame,
             texture,
             content: Size::new(

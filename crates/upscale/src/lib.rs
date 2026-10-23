@@ -7,13 +7,15 @@
 //!
 //! - [`geometry`]: що вирізати з кадру й куди малювати (чисті функції, тести).
 //! - [`settings`]: фільтр (точковий, білінійний, Lanczos, FSR 1, NIS), різкість, вписування, курсор.
-//! - [`Upscaler`]: запущений сеанс в окремому потоці.
+//! - [`Upscaler`]: запущений сеанс в окремому потоці; [`Metrics`] — його виміряна вартість.
 //! - [`toggle::HotkeyToggle`]: увімкнення / вимкнення за `Ctrl+Shift+F10`.
 //!
 //! `unsafe` дозволено лише в платформному модулі `imp` (FFI до WinAPI, Direct3D 11, WinRT).
 
+mod cursor;
 pub mod error;
 pub mod geometry;
+pub mod measure;
 pub mod session;
 pub mod settings;
 mod shaders;
@@ -31,7 +33,8 @@ mod imp;
 
 pub use error::UpscaleError;
 pub use geometry::{FitMode, Rect, Size};
-pub use session::{EndReason, UpscaleStats, Upscaler};
+pub use measure::Summary;
+pub use session::{EndReason, Metrics, UpscaleStats, Upscaler};
 pub use settings::{Filter, UpscaleSettings};
 pub use toggle::{HotkeyToggle, ToggleEvent};
 pub use window::{

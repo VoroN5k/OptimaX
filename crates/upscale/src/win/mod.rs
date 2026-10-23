@@ -5,10 +5,13 @@
 
 mod capture;
 mod cursor;
+mod cursor_layer;
+mod cursor_shape;
 mod d3d;
 mod overlay;
 mod pipeline;
 mod render;
+mod timing;
 mod window;
 
 pub(crate) use render::run;

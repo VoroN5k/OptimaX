@@ -238,7 +238,7 @@ fn texture(
     size: Size,
     format: DXGI_FORMAT,
     bind: u32,
-    init: Option<(&[f32], u32)>,
+    init: Option<(&[u8], u32)>,
 ) -> Result<ID3D11Texture2D, UpscaleError> {
     let desc = D3D11_TEXTURE2D_DESC {
         Width: size.width,
@@ -379,12 +379,34 @@ pub(super) fn table_texture(
             values.len()
         )));
     }
+    let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_ne_bytes()).collect();
     let tex = texture(
         gpu,
         size,
         DXGI_FORMAT_R32G32B32A32_FLOAT,
         D3D11_BIND_SHADER_RESOURCE.0 as u32,
-        Some((values, size.width * 16)),
+        Some((&bytes, size.width * 16)),
+    )?;
+    srv(gpu, &tex)
+}
+
+/// Незмінна текстура BGRA8 з готових пікселів (`pixels.len()` = ширина × висота × 4).
+pub(super) fn image_texture(
+    gpu: &Gpu,
+    size: Size,
+    pixels: &[u8],
+) -> Result<ID3D11ShaderResourceView, UpscaleError> {
+    if pixels.len() != size.width as usize * size.height as usize * 4 {
+        return Err(UpscaleError::Shader(
+            "розмір зображення не збігається".into(),
+        ));
+    }
+    let tex = texture(
+        gpu,
+        size,
+        DXGI_FORMAT_B8G8R8A8_UNORM,
+        D3D11_BIND_SHADER_RESOURCE.0 as u32,
+        Some((pixels, size.width * 4)),
     )?;
     srv(gpu, &tex)
 }

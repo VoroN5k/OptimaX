@@ -4,6 +4,7 @@
 //! кожен блок має коментар `// SAFETY:`.
 
 mod capture;
+mod cursor;
 mod d3d;
 mod overlay;
 mod pipeline;

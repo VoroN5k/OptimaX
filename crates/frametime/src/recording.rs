@@ -6,10 +6,14 @@
 
 use crate::csv::CsvFrameParser;
 use crate::frame::{FrameRecord, FrameTimestamp};
-use crate::gate::{EndReason, Gate, Observation, Phase, StartMode, PRESENTING_WINDOW};
+use crate::gate::{
+    EndReason, Gate, Observation, Phase, StartMode, FIRST_WARMUP, PRESENTING_WINDOW,
+};
 use crate::presentmon::{BundledPresentMon, Target, MAX_CAPTURE};
 use crate::FrametimeError;
 use optimax_core::clock::{qpc_frequency, qpc_now, ticks_to_ms};
+use optimax_core::toast::{Toaster, Tone};
+use optimax_core::{Catalog, Text};
 use optimax_metrics::{GpuApi, Sampler, SamplerConfig, Snapshot, SystemSource};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
@@ -69,7 +73,35 @@ pub struct RecordOptions {
     pub sound: bool,
     /// Налаштування семплера метрик. Для кореляції з піками краще 200 мс.
     pub sampler: SamplerConfig,
+    /// Повідомлення поверх гри (тексти з i18n-каталогу); `None` — без повідомлень.
+    pub notices: Option<RecordNotices>,
 }
+
+/// Тексти повідомлень поверх гри під час запису.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordNotices {
+    /// На початку першого прогріву: «запис почнеться за 3 с».
+    pub warmup: String,
+    /// Після завершення запису.
+    pub finished: String,
+}
+
+impl RecordNotices {
+    /// Тексти з каталогу (`toast.rec.*`).
+    pub fn from_catalog(catalog: &Catalog) -> Self {
+        Self {
+            warmup: catalog.render(&Text::new("toast.rec.warmup").arg("s", FIRST_WARMUP.as_secs())),
+            finished: catalog.render(&Text::new("toast.rec.finished")),
+        }
+    }
+}
+
+/// Скільки показувати повідомлення про прогрів: воно має зникнути до початку відліку,
+/// щоб вікно поверх гри не вплинуло на зараховані кадри.
+pub const WARMUP_NOTICE: Duration = Duration::from_secs(2);
+const _: () = assert!(WARMUP_NOTICE.as_millis() < FIRST_WARMUP.as_millis());
+/// Скільки показувати повідомлення про завершення.
+const FINISHED_NOTICE: Duration = Duration::from_millis(2500);
 
 impl RecordOptions {
     /// Запис одразу (як у консольних інструментах): 200 мс між знімками метрик.
@@ -85,6 +117,7 @@ impl RecordOptions {
                 process_interval: Duration::from_secs(1),
                 top_processes: 8,
             },
+            notices: None,
         }
     }
 
@@ -93,6 +126,13 @@ impl RecordOptions {
     pub fn with_start(mut self, start: StartMode, sound: bool) -> Self {
         self.start = start;
         self.sound = sound;
+        self
+    }
+
+    /// Те саме з повідомленнями поверх гри (лише для старту не «одразу»).
+    #[must_use]
+    pub fn with_notices(mut self, notices: RecordNotices) -> Self {
+        self.notices = Some(notices);
         self
     }
 }
@@ -302,6 +342,13 @@ pub fn record_with(
     let mut last_progress: Option<Instant> = None;
     let mut last_phase = gate.phase();
     let mut beeped_start = false;
+    // Повідомлення — необов'язкова зручність: якщо вікно не створилось, запис іде далі.
+    let toaster = options
+        .notices
+        .as_ref()
+        .filter(|_| !immediate)
+        .and_then(|_| Toaster::new().ok());
+    let mut warmup_noticed = false;
     let mut pm_exited = false;
 
     while gate.phase() != Phase::Done {
@@ -333,6 +380,12 @@ pub fn record_with(
             cancel: cancel.is_cancelled(),
         };
         let phase = gate.tick(now, &obs);
+        if phase == Phase::Warmup && !warmup_noticed {
+            warmup_noticed = true;
+            if let (Some(t), Some(n)) = (&toaster, &options.notices) {
+                t.show(&n.warmup, Tone::Info, WARMUP_NOTICE);
+            }
+        }
         if options.sound && phase == Phase::Recording && !beeped_start && !immediate {
             optimax_core::input::beep_start();
             beeped_start = true;
@@ -357,6 +410,11 @@ pub fn record_with(
     if options.sound && !immediate && matches!(end_reason, EndReason::Completed | EndReason::Hotkey)
     {
         optimax_core::input::beep_stop();
+    }
+    if matches!(end_reason, EndReason::Completed | EndReason::Hotkey) {
+        if let (Some(t), Some(n)) = (&toaster, &options.notices) {
+            t.show(&n.finished, Tone::Ok, FINISHED_NOTICE);
+        }
     }
     // Дописуємо хвіст: кадри останніх секунд відрізка ще в дорозі.
     if !immediate && gate.has_recorded() && end_reason != EndReason::GameExited {
@@ -413,6 +471,15 @@ pub fn record_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notices_come_from_catalog() -> Result<(), optimax_core::CoreError> {
+        let n = RecordNotices::from_catalog(&Catalog::ukrainian()?);
+        assert!(n.warmup.contains('3'), "{}", n.warmup);
+        assert!(!n.warmup.starts_with("toast."));
+        assert!(!n.finished.starts_with("toast."));
+        Ok(())
+    }
 
     fn frame(qpc: i64) -> FrameRecord {
         FrameRecord {

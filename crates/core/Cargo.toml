@@ -20,6 +20,7 @@ thiserror.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Security",
     "Win32_System_Registry",
     "Win32_System_Performance",
@@ -31,7 +32,11 @@ windows = { workspace = true, features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
 ] }
+
+[dev-dependencies]
+anyhow.workspace = true
 
 [lints]
 workspace = true

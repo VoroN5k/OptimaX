@@ -9,10 +9,11 @@ publish.workspace = true
 
 [features]
 # Генерація TypeScript-типів для UI (вмикає лише крейт app у тестах).
-ts = ["dep:ts-rs"]
+ts = ["dep:ts-rs", "optimax-core/ts"]
 
 [dependencies]
 ts-rs = { workspace = true, optional = true }
+optimax-core.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
@@ -39,6 +40,7 @@ windows = { workspace = true, features = [
     "Win32_System_WinRT_Direct3D11",
     "Win32_System_WinRT_Graphics_Capture",
     "Win32_UI_HiDpi",
+    "Win32_UI_Magnification",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

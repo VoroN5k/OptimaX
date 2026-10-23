@@ -4,17 +4,22 @@
 //! cargo run --release -p optimax-upscale --example upscale -- [--filter nearest|bilinear|lanczos|fsr|nis]
 //!     [--sharpness 0.5]
 //!     [--fit aspect|integer|stretch] [--delay 5] [--seconds 60] [--no-cursor] [--pid N]
+//!     [--hotkey]
 //! ```
 //!
 //! Після запуску є `--delay` секунд, щоб перейти у вікно гри (у віконному або borderless
 //! режимі з роздільністю нижчою за монітор). Масштабується вікно, що буде на передньому плані.
 //! З `--pid` береться головне вікно процесу одразу, без відліку.
+//! З `--hotkey` апскейл вмикається й вимикається `Ctrl+Shift+F10` у грі (з повідомленнями
+//! поверх гри), приклад працює `--seconds` (за замовчуванням 300).
 //! Оверлей ховається, коли гра не в фокусі. Система нічого не змінює.
 
+use optimax_core::toast::{Toaster, Tone, DEFAULT_DURATION};
+use optimax_core::{Catalog, Text};
 use optimax_upscale::{
     foreground_window, geometry::scale_factor, is_supported, main_window_of,
-    settings::DEFAULT_SHARPNESS, window::enable_per_monitor_dpi, Filter, FitMode, UpscaleSettings,
-    Upscaler,
+    settings::DEFAULT_SHARPNESS, window::enable_per_monitor_dpi, EndReason, Filter, FitMode,
+    HotkeyToggle, ToggleEvent, UpscaleSettings, Upscaler,
 };
 use std::time::{Duration, Instant};
 
@@ -43,9 +48,10 @@ fn main() -> anyhow::Result<()> {
     let delay: u64 = arg_value(&args, "--delay")
         .and_then(|s| s.parse().ok())
         .unwrap_or(5);
+    let hotkey = args.iter().any(|a| a == "--hotkey");
     let seconds: u64 = arg_value(&args, "--seconds")
         .and_then(|s| s.parse().ok())
-        .unwrap_or(60);
+        .unwrap_or(if hotkey { 300 } else { 60 });
     let sharpness: f32 = arg_value(&args, "--sharpness")
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_SHARPNESS);
@@ -58,6 +64,9 @@ fn main() -> anyhow::Result<()> {
 
     enable_per_monitor_dpi();
     anyhow::ensure!(is_supported(), "Windows Graphics Capture не підтримується");
+    if hotkey {
+        return run_hotkey(settings, Duration::from_secs(seconds));
+    }
 
     let window = match arg_value(&args, "--pid").and_then(|s| s.parse().ok()) {
         Some(pid) => main_window_of(pid)
@@ -119,5 +128,51 @@ fn main() -> anyhow::Result<()> {
     }
     let reason = upscaler.stop();
     println!("Завершено: {reason:?}");
+    Ok(())
+}
+
+/// Режим гарячої клавіші: Ctrl+Shift+F10 вмикає / вимикає апскейл для гри в фокусі.
+fn run_hotkey(settings: UpscaleSettings, total: Duration) -> anyhow::Result<()> {
+    let catalog = Catalog::ukrainian()?;
+    let toaster = Toaster::new()?;
+    let mut toggle = HotkeyToggle::new(settings)?;
+    println!(
+        "Перейдіть у гру й натисніть Ctrl+Shift+F10 (ще раз — вимкнути). Приклад працює {} с.",
+        total.as_secs()
+    );
+    let until = Instant::now() + total;
+    while Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(100));
+        let Some(event) = toggle.poll() else {
+            continue;
+        };
+        let (text, tone) = match &event {
+            ToggleEvent::Started { window, scale } => (
+                Text::new("toast.upscale.on")
+                    .arg("filter", catalog.render(&settings.filter.text()))
+                    .arg("scale", format!("{scale:.2}"))
+                    .arg("title", &window.title),
+                Tone::Info,
+            ),
+            ToggleEvent::Stopped(EndReason::WindowClosed) => {
+                (Text::new("toast.upscale.closed"), Tone::Warn)
+            }
+            ToggleEvent::Stopped(EndReason::Failed(_)) => (
+                Text::new("toast.upscale.failed")
+                    .arg("reason", catalog.render(&Text::new("upscale.error.thread"))),
+                Tone::Danger,
+            ),
+            ToggleEvent::Stopped(EndReason::Stopped) => {
+                (Text::new("toast.upscale.off"), Tone::Info)
+            }
+            ToggleEvent::Failed(e) => (
+                Text::new("toast.upscale.failed").arg("reason", catalog.render(&e.text())),
+                Tone::Danger,
+            ),
+        };
+        let line = catalog.render(&text);
+        println!("{line}   [{event:?}]");
+        toaster.show(&line, tone, DEFAULT_DURATION);
+    }
     Ok(())
 }

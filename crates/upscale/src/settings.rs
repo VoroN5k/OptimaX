@@ -22,6 +22,19 @@ pub enum Filter {
     Nis,
 }
 
+impl Filter {
+    /// Назва для користувача (ключ i18n-каталогу `upscale.filter.*`).
+    pub fn text(self) -> optimax_core::Text {
+        optimax_core::Text::new(match self {
+            Self::Nearest => "upscale.filter.nearest",
+            Self::Bilinear => "upscale.filter.bilinear",
+            Self::Lanczos => "upscale.filter.lanczos",
+            Self::Fsr => "upscale.filter.fsr",
+            Self::Nis => "upscale.filter.nis",
+        })
+    }
+}
+
 /// Різкість за замовчуванням (0…1).
 pub const DEFAULT_SHARPNESS: f32 = 0.5;
 
@@ -62,6 +75,21 @@ mod tests {
         assert_eq!(s.fit, FitMode::Aspect);
         assert_eq!(s.sharpness, DEFAULT_SHARPNESS);
         assert!(s.capture_cursor);
+        Ok(())
+    }
+
+    #[test]
+    fn filter_names_are_in_catalog() -> Result<(), optimax_core::CoreError> {
+        let catalog = optimax_core::Catalog::ukrainian()?;
+        for f in [
+            Filter::Nearest,
+            Filter::Bilinear,
+            Filter::Lanczos,
+            Filter::Fsr,
+            Filter::Nis,
+        ] {
+            assert!(catalog.contains(&f.text().key), "{:?}", f);
+        }
         Ok(())
     }
 

@@ -6,9 +6,9 @@ use crate::dto::{DiagnosisResult, ProcessEntry};
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
 use optimax_audit::{run_audit, SystemProbe, WindowsProbe};
-use optimax_core::{CivilDate, Impact};
+use optimax_core::{Catalog, CivilDate, Impact};
 use optimax_diagnosis::{diagnose, Context};
-use optimax_frametime::{record_with, CancelToken, RecordOptions, Target};
+use optimax_frametime::{record_with, CancelToken, RecordNotices, RecordOptions, Target};
 use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -105,8 +105,11 @@ pub fn diag_start(
                 let state = app.state::<AppState>();
                 let pm = state.presentmon()?;
                 let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
-                let options = RecordOptions::new(target, Duration::from_secs(u64::from(total)))
+                let mut options = RecordOptions::new(target, Duration::from_secs(u64::from(total)))
                     .with_start(start_mode, sound);
+                if let Ok(catalog) = Catalog::ukrainian() {
+                    options = options.with_notices(RecordNotices::from_catalog(&catalog));
+                }
                 let rec = record_with(
                     pm,
                     &options,

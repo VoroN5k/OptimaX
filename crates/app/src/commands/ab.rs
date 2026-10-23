@@ -6,7 +6,9 @@ use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState, FlagConfirm};
 use optimax_core::Catalog;
 use optimax_diagnosis::{diagnose, Bottleneck, Context};
-use optimax_frametime::{record_with, CancelToken, RecordOptions, StartMode, Target};
+use optimax_frametime::{
+    record_with, CancelToken, RecordNotices, RecordOptions, StartMode, Target,
+};
 use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
 use optimax_tweaks::ab::{
     evaluate, render_markdown, schedule, Arm, Decision, RunConditions, RunResult,
@@ -141,11 +143,14 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
         };
         // 2. Запис (довго, без замків).
         let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
-        let options = RecordOptions::new(
+        let mut options = RecordOptions::new(
             Target::ProcessName(game),
             Duration::from_secs(u64::from(seconds)),
         )
         .with_start(start, sound);
+        if let Ok(catalog) = Catalog::ukrainian() {
+            options = options.with_notices(RecordNotices::from_catalog(&catalog));
+        }
         let rec = record_with(
             state.presentmon()?,
             &options,

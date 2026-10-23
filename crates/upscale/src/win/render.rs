@@ -2,6 +2,7 @@
 //! область кадру, малюємо її збільшеною в оверлеї. Оверлей видно, лише поки гра на передньому плані.
 
 use super::capture::Capture;
+use super::cursor::CursorControl;
 use super::d3d::{Gpu, SourceTexture};
 use super::overlay::Overlay;
 use super::pipeline::Pipeline;
@@ -61,6 +62,7 @@ struct Renderer {
     pipeline: Pipeline,
     overlay: Overlay,
     capture: Capture,
+    cursor: CursorControl,
     geometry: Geometry,
     source: Option<SourceTexture>,
     dest: Rect,
@@ -103,6 +105,7 @@ impl Renderer {
             pipeline,
             overlay,
             capture,
+            cursor: CursorControl::new(),
             geometry,
             source: None,
             dest: Rect::default(),
@@ -174,6 +177,9 @@ impl Renderer {
             shared.visible.store(visible, Ordering::Relaxed);
             redraw |= visible;
         }
+        // Повторюємо щоразу: Windows скидає обмеження курсора при деяких подіях (UAC, Ctrl+Alt+Del).
+        self.cursor
+            .update(visible, geometry.client, self.settings.capture_cursor);
         Ok(Some(redraw))
     }
 

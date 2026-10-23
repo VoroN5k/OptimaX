@@ -18,8 +18,17 @@ pub fn beep_stop() {
     imp::beep_twice(660, 90);
 }
 
-/// Глобальна гаряча клавіша `Ctrl+Shift+F9`. Працює й поверх повноекранних ігор.
-/// Натискання приходять у канал [`GlobalHotkey::presses`]; знімається при знищенні.
+/// Функціональна клавіша для глобальних комбінацій `Ctrl+Shift+…`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FunctionKey {
+    /// F9 — старт/стоп запису гри.
+    F9,
+    /// F10 — увімкнути/вимкнути апскейл.
+    F10,
+}
+
+/// Глобальна гаряча клавіша `Ctrl+Shift+F9/F10`. Працює й поверх повноекранних ігор.
+/// Натискання накопичуються в каналі й читаються [`GlobalHotkey::pressed`]; знімається при знищенні.
 pub struct GlobalHotkey {
     inner: imp::Hotkey,
     presses: Receiver<()>,
@@ -28,7 +37,17 @@ pub struct GlobalHotkey {
 impl GlobalHotkey {
     /// Реєструє `Ctrl+Shift+F9`. Помилка, якщо клавішу вже зайняла інша програма.
     pub fn ctrl_shift_f9() -> Result<Self, CoreError> {
-        let (inner, presses) = imp::Hotkey::register()?;
+        Self::ctrl_shift(FunctionKey::F9)
+    }
+
+    /// Реєструє `Ctrl+Shift+F10`.
+    pub fn ctrl_shift_f10() -> Result<Self, CoreError> {
+        Self::ctrl_shift(FunctionKey::F10)
+    }
+
+    /// Реєструє `Ctrl+Shift+<key>`. Помилка, якщо комбінацію вже зайняла інша програма.
+    pub fn ctrl_shift(key: FunctionKey) -> Result<Self, CoreError> {
+        let (inner, presses) = imp::Hotkey::register(key)?;
         Ok(Self { inner, presses })
     }
 
@@ -51,6 +70,7 @@ impl Drop for GlobalHotkey {
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod imp {
+    use super::FunctionKey;
     use crate::error::CoreError;
     use std::sync::mpsc::{self, Receiver};
     use std::thread::JoinHandle;
@@ -58,14 +78,12 @@ mod imp {
     use windows::Win32::System::Diagnostics::Debug::Beep;
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, VK_F9,
+        RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, VK_F10, VK_F9,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, PeekMessageW,
         PostThreadMessageW, MSG, PM_NOREMOVE, WM_HOTKEY, WM_QUIT,
     };
-
-    const HOTKEY_ID: i32 = 0x0F9;
 
     pub(super) fn foreground_process_id() -> Option<u32> {
         // SAFETY: функції без вказівників на наші дані, крім локального `pid`.
@@ -107,7 +125,13 @@ mod imp {
     impl Hotkey {
         /// Окремий потік із чергою повідомлень: RegisterHotKey прив'язує клавішу до потоку,
         /// який її зареєстрував, і WM_HOTKEY приходить саме в його чергу.
-        pub(super) fn register() -> Result<(Self, Receiver<()>), CoreError> {
+        pub(super) fn register(key: FunctionKey) -> Result<(Self, Receiver<()>), CoreError> {
+            let vk = match key {
+                FunctionKey::F9 => VK_F9,
+                FunctionKey::F10 => VK_F10,
+            };
+            // Ідентифікатор у межах потоку; кожна клавіша має власний потік, тож достатньо коду клавіші.
+            let id = i32::from(vk.0);
             let (ready_tx, ready_rx) = mpsc::channel::<Result<u32, CoreError>>();
             let (press_tx, press_rx) = mpsc::channel::<()>();
             let handle = std::thread::Builder::new()
@@ -116,13 +140,13 @@ mod imp {
                     let mut msg = MSG::default();
                     // SAFETY: створює чергу повідомлень потоку (до PostThreadMessage ззовні).
                     let _ = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE) };
-                    // SAFETY: прив'язка до потоку (hwnd = None), id — наша константа.
+                    // SAFETY: прив'язка до потоку (hwnd = None), id — код клавіші.
                     let reg = unsafe {
                         RegisterHotKey(
                             None,
-                            HOTKEY_ID,
+                            id,
                             MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
-                            u32::from(VK_F9.0),
+                            u32::from(vk.0),
                         )
                     };
                     if let Err(e) = reg {
@@ -145,7 +169,7 @@ mod imp {
                         }
                     }
                     // SAFETY: знімаємо реєстрацію в тому самому потоці.
-                    let _ = unsafe { UnregisterHotKey(None, HOTKEY_ID) };
+                    let _ = unsafe { UnregisterHotKey(None, id) };
                 })
                 .map_err(|e| CoreError::InvalidData(e.to_string()))?;
             match ready_rx.recv() {
@@ -179,6 +203,7 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
+    use super::FunctionKey;
     use crate::error::CoreError;
     use std::sync::mpsc::Receiver;
 
@@ -191,7 +216,7 @@ mod imp {
     pub(super) struct Hotkey;
 
     impl Hotkey {
-        pub(super) fn register() -> Result<(Self, Receiver<()>), CoreError> {
+        pub(super) fn register(_key: FunctionKey) -> Result<(Self, Receiver<()>), CoreError> {
             Err(CoreError::Unsupported("глобальні гарячі клавіші"))
         }
         pub(super) fn shutdown(&mut self) {}

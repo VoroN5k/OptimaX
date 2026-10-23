@@ -96,6 +96,11 @@ fn gpu_bound_scenario() {
     assert!(find(&d, "cpu_bound").is_none());
     assert!(find(&d, "throttling").is_none(), "power cap — не тротлінг");
     assert!(d.verdicts.iter().all(|v| v.expected_gain.is_none()));
+    // Апскейл радимо з тією самою впевненістю, що й головний висновок, і без обіцянок приросту.
+    let up = find(&d, "upscale.helps").unwrap();
+    assert_eq!(up.confidence, f.confidence);
+    assert!(up.advice.is_some());
+    assert!(find(&d, "upscale.no_help").is_none());
 }
 
 #[test]
@@ -133,6 +138,20 @@ fn cpu_bound_scenario_with_core_hopping() {
         .find(|e| e.label.key == "diag.ev.cores_hopping")
         .unwrap();
     assert_eq!(hopping.value.args["v"], "4");
+    // Чесно: апскейл тут не допоможе.
+    assert!(find(&d, "upscale.no_help").is_some());
+    assert!(find(&d, "upscale.helps").is_none());
+}
+
+#[test]
+fn no_upscale_advice_without_clear_bottleneck() {
+    for b in [
+        Bottleneck::FrameCap,
+        Bottleneck::Unclear,
+        Bottleneck::InsufficientData,
+    ] {
+        assert!(upscale_advice(b, 80).is_none());
+    }
 }
 
 #[test]

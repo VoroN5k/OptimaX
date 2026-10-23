@@ -6,10 +6,12 @@
   const groups: { key: string; items: ScreenId[] }[] = [
     { key: "ui.nav.group.main", items: ["analysis", "optimization", "games", "diagnosis"] },
     { key: "ui.nav.group.device", items: ["hardware", "laptop", "network"] },
-    { key: "ui.nav.group.tools", items: ["cleanup", "apps", "startup", "appearance"] },
+    { key: "ui.nav.group.tools", items: ["upscale", "cleanup", "apps", "startup", "appearance"] },
     { key: "ui.nav.group.system", items: ["backups", "settings"] },
   ];
-  const ready = new Set<ScreenId>(["analysis", "optimization", "games", "diagnosis", "hardware", "backups", "settings"]);
+  const ready = new Set<ScreenId>([
+    "analysis", "optimization", "games", "diagnosis", "hardware", "upscale", "backups", "settings",
+  ]);
 </script>
 
 <nav class="sidebar" aria-label={tk("ui.nav.label")}>

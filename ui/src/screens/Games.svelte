@@ -4,7 +4,7 @@
   import type { GameProfile } from "../lib/bindings/GameProfile";
   import type { ProfilePreview } from "../lib/bindings/ProfilePreview";
   import { t, tk } from "../lib/i18n";
-  import { gm, logLocal } from "../lib/state.svelte";
+  import { gm, logLocal, ui } from "../lib/state.svelte";
   import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
   import Modal from "../components/Modal.svelte";
@@ -13,6 +13,7 @@
   import Segmented from "../components/Segmented.svelte";
   import StateView from "../components/StateView.svelte";
   import Toggle from "../components/Toggle.svelte";
+  import UpscaleOptions from "../components/UpscaleOptions.svelte";
 
   const SERVICES = ["WSearch", "SysMain"];
 
@@ -45,7 +46,14 @@
       lower_background: [],
       stop_services: [],
       purge_standby_when_low: false,
+      upscale: null,
     };
+  }
+
+  /** Власні налаштування апскейлу для гри: старт — копія загальних. */
+  function toggleOwnUpscale(on: boolean) {
+    if (!editing) return;
+    editing.upscale = on ? structuredClone($state.snapshot(ui.settings.upscale)) : null;
   }
 
   function addBackground() {
@@ -170,6 +178,8 @@
             <dd>{p.stop_services.join(", ") || "—"}</dd>
             <dt>{tk("ui.games.purge")}</dt>
             <dd>{p.purge_standby_when_low ? tk("ui.common.yes") : tk("ui.common.no")}</dd>
+            <dt>{tk("ui.games.upscale")}</dt>
+            <dd>{p.upscale ? tk(`upscale.filter.${p.upscale.filter}`) : tk("ui.games.upscale_global")}</dd>
           </dl>
         </Card>
       {/each}
@@ -232,6 +242,15 @@
           <span>{tk("ui.games.purge")}<br /><span class="small dim">{t({ key: "tweak.standby_purge.performance", args: {} })}</span></span>
           <Toggle label={tk("ui.games.purge")} bind:checked={editing.purge_standby_when_low} />
         </div>
+        <div class="field">
+          <div class="toggle-row">
+            <span>{tk("ui.games.upscale_own")}<br /><span class="small dim">{tk("ui.games.upscale_own_hint")}</span></span>
+            <Toggle label={tk("ui.games.upscale_own")} checked={editing.upscale !== null} onchange={toggleOwnUpscale} />
+          </div>
+          {#if editing.upscale}
+            <div class="upscale"><UpscaleOptions bind:settings={editing.upscale} /></div>
+          {/if}
+        </div>
         <div class="form-actions">
           <Button variant="ghost" onclick={() => (editing = null)}>{tk("ui.common.cancel")}</Button>
           <Button variant="primary" disabled={!editing.exe.trim()} onclick={review}>{tk("ui.games.review")}</Button>
@@ -257,6 +276,8 @@
       <dd class="mono">{preview.profile.stop_services.join(", ") || "—"}</dd>
       <dt>{tk("ui.games.purge")}</dt>
       <dd>{preview.profile.purge_standby_when_low ? tk("ui.common.yes") : tk("ui.common.no")}</dd>
+      <dt>{tk("ui.games.upscale")}</dt>
+      <dd>{preview.profile.upscale ? tk(`upscale.filter.${preview.profile.upscale.filter}`) : tk("ui.games.upscale_global")}</dd>
     </dl>
     {#each preview.warnings as w, i (i)}<p class="small warn">⚠ {t(w)}</p>{/each}
   </Modal>
@@ -285,6 +306,13 @@
 {/if}
 
 <style>
+  .upscale {
+    margin-top: calc(var(--space) * 3);
+    padding: calc(var(--space) * 4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-input);
+  }
   .watch {
     display: flex;
     justify-content: space-between;

@@ -4,11 +4,12 @@ import type { LogLine } from "./bindings/LogLine";
 import type { RollbackResult } from "./bindings/RollbackResult";
 import type { Settings } from "./bindings/Settings";
 import type { Text } from "./bindings/Text";
+import type { UpscaleView } from "./bindings/UpscaleView";
 
 export type ScreenId =
   | "analysis" | "optimization" | "games" | "diagnosis"
   | "hardware" | "laptop" | "network"
-  | "cleanup" | "apps" | "startup" | "appearance"
+  | "upscale" | "cleanup" | "apps" | "startup" | "appearance"
   | "backups" | "settings";
 
 /** Стан фонової анімації (10.4): спокій, сканування, знайдено проблему, успіх. */
@@ -62,3 +63,6 @@ export const gm = $state({
   lastEnded: null as { game: string; result: RollbackResult } | null,
   needsConfirmation: null as { game: string; reason: string } | null,
 });
+
+/** Стан апскейлу (подія бекенду `upscale`). */
+export const up = $state({ view: null as UpscaleView | null });

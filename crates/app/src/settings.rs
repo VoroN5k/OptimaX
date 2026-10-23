@@ -18,7 +18,7 @@ pub enum AnimationLevel {
 }
 
 /// Налаштування.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Settings {
     /// Фонова анімація.
@@ -33,6 +33,12 @@ pub struct Settings {
     /// Звукові сигнали на старті й зупинці запису.
     #[serde(default = "yes")]
     pub record_sound: bool,
+    /// Загальні налаштування апскейлу (профіль гри може мати власні).
+    #[serde(default)]
+    pub upscale: optimax_upscale::UpscaleSettings,
+    /// Гаряча клавіша Ctrl+Shift+F10 для апскейлу (працює, поки відкрита OptimaX).
+    #[serde(default = "yes")]
+    pub upscale_hotkey: bool,
 }
 
 fn yes() -> bool {
@@ -46,6 +52,8 @@ impl Default for Settings {
             economy: false,
             record_start: optimax_frametime::StartMode::Auto,
             record_sound: true,
+            upscale: optimax_upscale::UpscaleSettings::default(),
+            upscale_hotkey: true,
         }
     }
 }

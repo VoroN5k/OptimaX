@@ -21,7 +21,9 @@ mod acl;
 pub use frame::{FrameRecord, FrameTimestamp};
 pub use gate::{EndReason, Gate, Observation, Phase, StartMode};
 pub use presentmon::{BundledPresentMon, Target};
-pub use recording::{record, record_with, CancelToken, RecordOptions, RecordProgress, Recording};
+pub use recording::{
+    record, record_with, CancelToken, RecordNotices, RecordOptions, RecordProgress, Recording,
+};
 pub use stats::{find_spikes, frame_stats, main_swap_chain, FrameStats, Spike};
 
 use optimax_core::CoreError;

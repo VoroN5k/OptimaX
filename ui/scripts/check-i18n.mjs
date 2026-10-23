@@ -17,10 +17,10 @@ const files = [];
 const used = new Set();
 for (const f of files) {
   const src = readFileSync(f, "utf8");
-  for (const m of src.matchAll(/["'`]((?:ui|priority|service|tweak|gm|audit|diag|ab)\.[a-z0-9_.]+)["'`]/g)) used.add(m[1]);
+  for (const m of src.matchAll(/["'`]((?:ui|priority|service|tweak|gm|audit|diag|ab|toast|upscale\.(?:filter|error))\.[a-z0-9_.]+)["'`]/g)) used.add(m[1]);
 }
 // Динамічні ключі: розгортаємо за відомими значеннями.
-const screens = ["analysis", "optimization", "games", "diagnosis", "hardware", "laptop", "network", "cleanup", "apps", "startup", "appearance", "backups", "settings"];
+const screens = ["analysis", "optimization", "games", "diagnosis", "hardware", "laptop", "network", "upscale", "cleanup", "apps", "startup", "appearance", "backups", "settings"];
 for (const s of screens) used.add(`ui.nav.${s}`);
 for (const s of ["laptop", "network", "cleanup", "apps", "startup", "appearance"]) used.add(`ui.placeholder.${s}`);
 for (const k of ["power_scheme", "process_priority", "service", "standby_list"]) used.add(`ui.target.${k}`);
@@ -34,6 +34,12 @@ for (const k of ["completed", "hotkey", "game_exited", "cancelled", "wait_timeou
   used.add(`ui.rec.end.${k}`);
   used.add(`ui.rec.not_started.${k}`);
 }
+
+for (const f of ["nearest", "bilinear", "lanczos", "fsr", "nis"]) {
+  used.add(`upscale.filter.${f}`);
+  used.add(`ui.up.filter_hint.${f}`);
+}
+for (const f of ["aspect", "integer", "stretch"]) used.add(`ui.up.fit.${f}`);
 
 const missing = [...used].filter((k) => !(k in catalog)).sort();
 if (missing.length) {

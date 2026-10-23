@@ -228,3 +228,67 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+
+
+----------------------------------------------------------------------
+
+AMD FidelityFX Super Resolution 1 (FSR 1)
+Джерело: https://github.com/GPUOpen-Effects/FidelityFX-FSR
+Комміт: a21ffb8f6c13233ba336352bdff293894c706575
+Файли (без змін): crates/upscale/src/shaders/vendor/fsr1/ffx_a.h, ffx_fsr1.h
+SHA-256: ffx_a.h    f60e2722fcd13989523b9164d776ab382b3692791767f3bf8bb19967f763f3fb
+         ffx_fsr1.h 93c3922362ea7fc99cbcc698ca30c98de4f8c246d1fbb0b09e015ddef38ce3a5
+Ліцензія: MIT
+
+Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+----------------------------------------------------------------------
+
+NVIDIA Image Scaling SDK 1.0.3 (NIS)
+Джерело: https://github.com/NVIDIAGameWorks/NVIDIAImageScaling
+Комміт: 35e13ba316c98eeecf16f37eae70ce88019911f6
+Файли (без змін): crates/upscale/src/shaders/vendor/nis/NIS_Scaler.h, NIS_Main.hlsl, NIS_Config.h
+SHA-256: NIS_Scaler.h  2d3bd5b45d6a0c4169fe36dfe349e7ff5a099dff6fb6876f8a3286489f74d3bf
+         NIS_Main.hlsl 46402103801007b402aeeb8481d60b1bda37799bf68b543b32daea65f255f301
+         NIS_Config.h  f33c5dd82bb63f3c1cc7cefd86690053de0bd3fe0e730463a5e63e90e7778754
+Ліцензія: MIT (текст із заголовків файлів)
+
+The MIT License(MIT)
+
+Copyright(c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files(the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and / or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions :
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

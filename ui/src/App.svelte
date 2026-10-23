@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { on } from "./lib/api";
+  import { api, on } from "./lib/api";
   import type { DotsStats } from "./lib/dots";
-  import { gm, pushLog, ui } from "./lib/state.svelte";
+  import { gm, pushLog, ui, up } from "./lib/state.svelte";
   import BackgroundDots from "./components/BackgroundDots.svelte";
   import LogPanel from "./components/LogPanel.svelte";
   import Sidebar from "./components/Sidebar.svelte";
@@ -14,12 +14,15 @@
   import Optimization from "./screens/Optimization.svelte";
   import Placeholder from "./screens/Placeholder.svelte";
   import Settings from "./screens/Settings.svelte";
+  import Upscale from "./screens/Upscale.svelte";
 
   let dotsStats = $state<DotsStats | null>(null);
 
   onMount(() => {
+    void api.upscaleState().then((v) => (up.view = v));
     const subs = [
       on("log", pushLog),
+      on("upscale", (v) => (up.view = v)),
       on("gamemode", (e) => {
         switch (e.kind) {
           case "watching":
@@ -81,6 +84,8 @@
           <Games />
         {:else if ui.screen === "hardware"}
           <Hardware />
+        {:else if ui.screen === "upscale"}
+          <Upscale />
         {:else if ui.screen === "backups"}
           <Backups />
         {:else if ui.screen === "settings"}

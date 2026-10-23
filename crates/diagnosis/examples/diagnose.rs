@@ -10,7 +10,8 @@
 use optimax_core::{Catalog, Impact, Text};
 use optimax_diagnosis::{diagnose, Context};
 use optimax_frametime::{
-    record_with, BundledPresentMon, CancelToken, RecordOptions, Recording, StartMode, Target,
+    record_with, BundledPresentMon, CancelToken, RecordNotices, RecordOptions, Recording,
+    StartMode, Target,
 };
 use std::time::Duration;
 
@@ -75,7 +76,8 @@ fn capture(args: &[String]) -> anyhow::Result<Recording> {
         _ => StartMode::Immediate,
     };
     let options = RecordOptions::new(Target::ProcessName(game), Duration::from_secs(seconds))
-        .with_start(start, true);
+        .with_start(start, true)
+        .with_notices(RecordNotices::from_catalog(&Catalog::ukrainian()?));
     let mut last_phase = None;
     let rec = record_with(
         &pm,

@@ -2260,6 +2260,7 @@ dependencies = [
  "optimax-gamemode",
  "optimax-metrics",
  "optimax-tweaks",
+ "optimax-upscale",
  "serde",
  "serde_json",
  "sysinfo",
@@ -2288,6 +2289,7 @@ dependencies = [
 name = "optimax-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2332,6 +2334,7 @@ dependencies = [
  "anyhow",
  "optimax-core",
  "optimax-tweaks",
+ "optimax-upscale",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2364,6 +2367,21 @@ dependencies = [
  "optimax-metrics",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "ts-rs",
+ "windows",
+]
+
+[[package]]
+name = "optimax-upscale"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "optimax-core",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
  "tracing",
  "ts-rs",

@@ -8,6 +8,7 @@ members = [
     "crates/diagnosis",
     "crates/tweaks",
     "crates/gamemode",
+    "crates/upscale",
     "crates/app",
 ]
 
@@ -26,6 +27,7 @@ optimax-frametime = { path = "crates/frametime" }
 optimax-diagnosis = { path = "crates/diagnosis" }
 optimax-tweaks = { path = "crates/tweaks" }
 optimax-gamemode = { path = "crates/gamemode" }
+optimax-upscale = { path = "crates/upscale" }
 
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

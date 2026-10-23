@@ -86,6 +86,8 @@ pub struct AppState {
     pub startup: Mutex<crate::dto::StartupReport>,
     /// Контролер апскейлу (запускається в `setup`, бо потребує дескриптора застосунку).
     pub upscale: Mutex<Option<crate::commands::upscale::Controller>>,
+    /// Поточний замір мережі.
+    pub net_test: Mutex<Option<optimax_network::CancelToken>>,
 }
 
 impl AppState {
@@ -111,6 +113,7 @@ impl AppState {
             presentmon: OnceLock::new(),
             startup: Mutex::new(crate::dto::StartupReport::default()),
             upscale: Mutex::new(None),
+            net_test: Mutex::new(None),
         })
     }
 

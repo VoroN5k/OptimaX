@@ -1,0 +1,36 @@
+[package]
+name = "optimax-network"
+description = "Мережа для ігор: адаптер і Wi-Fi, затримка, джитер і втрати до роутера та вузла за вибором (лише за запитом користувача)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Генерація TypeScript-типів для UI (вмикає лише крейт app у тестах).
+ts = ["dep:ts-rs", "optimax-core/ts"]
+
+[dependencies]
+ts-rs = { workspace = true, optional = true }
+optimax-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_NetworkManagement_WiFi",
+    "Win32_Networking_WinSock",
+    "Win32_System_IO",
+] }
+
+[dev-dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

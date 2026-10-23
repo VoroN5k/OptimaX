@@ -5,6 +5,7 @@ pub mod audit;
 pub mod diagnosis;
 pub mod gamemode;
 pub mod metrics;
+pub mod network;
 pub mod system;
 pub mod tweaks;
 pub mod upscale;

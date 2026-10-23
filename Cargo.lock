@@ -2259,6 +2259,7 @@ dependencies = [
  "optimax-frametime",
  "optimax-gamemode",
  "optimax-metrics",
+ "optimax-network",
  "optimax-tweaks",
  "optimax-upscale",
  "serde",
@@ -2354,6 +2355,20 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "ts-rs",
+]
+
+[[package]]
+name = "optimax-network"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "optimax-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "ts-rs",
+ "windows",
 ]
 
 [[package]]

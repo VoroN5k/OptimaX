@@ -25,6 +25,9 @@
     copy: "M9 9h11v11H9zM5 15H4V4h11v1",
     plus: "M12 5v14M5 12h14",
     trash: "M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14",
+    lock: "M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4",
+    help: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01",
+    folder: "M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z",
   };
   export type IconName = keyof typeof PATHS;
 </script>

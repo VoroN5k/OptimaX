@@ -3,6 +3,7 @@
 
 use super::{format_guid, overlay_guids, parse_guid, PowerApi, PowerScheme};
 use crate::error::CoreError;
+use windows::core::s;
 use windows::core::GUID;
 use windows::Win32::Foundation::{LocalFree, ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, HLOCAL};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
@@ -10,7 +11,6 @@ use windows::Win32::System::Power::{
     PowerEnumerate, PowerGetActiveScheme, PowerReadFriendlyName, PowerSetActiveScheme,
     ACCESS_SCHEME,
 };
-use windows::core::s;
 
 type FnGetOverlay = unsafe extern "system" fn(*mut GUID) -> u32;
 type FnSetOverlay = unsafe extern "system" fn(GUID) -> u32;
@@ -24,7 +24,11 @@ fn load_overlay_fns() -> Option<(FnGetOverlay, FnSetOverlay)> {
         let module = GetModuleHandleA(s!("powrprof.dll")).ok()?;
         let get = GetProcAddress(module, s!("PowerGetEffectiveOverlayScheme"))?;
         let set = GetProcAddress(module, s!("PowerSetActiveOverlayScheme"))?;
-        Some((std::mem::transmute(get), std::mem::transmute(set)))
+        type Raw = unsafe extern "system" fn() -> isize;
+        Some((
+            std::mem::transmute::<Raw, FnGetOverlay>(get),
+            std::mem::transmute::<Raw, FnSetOverlay>(set),
+        ))
     }
 }
 

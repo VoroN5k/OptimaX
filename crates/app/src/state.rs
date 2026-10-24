@@ -88,6 +88,8 @@ pub struct AppState {
     pub upscale: Mutex<Option<crate::commands::upscale::Controller>>,
     /// Поточний замір мережі.
     pub net_test: Mutex<Option<optimax_network::CancelToken>>,
+    /// Очищення диска: скан, план, точка відновлення сесії.
+    pub cleanup: Mutex<crate::commands::cleanup::CleanupState>,
 }
 
 impl AppState {
@@ -114,6 +116,7 @@ impl AppState {
             startup: Mutex::new(crate::dto::StartupReport::default()),
             upscale: Mutex::new(None),
             net_test: Mutex::new(None),
+            cleanup: Mutex::new(Default::default()),
         })
     }
 

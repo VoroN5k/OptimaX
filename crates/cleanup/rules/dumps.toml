@@ -1,0 +1,53 @@
+# Дампи падінь. Корисні лише для з'ясування причини збою.
+
+[[rule]]
+id = "user_crash_dumps"
+category = "crash_dumps"
+paths = ['%LOCALAPPDATA%\CrashDumps']
+description = "Дампи пам'яті програм, що аварійно завершились (Windows Error Reporting)."
+verdict = "safe"
+regenerates = false
+consequences = "Зникне інформація для аналізу минулих падінь програм. Якщо зараз з'ясовуєте причину вильоту, спершу збережіть потрібний дамп."
+method = "delete"
+source = "Microsoft Learn, «Collecting User-Mode Dumps»: DumpFolder за замовчуванням — %LOCALAPPDATA%\\CrashDumps (https://learn.microsoft.com/en-us/windows/win32/wer/collecting-user-mode-dumps)"
+verified_on = "Windows 11 Home 23H2 (збірка 22631): шлях перевірено на ПК, 2026-10-24"
+
+[[rule]]
+id = "system_minidumps"
+category = "crash_dumps"
+paths = ['%SystemRoot%\Minidump']
+description = "Малі дампи пам'яті після синього екрана (BSOD)."
+verdict = "safe"
+regenerates = false
+consequences = "Зникне інформація для аналізу минулих синіх екранів."
+method = "delete"
+file_patterns = ["*.dmp"]
+source = "Штатний обробник «Очищення диска» System error minidump files (VolumeCaches: Folder = %SystemRoot%\\Minidump, FileList = *.dmp); Microsoft Support KB 307973 (https://support.microsoft.com/kb/307973)"
+verified_on = "Windows 11 Home 23H2 (збірка 22631): обробник VolumeCaches перевірено на ПК, 2026-10-24 (теки Minidump на ПК немає)"
+
+[[rule]]
+id = "system_memory_dump"
+category = "crash_dumps"
+paths = ['%SystemRoot%\MEMORY.DMP']
+description = "Повний дамп пам'яті ядра після синього екрана. Може займати гігабайти."
+verdict = "safe"
+regenerates = false
+consequences = "Зникне інформація для аналізу останнього синього екрана."
+method = "delete"
+source = "Штатний обробник «Очищення диска» System error memory dump files (VolumeCaches: Folder = %SystemRoot%, FileList = *.dmp); Microsoft Support KB 307973: дамп ядра за замовчуванням у %SystemRoot%\\Memory.dmp (https://support.microsoft.com/kb/307973)"
+verified_on = "Windows 11 Home 23H2 (збірка 22631): обробник VolumeCaches перевірено на ПК, 2026-10-24 (файлу на ПК немає)"
+
+[[rule]]
+id = "wer_reports"
+category = "crash_dumps"
+paths = [
+    '%ProgramData%\Microsoft\Windows\WER\ReportArchive',
+    '%ProgramData%\Microsoft\Windows\WER\ReportQueue',
+]
+description = "Звіти Windows про помилки (надіслані й ті, що чекають надсилання)."
+verdict = "safe"
+regenerates = false
+consequences = "Зникнуть локальні звіти про минулі збої (їх показує «Монітор стабільності системи»)."
+method = "delete"
+source = "Штатний обробник «Очищення диска» Windows Error Reporting Files (VolumeCaches: Folder = C:\\ProgramData\\Microsoft\\Windows\\WER\\, FileList = *.*)"
+verified_on = "Windows 11 Home 23H2 (збірка 22631): шляхи й обробник VolumeCaches перевірено на ПК, 2026-10-24"

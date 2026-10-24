@@ -1,0 +1,15 @@
+# Драйвери. Розпаковані інсталятори NVIDIA (C:\NVIDIA) і AMD (C:\AMD) поки НЕ додано:
+# офіційної документації немає, а на ПК розробника цих тек немає, тож нема на чому перевірити.
+
+[[rule]]
+id = "driver_store"
+category = "drivers"
+paths = ['%SystemRoot%\System32\DriverStore\FileRepository']
+description = "Сховище пакетів драйверів Windows, зокрема старі версії драйверів відеокарти."
+verdict = "protected"
+regenerates = false
+consequences = "Ручне видалення може зламати встановлені пристрої й відкат драйвера."
+method = "manual_only"
+manual_hint = "Старі пакети драйверів прибирає штатне «Очищення диска»: cleanmgr → «Очистити системні файли» → «Пакети драйверів пристроїв»."
+source = "Штатний обробник «Очищення диска» Device Driver Packages (HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VolumeCaches\\Device Driver Packages)"
+verified_on = "Windows 11 Home 23H2 (збірка 22631): шлях і обробник VolumeCaches перевірено на ПК, 2026-10-24"

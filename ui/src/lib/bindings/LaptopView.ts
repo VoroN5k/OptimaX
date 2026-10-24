@@ -5,23 +5,23 @@ import type { Finding } from "./Finding";
 /**
  * Стан ноутбука для UI.
  */
-export type LaptopView = {
+export type LaptopView = { 
 /**
  * Чи є батарея (false — десктоп або батарею не виявлено).
  */
-is_laptop: boolean,
+is_laptop: boolean, 
 /**
- * Дані батареї; `null` якщо немає.
+ * Дані батареї; `None` якщо немає.
  */
-battery: BatteryInfo | null,
+battery: BatteryInfo | null, 
 /**
  * Чи доступний недокументований API оверлейного режиму.
  */
-overlay_supported: boolean,
+overlay_supported: boolean, 
 /**
- * GUID поточного оверлейного режиму; `null` = збалансований.
+ * GUID поточного оверлейного режиму; `None` = збалансований.
  */
-overlay_guid: string | null,
+overlay_guid: string | null, 
 /**
  * Знахідки аудиту батареї.
  */

@@ -8,7 +8,9 @@ mod firmware;
 mod hags;
 mod power;
 
-use crate::model::{BatteryInfo, DisplayInfo, FirmwareInfo, GameModeState, GpuAdapter, HagsInfo, PowerPlan};
+use crate::model::{
+    BatteryInfo, DisplayInfo, FirmwareInfo, GameModeState, GpuAdapter, HagsInfo, PowerPlan,
+};
 use crate::probe::{read_game_mode, read_hags, SystemProbe};
 use nvml_wrapper::Nvml;
 use optimax_core::registry::WinRegistry;

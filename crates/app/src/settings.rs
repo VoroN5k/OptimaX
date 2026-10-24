@@ -39,6 +39,38 @@ pub struct Settings {
     /// Гаряча клавіша Ctrl+Shift+F10 для апскейлу (працює, поки відкрита OptimaX).
     #[serde(default = "yes")]
     pub upscale_hotkey: bool,
+    /// Очищення диска.
+    #[serde(default)]
+    pub cleanup: CleanupSettings,
+}
+
+/// Налаштування очищення.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct CleanupSettings {
+    /// Скільки днів файли 🟡 лежать у карантині.
+    #[serde(default = "quarantine_days")]
+    pub quarantine_days: u32,
+    /// Диск для карантину (`D:\`); `None` — системний (`%LOCALAPPDATA%\OptimaX\Quarantine`).
+    #[serde(default)]
+    pub quarantine_drive: Option<String>,
+    /// Автоматично видаляти карантин після терміну (при старті програми, із записом у журналі).
+    #[serde(default)]
+    pub auto_purge: bool,
+}
+
+fn quarantine_days() -> u32 {
+    7
+}
+
+impl Default for CleanupSettings {
+    fn default() -> Self {
+        Self {
+            quarantine_days: quarantine_days(),
+            quarantine_drive: None,
+            auto_purge: false,
+        }
+    }
 }
 
 fn yes() -> bool {
@@ -54,6 +86,7 @@ impl Default for Settings {
             record_sound: true,
             upscale: optimax_upscale::UpscaleSettings::default(),
             upscale_hotkey: true,
+            cleanup: CleanupSettings::default(),
         }
     }
 }

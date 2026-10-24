@@ -3,6 +3,7 @@
 
 use crate::model::{BatteryInfo, PowerSource};
 use optimax_core::CoreError;
+use windows::core::GUID;
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
     SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInterfaces, SetupDiGetClassDevsW,
     SetupDiGetDeviceInterfaceDetailW, DIGCF_DEVICEINTERFACE, DIGCF_PRESENT,
@@ -12,9 +13,8 @@ use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
-use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Power::GetSystemPowerStatus;
-use windows::core::GUID;
+use windows::Win32::System::IO::DeviceIoControl;
 
 /// Інтерфейс батареї (GUID_DEVINTERFACE_BATTERY).
 const GUID_DEVINTERFACE_BATTERY: GUID = GUID {
@@ -205,8 +205,7 @@ fn read_via_ioctl() -> (Option<u32>, Option<u32>, Option<u32>, Option<i32>) {
     let mut idx = 0u32;
     loop {
         let mut iface = SP_DEVICE_INTERFACE_DATA {
-            cbSize: u32::try_from(std::mem::size_of::<SP_DEVICE_INTERFACE_DATA>())
-                .unwrap_or(28),
+            cbSize: u32::try_from(std::mem::size_of::<SP_DEVICE_INTERFACE_DATA>()).unwrap_or(28),
             ..Default::default()
         };
         // SAFETY: hdev валідний; iface ініціалізований.
@@ -226,7 +225,14 @@ fn read_via_ioctl() -> (Option<u32>, Option<u32>, Option<u32>, Option<i32>) {
         };
         // SAFETY: виклик без буфера лише повертає потрібний розмір.
         let _ = unsafe {
-            SetupDiGetDeviceInterfaceDetailW(hdev, &iface, None, 0, Some(&mut required), Some(&mut devinfo))
+            SetupDiGetDeviceInterfaceDetailW(
+                hdev,
+                &iface,
+                None,
+                0,
+                Some(&mut required),
+                Some(&mut devinfo),
+            )
         };
         if required == 0 || required > 4096 {
             continue;
@@ -236,7 +242,11 @@ fn read_via_ioctl() -> (Option<u32>, Option<u32>, Option<u32>, Option<i32>) {
         let mut buf = vec![0u8; required as usize];
         // SP_DEVICE_INTERFACE_DETAIL_DATA_W: перше поле DWORD cbSize, решта — рядок UTF-16.
         // cbSize = розмір заголовку структури (не всього буфера): 8 на x64, 6 на x86.
-        let cb_size: u32 = if cfg!(target_pointer_width = "64") { 8 } else { 6 };
+        let cb_size: u32 = if cfg!(target_pointer_width = "64") {
+            8
+        } else {
+            6
+        };
         buf[..4].copy_from_slice(&cb_size.to_ne_bytes());
 
         // SAFETY: buf достатнього розміру; devinfo ініціалізований.

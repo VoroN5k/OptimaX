@@ -1,0 +1,62 @@
+# Кеші браузерів і лаунчерів. Паролі, історію, вкладки й налаштування не чіпаємо:
+# лише теки дискового кешу.
+
+[[rule]]
+id = "chrome_cache"
+category = "browser_caches"
+paths = [
+    '%LOCALAPPDATA%\Google\Chrome\User Data\*\Cache',
+    '%LOCALAPPDATA%\Google\Chrome\User Data\*\Code Cache',
+    '%LOCALAPPDATA%\Google\Chrome\User Data\*\GPUCache',
+]
+description = "Дисковий кеш Google Chrome (сторінки, скрипти, GPU) для кожного профілю."
+verdict = "safe"
+regenerates = true
+consequences = "Сайти перший раз відкриватимуться трохи повільніше. Паролі, історія, вкладки й розширення не зачіпаються. Закрийте Chrome: зайняті файли буде пропущено."
+method = "delete"
+source = "Chromium, «User Data Directory»: «On Windows and ChromeOS, the user cache dir is the same as the profile dir» (https://chromium.googlesource.com/chromium/src/+/HEAD/docs/user_data_dir.md). Назви підтек кешу перевірено на реальній системі."
+verified_on = "Windows 11 Home 23H2 (збірка 22631), Google Chrome: профілі Default і Profile 1 перевірено на ПК, 2026-10-24"
+
+[[rule]]
+id = "edge_cache"
+category = "browser_caches"
+paths = [
+    '%LOCALAPPDATA%\Microsoft\Edge\User Data\*\Cache',
+    '%LOCALAPPDATA%\Microsoft\Edge\User Data\*\Code Cache',
+    '%LOCALAPPDATA%\Microsoft\Edge\User Data\*\GPUCache',
+]
+description = "Дисковий кеш Microsoft Edge (на основі Chromium) для кожного профілю."
+verdict = "safe"
+regenerates = true
+consequences = "Сайти перший раз відкриватимуться трохи повільніше. Паролі, історія й вкладки не зачіпаються. Edge часто працює у фоні: зайняті файли буде пропущено."
+method = "delete"
+source = "Chromium, «User Data Directory» (кеш у теці профілю, https://chromium.googlesource.com/chromium/src/+/HEAD/docs/user_data_dir.md). Edge побудовано на Chromium; назви підтек перевірено на реальній системі."
+verified_on = "Windows 11 Home 23H2 (збірка 22631), Microsoft Edge: профіль Default перевірено на ПК, 2026-10-24"
+
+[[rule]]
+id = "firefox_cache"
+category = "browser_caches"
+paths = ['%LOCALAPPDATA%\Mozilla\Firefox\Profiles\*\cache2']
+description = "Дисковий кеш Firefox. Сам профіль (закладки, паролі) лежить окремо, в AppData\\Roaming."
+verdict = "safe"
+regenerates = true
+consequences = "Сайти перший раз відкриватимуться трохи повільніше. Закладки, паролі й історія не зачіпаються. Закрийте Firefox: зайняті файли буде пропущено."
+method = "delete"
+source = "Mozilla Support (відповідь спільноти): кеш Firefox у AppData\\Local\\Mozilla\\Firefox\\Profiles\\<профіль>\\cache2, профіль — в AppData\\Roaming (https://support.mozilla.org/questions/1276006). Розташування перевірено на реальній системі."
+verified_on = "Windows 11 Home 23H2 (збірка 22631), Firefox: тека cache2 перевірено на ПК, 2026-10-24"
+
+[[rule]]
+id = "epic_webcache"
+category = "browser_caches"
+paths = [
+    '%LOCALAPPDATA%\EpicGamesLauncher\Saved\webcache',
+    '%LOCALAPPDATA%\EpicGamesLauncher\Saved\webcache_4147',
+    '%LOCALAPPDATA%\EpicGamesLauncher\Saved\webcache_4430',
+]
+description = "Веб-кеш Epic Games Launcher (сторінки магазину й бібліотеки)."
+verdict = "safe"
+regenerates = true
+consequences = "Лаунчер перший раз відкриватиметься трохи довше. Ігри та їхні збереження не зачіпаються. Закрийте лаунчер: зайняті файли буде пропущено."
+method = "delete"
+source = "Epic Games, «How do I clear the Launcher cache on PC?»: видалити теки webcache, webcache_4147, webcache_4430 у %localappdata%\\EpicGamesLauncher\\Saved (https://www.epicgames.com/help/c-36403860/a20673770)"
+verified_on = "Windows 11 Home 23H2 (збірка 22631): webcache_4430 перевірено на ПК, 2026-10-24"

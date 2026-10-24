@@ -8,6 +8,7 @@
     title,
     confirmLabel,
     danger = false,
+    wide = false,
     busy = false,
     onconfirm,
     oncancel,
@@ -16,6 +17,8 @@
     title: string;
     confirmLabel: string;
     danger?: boolean;
+    /** Ширше вікно (довгі шляхи, списки). */
+    wide?: boolean;
     busy?: boolean;
     onconfirm: () => void;
     oncancel: () => void;
@@ -49,7 +52,7 @@
 </script>
 
 <div class="backdrop" role="presentation" {onkeydown}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="modal-title" bind:this={dialog}>
+  <div class="dialog" class:wide role="dialog" aria-modal="true" aria-labelledby="modal-title" bind:this={dialog}>
     <h2 id="modal-title">{title}</h2>
     <div class="content">{@render children()}</div>
     <div class="buttons">
@@ -62,7 +65,8 @@
 <style>
   .backdrop {
     position: fixed;
-    inset: 0;
+    /* Лише область вмісту: вікно центрується там і не заходить під бічну панель. */
+    inset: 0 0 0 var(--sidebar-width);
     z-index: 50;
     display: grid;
     place-items: center;
@@ -71,7 +75,8 @@
     animation: fade var(--dur) var(--ease);
   }
   .dialog {
-    width: min(560px, calc(100vw - 48px));
+    width: min(560px, calc(100vw - var(--sidebar-width) - 48px));
+    overflow-x: hidden;
     max-height: calc(100vh - 64px);
     overflow-y: auto;
     padding: calc(var(--space) * 6);
@@ -83,7 +88,11 @@
     gap: calc(var(--space) * 4);
     animation: page-in var(--dur) var(--ease);
   }
+  .dialog.wide {
+    width: min(860px, calc(100vw - var(--sidebar-width) - 48px));
+  }
   .content {
+    min-width: 0;
     color: var(--text-muted);
     display: grid;
     gap: calc(var(--space) * 3);

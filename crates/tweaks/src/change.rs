@@ -149,9 +149,7 @@ pub fn describe_power_mode(guid: Option<&str>) -> Text {
     match guid {
         None => Text::new("power_mode.balanced"),
         Some(g) if g.eq_ignore_ascii_case(og::ECONOMY) => Text::new("power_mode.economy"),
-        Some(g) if g.eq_ignore_ascii_case(og::BETTER_PERFORMANCE) => {
-            Text::new("power_mode.better")
-        }
+        Some(g) if g.eq_ignore_ascii_case(og::BETTER_PERFORMANCE) => Text::new("power_mode.better"),
         Some(g) if g.eq_ignore_ascii_case(og::BEST_PERFORMANCE) => Text::new("power_mode.best"),
         Some(g) => Text::raw(g),
     }

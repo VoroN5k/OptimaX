@@ -336,22 +336,27 @@ impl<'a> Engine<'a> {
                     }]
                 }
             }
-            Desired::GpuPreference { exe_path, preference } => {
+            Desired::GpuPreference {
+                exe_path,
+                preference,
+            } => {
                 const GPU_PREF_KEY: &str = r"Software\Microsoft\DirectX\UserGpuPreferences";
                 let target = SettingTarget::Registry {
                     hive: RegHive::CurrentUser,
                     path: GPU_PREF_KEY.into(),
                     name: exe_path.clone(),
                 };
-                let current = self.registry.read_value(RegHive::CurrentUser, GPU_PREF_KEY, exe_path)?;
+                let current =
+                    self.registry
+                        .read_value(RegHive::CurrentUser, GPU_PREF_KEY, exe_path)?;
                 let new_value = match preference {
                     GpuPref::Default => None,
-                    GpuPref::PowerSaving => {
-                        Some(optimax_core::registry::RegValue::String("GpuPreference=1;".into()))
-                    }
-                    GpuPref::HighPerformance => {
-                        Some(optimax_core::registry::RegValue::String("GpuPreference=2;".into()))
-                    }
+                    GpuPref::PowerSaving => Some(optimax_core::registry::RegValue::String(
+                        "GpuPreference=1;".into(),
+                    )),
+                    GpuPref::HighPerformance => Some(optimax_core::registry::RegValue::String(
+                        "GpuPreference=2;".into(),
+                    )),
                 };
                 if current == new_value {
                     Vec::new()

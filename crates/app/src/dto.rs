@@ -73,6 +73,15 @@ pub enum UiDesired {
     PowerScheme(String),
     /// Ігровий режим Windows.
     GameMode(bool),
+    /// Оверлейний режим живлення; `null` = збалансований.
+    PowerMode(Option<String>),
+    /// GPU для конкретного exe на гібридній системі.
+    GpuPreference {
+        /// Повний шлях до exe.
+        exe_path: String,
+        /// Бажаний GPU.
+        preference: optimax_tweaks::catalog::GpuPref,
+    },
 }
 
 impl From<UiDesired> for optimax_tweaks::Desired {
@@ -80,6 +89,10 @@ impl From<UiDesired> for optimax_tweaks::Desired {
         match d {
             UiDesired::PowerScheme(g) => Self::PowerScheme(g),
             UiDesired::GameMode(on) => Self::GameMode(on),
+            UiDesired::PowerMode(guid) => Self::PowerMode(guid),
+            UiDesired::GpuPreference { exe_path, preference } => {
+                Self::GpuPreference { exe_path, preference }
+            }
         }
     }
 }

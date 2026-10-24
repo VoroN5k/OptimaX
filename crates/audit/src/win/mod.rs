@@ -1,13 +1,14 @@
 //! Реалізація [`SystemProbe`] для Windows. Лише читання, жодних змін у системі.
 #![allow(unsafe_code)]
 
+mod battery;
 mod devices;
 mod display;
 mod firmware;
 mod hags;
 mod power;
 
-use crate::model::{DisplayInfo, FirmwareInfo, GameModeState, GpuAdapter, HagsInfo, PowerPlan};
+use crate::model::{BatteryInfo, DisplayInfo, FirmwareInfo, GameModeState, GpuAdapter, HagsInfo, PowerPlan};
 use crate::probe::{read_game_mode, read_hags, SystemProbe};
 use nvml_wrapper::Nvml;
 use optimax_core::registry::WinRegistry;
@@ -68,5 +69,9 @@ impl SystemProbe for WindowsProbe {
             registry: read_hags(&self.registry)?,
             adapters,
         })
+    }
+
+    fn battery_info(&self) -> Result<Option<BatteryInfo>, CoreError> {
+        battery::read()
     }
 }

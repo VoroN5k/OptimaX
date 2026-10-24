@@ -4,6 +4,7 @@ pub mod ab;
 pub mod audit;
 pub mod diagnosis;
 pub mod gamemode;
+pub mod laptop;
 pub mod metrics;
 pub mod network;
 pub mod system;

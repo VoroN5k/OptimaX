@@ -10,7 +10,7 @@
     { key: "ui.nav.group.system", items: ["backups", "settings"] },
   ];
   const ready = new Set<ScreenId>([
-    "analysis", "optimization", "games", "diagnosis", "hardware", "network", "upscale", "backups", "settings",
+    "analysis", "optimization", "games", "diagnosis", "hardware", "laptop", "network", "upscale", "backups", "settings",
   ]);
 </script>
 

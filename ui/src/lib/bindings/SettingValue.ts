@@ -6,4 +6,4 @@ import type { ServiceState } from "./ServiceState";
 /**
  * Значення налаштування.
  */
-export type SettingValue = { "kind": "registry", "value": RegValue | null } | { "kind": "power_scheme", "value": string } | { "kind": "priority", "value": PriorityClass } | { "kind": "service", "value": ServiceState } | { "kind": "action" };
+export type SettingValue = { "kind": "registry", "value": RegValue | null } | { "kind": "power_scheme", "value": string } | { "kind": "priority", "value": PriorityClass } | { "kind": "service", "value": ServiceState } | { "kind": "action" } | { "kind": "power_mode", "value": string | null };

@@ -2,8 +2,8 @@
 
 use crate::gpu_info::nvidia_version;
 use crate::model::{
-    BiosInfo, DisplayInfo, GameModeState, GpuAdapter, GpuVendor, HagsAdapter, HagsInfo, HagsState,
-    MemoryModule, MemoryType, PowerPlan, RebarState,
+    BatteryInfo, BiosInfo, DisplayInfo, GameModeState, GpuAdapter, GpuVendor, HagsAdapter,
+    HagsInfo, HagsState, MemoryModule, MemoryType, PowerPlan, PowerSource, RebarState,
 };
 use optimax_core::{Category, CivilDate, Evidence, Finding, FindingBuilder, Impact, Text};
 
@@ -329,6 +329,44 @@ pub fn check_hags(info: &HagsInfo) -> Finding {
         );
     }
     draft.build()
+}
+
+/// Поріг зносу батареї для помірного попередження.
+const BATTERY_WEAR_MODERATE: f64 = 0.20;
+
+/// Батарея: гра від батареї та знос.
+pub fn check_battery(info: &BatteryInfo) -> Vec<Finding> {
+    let mut out = Vec::new();
+
+    if info.source == PowerSource::Dc {
+        out.push(
+            draft("battery.on_dc", Category::Battery, Impact::Moderate, 95)
+                .evidence(
+                    Text::new("audit.ev.battery"),
+                    Text::new("audit.ev.battery_source").arg("source", "від батареї"),
+                )
+                .build(),
+        );
+    }
+
+    if let Some(wear) = info.wear() {
+        if wear >= BATTERY_WEAR_MODERATE {
+            let wear_pct = (wear * 100.0).round() as u32;
+            out.push(
+                draft("battery.wear", Category::Battery, Impact::Info, 90)
+                    .evidence(
+                        Text::new("audit.ev.battery"),
+                        Text::new("audit.ev.battery_wear")
+                            .arg("wear", wear_pct)
+                            .arg("full", info.full_charge_mwh.unwrap_or(0) / 1000)
+                            .arg("design", info.design_mwh.unwrap_or(0) / 1000),
+                    )
+                    .build(),
+            );
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]

@@ -6,6 +6,19 @@ use optimax_core::service::ServiceState;
 use optimax_core::Text;
 use serde::{Deserialize, Serialize};
 
+/// Бажаний GPU для exe на гібридній системі (iGPU + dGPU).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum GpuPref {
+    /// Вирішує Windows (значення реєстру відсутнє).
+    Default,
+    /// Інтегрована GPU (енергоощадна).
+    PowerSaving,
+    /// Дискретна GPU (висока продуктивність).
+    HighPerformance,
+}
+
 /// Ідентифікатор твіку.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -21,16 +34,22 @@ pub enum TweakId {
     Service,
     /// Очищення standby-пам'яті (режим гри OptimaX).
     StandbyPurge,
+    /// Оверлейний режим живлення Windows (недокументований API powrprof.dll).
+    PowerMode,
+    /// GPU для конкретного exe (реєстр UserGpuPreferences).
+    GpuPreference,
 }
 
 impl TweakId {
     /// Усі твіки каталогу.
-    pub const ALL: [TweakId; 5] = [
+    pub const ALL: [TweakId; 7] = [
         TweakId::PowerScheme,
         TweakId::GameMode,
         TweakId::ProcessPriority,
         TweakId::Service,
         TweakId::StandbyPurge,
+        TweakId::PowerMode,
+        TweakId::GpuPreference,
     ];
 
     /// Рядковий ідентифікатор (для журналу й ключів тексту).
@@ -41,6 +60,8 @@ impl TweakId {
             Self::ProcessPriority => "process_priority",
             Self::Service => "service",
             Self::StandbyPurge => "standby_purge",
+            Self::PowerMode => "power_mode",
+            Self::GpuPreference => "gpu_preference",
         }
     }
 
@@ -59,9 +80,8 @@ impl TweakId {
             performance: key("performance"),
             heat: key("heat"),
             safety: key("safety"),
-            // Ігровий режим Windows вмикає для гри під час її запуску; щоб A/B був чесним,
-            // гру треба перезапускати між прогонами. Схема живлення діє одразу.
-            restart_game_between_runs: matches!(self, Self::GameMode),
+            // Ігровий режим і GPU для exe потребують перезапуску гри між прогонами A/B.
+            restart_game_between_runs: matches!(self, Self::GameMode | Self::GpuPreference),
             requires_reboot: false,
         }
     }
@@ -112,6 +132,15 @@ pub enum Desired {
         /// Бажаний стан.
         state: ServiceState,
     },
+    /// Оверлейний режим живлення; `None` = скинути до збалансованого.
+    PowerMode(Option<String>),
+    /// GPU для конкретного exe на гібридній системі.
+    GpuPreference {
+        /// Повний шлях до exe.
+        exe_path: String,
+        /// Бажаний GPU.
+        preference: GpuPref,
+    },
 }
 
 impl Desired {
@@ -122,6 +151,8 @@ impl Desired {
             Self::GameMode(_) => TweakId::GameMode,
             Self::ProcessPriority { .. } => TweakId::ProcessPriority,
             Self::Service { .. } => TweakId::Service,
+            Self::PowerMode(_) => TweakId::PowerMode,
+            Self::GpuPreference { .. } => TweakId::GpuPreference,
         }
     }
 }

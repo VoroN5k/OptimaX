@@ -21,6 +21,17 @@ pub mod guids {
     pub const ULTIMATE: &str = "e9a42b02-d5df-448d-aa00-03f14749eb61";
 }
 
+/// GUID оверлейних режимів живлення (недокументований API powrprof.dll).
+/// Нульовий GUID = збалансований (без активного оверлею).
+pub mod overlay_guids {
+    /// «Економія» (Battery saver).
+    pub const ECONOMY: &str = "961cc777-2547-4f9d-8174-7d86181b8a7a";
+    /// «Краща продуктивність».
+    pub const BETTER_PERFORMANCE: &str = "3af9b8d9-7c97-431d-ad78-34a8bfea439f";
+    /// «Найкраща продуктивність» (Ultimate Performance overlay).
+    pub const BEST_PERFORMANCE: &str = "ded574b5-45a0-4f42-8737-46345c09c238";
+}
+
 /// Схема живлення.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -70,6 +81,24 @@ pub trait PowerApi: Send + Sync {
             .into_iter()
             .find(|s| s.guid.eq_ignore_ascii_case(guid))
             .and_then(|s| s.name)
+    }
+
+    /// Чи доступний API оверлейного режиму живлення (недокументований powrprof.dll).
+    fn overlay_supported(&self) -> bool {
+        false
+    }
+
+    /// GUID поточного оверлейного режиму; `None` = збалансований / не встановлено.
+    fn overlay_scheme(&self) -> Result<Option<String>, CoreError> {
+        Ok(None)
+    }
+
+    /// Встановлює оверлейний режим. `None` = скинути до збалансованого.
+    fn set_overlay_scheme(&self, guid: Option<&str>) -> Result<(), CoreError> {
+        let _ = guid;
+        Err(CoreError::InvalidData(
+            "overlay scheme не підтримується на цій конфігурації".into(),
+        ))
     }
 }
 

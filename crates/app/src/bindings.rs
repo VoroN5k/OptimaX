@@ -82,6 +82,7 @@ fn export_typescript_bindings() {
         crate::commands::network::NetView,
         crate::commands::network::NetProgress,
         crate::commands::network::NetResult,
+        crate::commands::laptop::LaptopView,
         ProfilePreview,
         GameModeEvent,
     );

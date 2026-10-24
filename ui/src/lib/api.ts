@@ -14,6 +14,7 @@ import type { GameProfile } from "./bindings/GameProfile";
 import type { HardwareInfo } from "./bindings/HardwareInfo";
 import type { JournalEntry } from "./bindings/JournalEntry";
 import type { LogLine } from "./bindings/LogLine";
+import type { LaptopView } from "./bindings/LaptopView";
 import type { NetProgress } from "./bindings/NetProgress";
 import type { NetResult } from "./bindings/NetResult";
 import type { NetView } from "./bindings/NetView";
@@ -80,6 +81,8 @@ export const api = {
   upscaleStart: (delayS: number) => invoke<void>("upscale_start", { delayS }),
   upscaleCancel: () => invoke<void>("upscale_cancel"),
   upscaleStop: () => invoke<void>("upscale_stop"),
+
+  laptopInfo: () => invoke<LaptopView>("laptop_info"),
 
   netInfo: () => invoke<NetView>("net_info"),
   netTestStart: (remote: string | null, seconds: number) => invoke<void>("net_test_start", { remote, seconds }),

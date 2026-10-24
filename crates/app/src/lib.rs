@@ -28,7 +28,7 @@ pub fn run() -> anyhow::Result<()> {
 #[cfg(windows)]
 mod app {
     use crate::commands::{
-        ab, audit, diagnosis, gamemode, metrics, network, system, tweaks, upscale,
+        ab, audit, diagnosis, gamemode, laptop, metrics, network, system, tweaks, upscale,
     };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
@@ -205,6 +205,7 @@ mod app {
                 network::net_info,
                 network::net_test_start,
                 network::net_test_cancel,
+                laptop::laptop_info,
             ])
             .build(tauri::generate_context!())?;
         app.run(|handle, event| {

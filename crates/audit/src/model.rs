@@ -252,6 +252,49 @@ pub struct HagsInfo {
     pub adapters: Option<Vec<HagsAdapter>>,
 }
 
+/// Джерело живлення ноутбука.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum PowerSource {
+    /// Живлення від мережі (AC).
+    Ac,
+    /// Живлення від батареї (DC).
+    Dc,
+    /// Стан невідомий.
+    Unknown,
+}
+
+/// Стан батареї ноутбука.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct BatteryInfo {
+    /// Поточне джерело живлення.
+    pub source: PowerSource,
+    /// Заряд батареї, % (0–100); `None` якщо невідомо.
+    pub charge_pct: Option<u8>,
+    /// Проєктна ємність, мВт·год; `None` якщо невідомо.
+    pub design_mwh: Option<u32>,
+    /// Повна зарядна ємність, мВт·год; `None` якщо невідомо.
+    pub full_charge_mwh: Option<u32>,
+    /// Кількість циклів заряду; `None` якщо невідомо.
+    pub cycle_count: Option<u32>,
+    /// Поточна швидкість (мВт): від'ємна — розряд, додатна — заряд; `None` якщо невідомо.
+    pub rate_mw: Option<i32>,
+}
+
+impl BatteryInfo {
+    /// Знос батареї 0.0–1.0; `None` якщо даних немає.
+    pub fn wear(&self) -> Option<f64> {
+        let design = self.design_mwh?;
+        let full = self.full_charge_mwh?;
+        if design == 0 {
+            return None;
+        }
+        Some(1.0 - f64::from(full) / f64::from(design))
+    }
+}
+
 pub use optimax_core::power::format_guid;
 
 #[cfg(test)]

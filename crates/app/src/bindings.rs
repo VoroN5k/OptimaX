@@ -79,6 +79,10 @@ fn export_typescript_bindings() {
         AbFinal,
         optimax_gamemode::GameProfile,
         crate::commands::upscale::UpscaleView,
+        crate::commands::network::NetView,
+        crate::commands::network::NetProgress,
+        crate::commands::network::NetResult,
+        crate::commands::laptop::LaptopView,
         ProfilePreview,
         GameModeEvent,
     );

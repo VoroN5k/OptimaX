@@ -29,6 +29,7 @@ optimax-diagnosis.workspace = true
 optimax-tweaks.workspace = true
 optimax-gamemode.workspace = true
 optimax-upscale.workspace = true
+optimax-network.workspace = true
 tauri = { workspace = true, features = [] }
 serde.workspace = true
 serde_json.workspace = true
@@ -47,6 +48,7 @@ optimax-diagnosis = { workspace = true, features = ["ts"] }
 optimax-tweaks = { workspace = true, features = ["ts"] }
 optimax-gamemode = { workspace = true, features = ["ts"] }
 optimax-upscale = { workspace = true, features = ["ts"] }
+optimax-network = { workspace = true, features = ["ts"] }
 
 [lints]
 workspace = true

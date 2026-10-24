@@ -35,6 +35,8 @@ pub enum SettingTarget {
     },
     /// Standby-список пам'яті (лише разова дія, без відкату).
     StandbyList,
+    /// Оверлейний режим живлення (недокументований API powrprof.dll).
+    PowerMode,
 }
 
 impl SettingTarget {
@@ -54,6 +56,7 @@ impl SettingTarget {
             }
             Self::Service { name } => format!("служба {name}: стан"),
             Self::StandbyList => "пам'ять: standby-список".into(),
+            Self::PowerMode => "powrprof: оверлейний режим живлення".into(),
         }
     }
 }
@@ -73,6 +76,8 @@ pub enum SettingValue {
     Service(ServiceState),
     /// Разова дія без значення (очищення standby).
     Action,
+    /// GUID оверлейного режиму; `None` = збалансований / скидання.
+    PowerMode(Option<String>),
 }
 
 /// Одна запланована зміна.
@@ -135,6 +140,20 @@ pub fn describe_scheme(guid: &str, name: Option<&str>) -> Text {
     match name {
         Some(n) => Text::raw(format!("{n} ({guid})")),
         None => Text::raw(guid),
+    }
+}
+
+/// Опис оверлейного режиму живлення.
+pub fn describe_power_mode(guid: Option<&str>) -> Text {
+    use optimax_core::power::overlay_guids as og;
+    match guid {
+        None => Text::new("power_mode.balanced"),
+        Some(g) if g.eq_ignore_ascii_case(og::ECONOMY) => Text::new("power_mode.economy"),
+        Some(g) if g.eq_ignore_ascii_case(og::BETTER_PERFORMANCE) => {
+            Text::new("power_mode.better")
+        }
+        Some(g) if g.eq_ignore_ascii_case(og::BEST_PERFORMANCE) => Text::new("power_mode.best"),
+        Some(g) => Text::raw(g),
     }
 }
 

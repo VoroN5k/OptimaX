@@ -40,6 +40,8 @@ for (const f of ["nearest", "bilinear", "lanczos", "fsr", "nis"]) {
   used.add(`ui.up.filter_hint.${f}`);
 }
 for (const f of ["aspect", "integer", "stretch"]) used.add(`ui.up.fit.${f}`);
+for (const k of ["ethernet", "wifi", "virtual", "other"]) used.add(`ui.net.kind.${k}`);
+for (const b of ["ghz2_4", "ghz5", "ghz6"]) used.add(`ui.net.band.${b}`);
 
 const missing = [...used].filter((k) => !(k in catalog)).sort();
 if (missing.length) {

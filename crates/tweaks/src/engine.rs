@@ -1,9 +1,9 @@
 //! Застосування й відкат змін із журналом.
 
-use crate::catalog::Desired;
+use crate::catalog::{Desired, GpuPref};
 use crate::change::{
-    describe_registry, describe_scheme, describe_service, Plan, PlannedChange, SettingTarget,
-    SettingValue,
+    describe_power_mode, describe_registry, describe_scheme, describe_service, Plan, PlannedChange,
+    SettingTarget, SettingValue,
 };
 use crate::journal::{EntryState, JournalEntry, JournalStore};
 use crate::restore::{RestorePointApi, RestorePointStatus};
@@ -141,6 +141,7 @@ impl<'a> Engine<'a> {
             }
             SettingTarget::Service { name } => SettingValue::Service(self.services()?.state(name)?),
             SettingTarget::StandbyList => SettingValue::Action,
+            SettingTarget::PowerMode => SettingValue::PowerMode(self.power.overlay_scheme()?),
         })
     }
 
@@ -168,6 +169,9 @@ impl<'a> Engine<'a> {
                     )),
                 }
             }
+            (SettingTarget::PowerMode, SettingValue::PowerMode(guid)) => {
+                Ok(self.power.set_overlay_scheme(guid.as_deref())?)
+            }
             _ => Err(TweakError::Journal(format!(
                 "{}: тип значення не відповідає місцю зберігання",
                 target.location()
@@ -182,6 +186,11 @@ impl<'a> Engine<'a> {
         value: &SettingValue,
     ) -> Result<(), TweakError> {
         self.write(target, value)?;
+        // PowerMode використовує недокументований API; не перевіряємо повернене значення,
+        // бо PowerGetEffectiveOverlayScheme може повертати ефективний, а не встановлений режим.
+        if matches!(target, SettingTarget::PowerMode) {
+            return Ok(());
+        }
         if &self.read(target)? == value {
             Ok(())
         } else {
@@ -303,6 +312,57 @@ impl<'a> Engine<'a> {
                         new_display: describe_service(*state),
                         old: SettingValue::Service(current),
                         new: SettingValue::Service(*state),
+                    }]
+                }
+            }
+            Desired::PowerMode(guid) => {
+                if !self.power.overlay_supported() {
+                    return Err(TweakError::Forbidden(
+                        "overlay режим живлення не підтримується на цій конфігурації".into(),
+                    ));
+                }
+                let current = self.power.overlay_scheme()?;
+                let normalized = guid.as_deref().map(|g| g.trim().to_ascii_lowercase());
+                if current == normalized {
+                    Vec::new()
+                } else {
+                    vec![PlannedChange {
+                        tweak_id,
+                        target: SettingTarget::PowerMode,
+                        old_display: describe_power_mode(current.as_deref()),
+                        new_display: describe_power_mode(normalized.as_deref()),
+                        old: SettingValue::PowerMode(current),
+                        new: SettingValue::PowerMode(normalized),
+                    }]
+                }
+            }
+            Desired::GpuPreference { exe_path, preference } => {
+                const GPU_PREF_KEY: &str = r"Software\Microsoft\DirectX\UserGpuPreferences";
+                let target = SettingTarget::Registry {
+                    hive: RegHive::CurrentUser,
+                    path: GPU_PREF_KEY.into(),
+                    name: exe_path.clone(),
+                };
+                let current = self.registry.read_value(RegHive::CurrentUser, GPU_PREF_KEY, exe_path)?;
+                let new_value = match preference {
+                    GpuPref::Default => None,
+                    GpuPref::PowerSaving => {
+                        Some(optimax_core::registry::RegValue::String("GpuPreference=1;".into()))
+                    }
+                    GpuPref::HighPerformance => {
+                        Some(optimax_core::registry::RegValue::String("GpuPreference=2;".into()))
+                    }
+                };
+                if current == new_value {
+                    Vec::new()
+                } else {
+                    vec![PlannedChange {
+                        tweak_id,
+                        old_display: describe_registry(current.as_ref()),
+                        new_display: describe_registry(new_value.as_ref()),
+                        target,
+                        old: SettingValue::Registry(current),
+                        new: SettingValue::Registry(new_value),
                     }]
                 }
             }

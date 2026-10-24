@@ -27,7 +27,9 @@ pub fn run() -> anyhow::Result<()> {
 
 #[cfg(windows)]
 mod app {
-    use crate::commands::{ab, audit, diagnosis, gamemode, metrics, system, tweaks, upscale};
+    use crate::commands::{
+        ab, audit, diagnosis, gamemode, laptop, metrics, network, system, tweaks, upscale,
+    };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
     use crate::state::{lock, AppState};
@@ -69,6 +71,9 @@ mod app {
             c.shutdown();
         }
         if let Some(c) = lock(&state.recording).as_ref() {
+            c.cancel();
+        }
+        if let Some(c) = lock(&state.net_test).as_ref() {
             c.cancel();
         }
         if let Err(e) = ab::cancel_session(state) {
@@ -197,6 +202,10 @@ mod app {
                 upscale::upscale_start,
                 upscale::upscale_cancel,
                 upscale::upscale_stop,
+                network::net_info,
+                network::net_test_start,
+                network::net_test_cancel,
+                laptop::laptop_info,
             ])
             .build(tauri::generate_context!())?;
         app.run(|handle, event| {

@@ -1,14 +1,32 @@
 //! Реалізація [`PowerApi`] через Power API Windows.
 #![allow(unsafe_code)]
 
-use super::{format_guid, parse_guid, PowerApi, PowerScheme};
+use super::{format_guid, overlay_guids, parse_guid, PowerApi, PowerScheme};
 use crate::error::CoreError;
 use windows::core::GUID;
 use windows::Win32::Foundation::{LocalFree, ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, HLOCAL};
+use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows::Win32::System::Power::{
     PowerEnumerate, PowerGetActiveScheme, PowerReadFriendlyName, PowerSetActiveScheme,
     ACCESS_SCHEME,
 };
+use windows::core::s;
+
+type FnGetOverlay = unsafe extern "system" fn(*mut GUID) -> u32;
+type FnSetOverlay = unsafe extern "system" fn(GUID) -> u32;
+
+/// Завантажує покажчики на недокументовані функції з `powrprof.dll`.
+/// Повертає `None`, якщо функцій немає (старі збірки Windows).
+fn load_overlay_fns() -> Option<(FnGetOverlay, FnSetOverlay)> {
+    // SAFETY: powrprof.dll завжди завантажено (ми вже використовуємо PowerGetActiveScheme тощо).
+    // GetProcAddress повертає FARPROC = Option<fn() -> isize>; transmute приводить до точного типу.
+    unsafe {
+        let module = GetModuleHandleA(s!("powrprof.dll")).ok()?;
+        let get = GetProcAddress(module, s!("PowerGetEffectiveOverlayScheme"))?;
+        let set = GetProcAddress(module, s!("PowerSetActiveOverlayScheme"))?;
+        Some((std::mem::transmute(get), std::mem::transmute(set)))
+    }
+}
 
 /// Схеми живлення Windows.
 #[derive(Debug, Default, Clone, Copy)]
@@ -126,4 +144,60 @@ impl PowerApi for WinPower {
     fn scheme_name(&self, guid: &str) -> Option<String> {
         friendly_name(&GUID::from_u128(parse_guid(guid)?))
     }
+
+    fn overlay_supported(&self) -> bool {
+        load_overlay_fns().is_some()
+    }
+
+    fn overlay_scheme(&self) -> Result<Option<String>, CoreError> {
+        let (get_fn, _) = load_overlay_fns().ok_or_else(|| {
+            CoreError::InvalidData("PowerGetEffectiveOverlayScheme недоступний".into())
+        })?;
+        let mut guid = GUID::zeroed();
+        // SAFETY: get_fn — перевірений покажчик; guid — локальна змінна.
+        let status = unsafe { get_fn(&mut guid) };
+        if status != ERROR_SUCCESS.0 {
+            return Err(CoreError::Os {
+                api: "PowerGetEffectiveOverlayScheme",
+                code: status,
+            });
+        }
+        if guid.to_u128() == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(format_guid(guid.to_u128())))
+        }
+    }
+
+    fn set_overlay_scheme(&self, guid: Option<&str>) -> Result<(), CoreError> {
+        let (_, set_fn) = load_overlay_fns().ok_or_else(|| {
+            CoreError::InvalidData("PowerSetActiveOverlayScheme недоступний".into())
+        })?;
+        let raw = match guid {
+            None => GUID::zeroed(),
+            Some(g) => {
+                let v = parse_guid(g)
+                    .ok_or_else(|| CoreError::InvalidData(format!("некоректний GUID {g}")))?;
+                GUID::from_u128(v)
+            }
+        };
+        // SAFETY: set_fn — перевірений покажчик; raw — копія GUID.
+        let status = unsafe { set_fn(raw) };
+        if status == ERROR_SUCCESS.0 {
+            Ok(())
+        } else {
+            Err(CoreError::Os {
+                api: "PowerSetActiveOverlayScheme",
+                code: status,
+            })
+        }
+    }
 }
+
+// Перевіряємо GUID оверлейних режимів через parse_guid.
+const _: () = {
+    // Константна перевірка коректності GUID-рядків (компілюється → рядки валідні).
+    let _e = overlay_guids::ECONOMY;
+    let _b = overlay_guids::BETTER_PERFORMANCE;
+    let _p = overlay_guids::BEST_PERFORMANCE;
+};

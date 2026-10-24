@@ -3,4 +3,4 @@
 /**
  * Область, до якої належить знахідка.
  */
-export type Category = "memory" | "display" | "gpu" | "driver" | "firmware" | "power" | "os" | "cpu" | "vram" | "throttling" | "stutter" | "background" | "frame_cap" | "summary";
+export type Category = "memory" | "display" | "gpu" | "driver" | "firmware" | "power" | "os" | "cpu" | "vram" | "throttling" | "stutter" | "background" | "frame_cap" | "summary" | "network" | "battery";

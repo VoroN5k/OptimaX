@@ -11,6 +11,8 @@
   import Diagnosis from "./screens/Diagnosis.svelte";
   import Games from "./screens/Games.svelte";
   import Hardware from "./screens/Hardware.svelte";
+  import Laptop from "./screens/Laptop.svelte";
+  import Network from "./screens/Network.svelte";
   import Optimization from "./screens/Optimization.svelte";
   import Placeholder from "./screens/Placeholder.svelte";
   import Settings from "./screens/Settings.svelte";
@@ -84,6 +86,10 @@
           <Games />
         {:else if ui.screen === "hardware"}
           <Hardware />
+        {:else if ui.screen === "laptop"}
+          <Laptop />
+        {:else if ui.screen === "network"}
+          <Network />
         {:else if ui.screen === "upscale"}
           <Upscale />
         {:else if ui.screen === "backups"}

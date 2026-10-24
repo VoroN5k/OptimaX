@@ -5,23 +5,23 @@ import type { RegHive } from "./RegHive";
 /**
  * Де зберігається налаштування.
  */
-export type SettingTarget = { "kind": "registry",
+export type SettingTarget = { "kind": "registry", 
 /**
  * Корінь.
  */
-hive: RegHive,
+hive: RegHive, 
 /**
  * Шлях ключа.
  */
-path: string,
+path: string, 
 /**
  * Ім'я значення.
  */
-name: string, } | { "kind": "power_scheme" } | { "kind": "process_priority",
+name: string, } | { "kind": "power_scheme" } | { "kind": "process_priority", 
 /**
  * Процес.
  */
-process: ProcessInfo, } | { "kind": "service",
+process: ProcessInfo, } | { "kind": "service", 
 /**
  * Ім'я служби.
  */

@@ -4,28 +4,28 @@ import type { PowerSource } from "./PowerSource";
 /**
  * Стан батареї ноутбука.
  */
-export type BatteryInfo = {
+export type BatteryInfo = { 
 /**
  * Поточне джерело живлення.
  */
-source: PowerSource,
+source: PowerSource, 
 /**
- * Заряд батареї, % (0–100); `null` якщо невідомо.
+ * Заряд батареї, % (0–100); `None` якщо невідомо.
  */
-charge_pct: number | null,
+charge_pct: number | null, 
 /**
- * Проєктна ємність, мВт·год; `null` якщо невідомо.
+ * Проєктна ємність, мВт·год; `None` якщо невідомо.
  */
-design_mwh: number | null,
+design_mwh: number | null, 
 /**
- * Повна зарядна ємність, мВт·год; `null` якщо невідомо.
+ * Повна зарядна ємність, мВт·год; `None` якщо невідомо.
  */
-full_charge_mwh: number | null,
+full_charge_mwh: number | null, 
 /**
- * Кількість циклів заряду; `null` якщо невідомо.
+ * Кількість циклів заряду; `None` якщо невідомо.
  */
-cycle_count: number | null,
+cycle_count: number | null, 
 /**
- * Поточна швидкість (мВт): від'ємна — розряд, додатна — заряд; `null` якщо невідомо.
+ * Поточна швидкість (мВт): від'ємна — розряд, додатна — заряд; `None` якщо невідомо.
  */
 rate_mw: number | null, };

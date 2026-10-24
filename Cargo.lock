@@ -2254,6 +2254,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "optimax-audit",
+ "optimax-cleanup",
  "optimax-core",
  "optimax-diagnosis",
  "optimax-frametime",
@@ -2284,6 +2285,20 @@ dependencies = [
  "tracing",
  "ts-rs",
  "windows",
+]
+
+[[package]]
+name = "optimax-cleanup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "optimax-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml 1.1.8+spec-1.1.0",
+ "tracing",
+ "ts-rs",
 ]
 
 [[package]]

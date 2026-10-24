@@ -3,11 +3,11 @@
 use super::blocking;
 use crate::error::CmdResult;
 use crate::state::POWER;
-use optimax_audit::{SystemProbe, WindowsProbe};
-use optimax_core::power::PowerApi;
 use optimax_audit::model::BatteryInfo;
-use optimax_core::finding::Finding;
 use optimax_audit::rules::check_battery;
+use optimax_audit::{SystemProbe, WindowsProbe};
+use optimax_core::finding::Finding;
+use optimax_core::power::PowerApi;
 use serde::Serialize;
 
 /// Стан ноутбука для UI.
@@ -34,10 +34,7 @@ pub async fn laptop_info() -> CmdResult<LaptopView> {
         let battery = probe.battery_info()?;
         let is_laptop = battery.is_some();
 
-        let findings = battery
-            .as_ref()
-            .map(|b| check_battery(b))
-            .unwrap_or_default();
+        let findings = battery.as_ref().map(check_battery).unwrap_or_default();
 
         let overlay_supported = POWER.overlay_supported();
         let overlay_guid = if overlay_supported {

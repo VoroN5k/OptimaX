@@ -1,0 +1,66 @@
+# Компоненти й оновлення Windows: лише штатні способи (CLAUDE.md, розд. 11.4).
+
+[[rule]]
+id = "wu_download"
+category = "windows_update"
+paths = ['%SystemRoot%\SoftwareDistribution\Download']
+description = "Завантажені пакети Windows Update. Після встановлення оновлень вони вже не потрібні."
+verdict = "safe"
+regenerates = true
+consequences = "Оновлення, які завантажено, але ще не встановлено, Windows завантажить повторно. На час очищення служба Windows Update (wuauserv) зупиняється, потім її стан відновлюється."
+method = "delete"
+stop_services = ["wuauserv"]
+source = "Microsoft Learn, «Additional resources for Windows Update»: скидання — net stop wuauserv, видалення %systemroot%\\SoftwareDistribution, net start wuauserv; ручна процедура перейменовує SoftwareDistribution\\Download (https://learn.microsoft.com/en-us/troubleshoot/windows-client/installing-updates-features-roles/additional-resources-for-windows-update)"
+verified_on = "Windows 11 Home 23H2 (збірка 22631): шлях перевірено на ПК, 2026-10-24"
+
+[[rule]]
+id = "winsxs"
+category = "windows_update"
+paths = ['%SystemRoot%\WinSxS']
+description = "Сховище компонентів Windows: файли системи та попередні версії оновлених компонентів."
+verdict = "protected"
+regenerates = false
+consequences = "Ручне видалення може зробити систему незавантажуваною й зламати оновлення. Штатне очищення (DISM) одразу видаляє попередні версії оновлених компонентів, без 30-денної паузи планувальника."
+method = "dism"
+manual_hint = "Кнопка «Штатне очищення (DISM)» виконає Dism.exe /Online /Cleanup-Image /StartComponentCleanup (без /ResetBase). Триває кілька хвилин; перервати не можна."
+source = "Microsoft Learn, «Clean Up the WinSxS Folder»: «Deleting files from the WinSxS folder or deleting the entire WinSxS folder may severely damage your system»; команда Dism.exe /online /Cleanup-Image /StartComponentCleanup (https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/clean-up-the-winsxs-folder)"
+verified_on = "Windows 11 Home 23H2 (збірка 22631): шлях перевірено на ПК, 2026-10-24; запуск DISM з програми ще не перевірено"
+
+[[rule]]
+id = "windows_installer"
+category = "system"
+paths = ['%SystemRoot%\Installer']
+description = "Кеш Windows Installer: копії інсталяторів, потрібні для видалення, відновлення й оновлення встановлених програм."
+verdict = "protected"
+regenerates = false
+consequences = "Без цих файлів програми може бути неможливо видалити, відновити чи оновити. Місце звільняється лише разом із видаленням непотрібних програм."
+method = "manual_only"
+manual_hint = "Не видаляйте вручну. Щоб зменшити теку, видаліть непотрібні програми через «Параметри → Програми»."
+source = "Microsoft Learn, «Missing Windows Installer cache»: кеш за замовчуванням у c:\\windows\\installer, видаляти його не слід (https://learn.microsoft.com/en-us/troubleshoot/windows-client/deployment/missing-windows-installer-cache)"
+verified_on = "Windows 11 Home 23H2 (збірка 22631): шлях перевірено на ПК, 2026-10-24"
+
+[[rule]]
+id = "windows_old"
+category = "windows_update"
+paths = ['%SystemDrive%\Windows.old']
+description = "Попередня інсталяція Windows після оновлення до нової версії."
+verdict = "consequences"
+regenerates = false
+consequences = "Повернутися до попередньої версії Windows буде неможливо, і це не скасувати."
+method = "manual_only"
+manual_hint = "Параметри → Система → Пам'ять → Рекомендації щодо очищення (або «Тимчасові файли») → «Попередня інсталяція Windows»."
+source = "Microsoft Support, «Free up drive space in Windows»: «If you delete your previous version of Windows, this can't be undone, and you won't be able to go back to your previous version of Windows» (https://support.microsoft.com/en-us/windows/free-up-drive-space-in-windows-85529ccb-c365-490d-b548-831022bc9b32)"
+verified_on = "За документацією Microsoft (Windows 10/11); на ПК розробника (Windows 11 22631) теки немає, перевірено 2026-10-24"
+
+[[rule]]
+id = "hiberfil"
+category = "system"
+paths = ['%SystemDrive%\hiberfil.sys']
+description = "Файл гібернації: копія оперативної пам'яті для сну з вимкненням живлення. Розмір близький до обсягу RAM."
+verdict = "consequences"
+regenerates = false
+consequences = "Гібернація й гібридний сон стануть недоступні, швидкий запуск Windows теж вимкнеться. Повернути можна будь-коли: powercfg /hibernate on."
+method = "powercfg"
+manual_hint = "Кнопка «Вимкнути гібернацію» виконає powercfg.exe /hibernate off; файл прибере сама Windows."
+source = "Microsoft Learn, «Disable and re-enable hibernation»: powercfg.exe /hibernate off | on; «If this file is not present, the computer cannot hibernate»; «When you make hibernation unavailable, hybrid sleep does not work» (https://learn.microsoft.com/en-us/troubleshoot/windows-client/setup-upgrade-and-drivers/disable-and-re-enable-hibernation)"
+verified_on = "За документацією Microsoft; на ПК розробника (Windows 11 22631) гібернацію вимкнено й файлу немає, перевірено 2026-10-24"

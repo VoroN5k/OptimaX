@@ -2,6 +2,7 @@
 
 pub mod ab;
 pub mod audit;
+pub mod cleanup;
 pub mod diagnosis;
 pub mod gamemode;
 pub mod laptop;

@@ -1,0 +1,26 @@
+# Кеші розробника. Теки збірки (target/, node_modules) поки не додано: для них потрібні умови
+# «поруч лежить Cargo.toml / package.json», а це окреме завдання.
+
+[[rule]]
+id = "npm_cache"
+category = "dev_caches"
+paths = ['%LOCALAPPDATA%\npm-cache']
+description = "Кеш npm: завантажені пакети й відповіді реєстру."
+verdict = "safe"
+regenerates = true
+consequences = "Пакети буде завантажено з мережі повторно; без інтернету встановлення з кешу не спрацює. Уже встановлені проєкти не зачіпаються."
+method = "delete"
+source = "npm Docs, «npm cache»: кеш у теці `npm config get cache`, «clean: Delete all data out of the cache folder» (https://docs.npmjs.com/cli/v10/commands/npm-cache). Шлях перевірено командою npm config get cache."
+verified_on = "Windows 11 Home 23H2 (збірка 22631): npm config get cache = %LOCALAPPDATA%\\npm-cache, перевірено на ПК, 2026-10-24"
+
+[[rule]]
+id = "pip_cache"
+category = "dev_caches"
+paths = ['%LOCALAPPDATA%\pip\cache']
+description = "Кеш pip: завантажені пакети й зібрані wheel-файли Python."
+verdict = "safe"
+regenerates = true
+consequences = "Пакети буде завантажено й, за потреби, зібрано повторно. Встановлені пакети не зачіпаються."
+method = "delete"
+source = "pip, «Caching»: на Windows кеш у <CSIDL_LOCAL_APPDATA>\\pip\\Cache (https://pip.pypa.io/en/stable/topics/caching/)"
+verified_on = "Windows 11 Home 23H2 (збірка 22631): шлях перевірено на ПК, 2026-10-24"

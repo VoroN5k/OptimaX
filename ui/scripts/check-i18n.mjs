@@ -42,6 +42,19 @@ for (const f of ["nearest", "bilinear", "lanczos", "fsr", "nis"]) {
 for (const f of ["aspect", "integer", "stretch"]) used.add(`ui.up.fit.${f}`);
 for (const k of ["ethernet", "wifi", "virtual", "other"]) used.add(`ui.net.kind.${k}`);
 for (const b of ["ghz2_4", "ghz5", "ghz6"]) used.add(`ui.net.band.${b}`);
+for (const v of ["safe", "consequences", "protected", "unknown"]) {
+  used.add(`ui.clean.verdict.${v}`);
+  used.add(`ui.clean.verdict_hint.${v}`);
+}
+for (const z of ["system", "programs", "user_files"]) used.add(`ui.clean.zone.${z}`);
+for (const c of ["temp", "windows_update", "drivers", "browser_caches", "dev_caches", "shader_caches", "crash_dumps", "system", "unknown"]) used.add(`ui.clean.cat.${c}`);
+for (const a of ["delete", "quarantine"]) used.add(`ui.clean.action.${a}`);
+for (const r of ["clean", "restore", "purge", "dism", "hibernate_off", "hibernate_on"]) used.add(`ui.clean.run.${r}`);
+for (const o of ["deleted", "quarantined", "restored", "purged", "skipped"]) used.add(`ui.clean.outcome.${o}`);
+for (const t of ["now", "growth", "quarantine", "journal"]) used.add(`ui.clean.tab.${t}`);
+for (const k of ["dism", "hibernate"]) for (const s of ["title", "text", "command", "confirm", "done"]) used.add(`ui.clean.${k}_${s}`);
+for (const k of ["restore", "purge"]) used.add(`ui.clean.q_${k}_log`);
+for (const k of ["dism", "hibernate"]) used.add(`ui.clean.running_${k}`);
 
 const missing = [...used].filter((k) => !(k in catalog)).sort();
 if (missing.length) {

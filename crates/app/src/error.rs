@@ -27,6 +27,21 @@ pub enum CmdError {
 /// Результат команди.
 pub type CmdResult<T> = Result<T, CmdError>;
 
+impl CmdError {
+    /// Текст помилки (для журналу).
+    pub fn message(&self) -> &str {
+        match self {
+            Self::RestorePoint(m)
+            | Self::Cancelled(m)
+            | Self::Forbidden(m)
+            | Self::NotFound(m)
+            | Self::NoFrames(m)
+            | Self::NotStarted(m)
+            | Self::Failed(m) => m,
+        }
+    }
+}
+
 impl From<TweakError> for CmdError {
     fn from(e: TweakError) -> Self {
         match e {
@@ -60,6 +75,16 @@ impl From<optimax_frametime::FrametimeError> for CmdError {
                     .and_then(|v| v.as_str().map(str::to_string))
                     .unwrap_or_default(),
             ),
+            other => Self::Failed(other.to_string()),
+        }
+    }
+}
+
+impl From<optimax_cleanup::CleanupError> for CmdError {
+    fn from(e: optimax_cleanup::CleanupError) -> Self {
+        match e {
+            optimax_cleanup::CleanupError::NotDeletable(_) => Self::Forbidden(e.to_string()),
+            optimax_cleanup::CleanupError::NotFound(_) => Self::NotFound(e.to_string()),
             other => Self::Failed(other.to_string()),
         }
     }

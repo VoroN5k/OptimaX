@@ -28,7 +28,7 @@ pub fn run() -> anyhow::Result<()> {
 #[cfg(windows)]
 mod app {
     use crate::commands::{
-        ab, audit, diagnosis, gamemode, laptop, metrics, network, system, tweaks, upscale,
+        ab, audit, cleanup, diagnosis, gamemode, laptop, metrics, network, system, tweaks, upscale,
     };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
@@ -76,6 +76,7 @@ mod app {
         if let Some(c) = lock(&state.net_test).as_ref() {
             c.cancel();
         }
+        cleanup::cancel_all(&lock(&state.cleanup));
         if let Err(e) = ab::cancel_session(state) {
             tracing::error!("не вдалося відкотити зміну A/B-тесту при виході: {e:?}");
         }
@@ -164,6 +165,10 @@ mod app {
                     Ok(c) => *lock(&state.upscale) = Some(c),
                     Err(e) => tracing::error!("апскейл недоступний: {e:?}"),
                 }
+                let handle = app.handle().clone();
+                std::thread::Builder::new()
+                    .name("optimax-cleanup-purge".into())
+                    .spawn(move || cleanup::startup_auto_purge(&handle))?;
                 Ok(())
             })
             .invoke_handler(tauri::generate_handler![
@@ -206,6 +211,21 @@ mod app {
                 network::net_test_start,
                 network::net_test_cancel,
                 laptop::laptop_info,
+                cleanup::cleanup_drives,
+                cleanup::cleanup_last_scan,
+                cleanup::cleanup_scan_start,
+                cleanup::cleanup_scan_cancel,
+                cleanup::cleanup_dry_run,
+                cleanup::cleanup_execute,
+                cleanup::cleanup_exec_cancel,
+                cleanup::cleanup_journal,
+                cleanup::cleanup_growth,
+                cleanup::cleanup_quarantine,
+                cleanup::cleanup_quarantine_restore,
+                cleanup::cleanup_quarantine_purge,
+                cleanup::cleanup_dism,
+                cleanup::cleanup_hibernate,
+                cleanup::cleanup_reveal,
             ])
             .build(tauri::generate_context!())?;
         app.run(|handle, event| {

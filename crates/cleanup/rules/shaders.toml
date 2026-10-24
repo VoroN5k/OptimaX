@@ -1,0 +1,26 @@
+# Шейдер-кеші: відновлюються самі, але є ціна — перші запуски ігор підвисатимуть.
+# Тому лише 🟡 і лише через карантин.
+
+[[rule]]
+id = "nvidia_shader_cache"
+category = "shader_caches"
+paths = ['%LOCALAPPDATA%\NVIDIA\DXCache', '%LOCALAPPDATA%\NVIDIA\GLCache']
+description = "Кеш скомпільованих шейдерів драйвера NVIDIA (DirectX і OpenGL)."
+verdict = "consequences"
+regenerates = true
+consequences = "Перші запуски ігор після очищення можуть підвисати й довше завантажуватися, поки шейдери компілюються знову. Чистити варто, лише якщо кеш зіпсований (фризи після оновлення гри чи драйвера) або дуже великий."
+method = "delete"
+source = "Підтримка ігрових видавців: WB Games (https://portkeygamessupport.wbgames.com/hc/en-us/articles/14659998310803-How-To-Clear-Your-Shader-Cache), Gaijin (https://support.gaijin.net/hc/en-us/articles/30268449678994-How-to-clear-NVIDIA-and-DirectX-cache): вміст тек NVIDIA\\DXCache і GLCache можна видалити, зайняті файли пропустити. Офіційної сторінки NVIDIA не знайдено."
+verified_on = "Windows 11 Home 23H2 (збірка 22631), драйвер NVIDIA: обидві теки перевірено на ПК, 2026-10-24"
+
+[[rule]]
+id = "d3d_shader_cache"
+category = "shader_caches"
+paths = ['%LOCALAPPDATA%\D3DSCache']
+description = "Кеш шейдерів DirectX, спільний для ігор і програм."
+verdict = "consequences"
+regenerates = true
+consequences = "Перші запуски ігор можуть підвисати, поки шейдери компілюються знову."
+method = "delete"
+source = "Штатний обробник «Очищення диска» D3D Shader Cache (HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VolumeCaches\\D3D Shader Cache); розташування %LOCALAPPDATA%\\D3DSCache — за підтримкою Gaijin (https://support.gaijin.net/hc/en-us/articles/30268449678994-How-to-clear-NVIDIA-and-DirectX-cache) і перевіркою на реальній системі."
+verified_on = "Windows 11 Home 23H2 (збірка 22631): шлях і обробник VolumeCaches перевірено на ПК, 2026-10-24"

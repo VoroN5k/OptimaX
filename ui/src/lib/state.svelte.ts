@@ -1,5 +1,9 @@
 // Глобальний стан інтерфейсу (руни Svelte 5).
 import type { AppInfo } from "./bindings/AppInfo";
+import type { ExecProgress } from "./bindings/ExecProgress";
+import type { ExecView } from "./bindings/ExecView";
+import type { ScanProgress } from "./bindings/ScanProgress";
+import type { ScanView } from "./bindings/ScanView";
 import type { LogLine } from "./bindings/LogLine";
 import type { RollbackResult } from "./bindings/RollbackResult";
 import type { Settings } from "./bindings/Settings";
@@ -66,3 +70,17 @@ export const gm = $state({
 
 /** Стан апскейлу (подія бекенду `upscale`). */
 export const up = $state({ view: null as UpscaleView | null });
+
+/**
+ * Очищення (події `cleanup-*`): живе поза екраном, щоб скан чи очищення не «губилися» при
+ * переході між розділами.
+ */
+export const cl = $state({
+  scanning: false,
+  progress: null as ScanProgress | null,
+  view: null as ScanView | null,
+  executing: false,
+  execProgress: null as ExecProgress | null,
+  lastExec: null as ExecView | null,
+  error: null as string | null,
+});

@@ -90,9 +90,13 @@ impl From<UiDesired> for optimax_tweaks::Desired {
             UiDesired::PowerScheme(g) => Self::PowerScheme(g),
             UiDesired::GameMode(on) => Self::GameMode(on),
             UiDesired::PowerMode(guid) => Self::PowerMode(guid),
-            UiDesired::GpuPreference { exe_path, preference } => {
-                Self::GpuPreference { exe_path, preference }
-            }
+            UiDesired::GpuPreference {
+                exe_path,
+                preference,
+            } => Self::GpuPreference {
+                exe_path,
+                preference,
+            },
         }
     }
 }

@@ -8,6 +8,15 @@ import type { AppInfo } from "./bindings/AppInfo";
 import type { ApplyResult } from "./bindings/ApplyResult";
 import type { AuditReport } from "./bindings/AuditReport";
 import type { CmdError } from "./bindings/CmdError";
+import type { DriveView } from "./bindings/DriveView";
+import type { DryRunView } from "./bindings/DryRunView";
+import type { ExecProgress } from "./bindings/ExecProgress";
+import type { ExecView } from "./bindings/ExecView";
+import type { GrowthView } from "./bindings/GrowthView";
+import type { JournalRecord } from "./bindings/JournalRecord";
+import type { QuarantineView } from "./bindings/QuarantineView";
+import type { ScanProgress } from "./bindings/ScanProgress";
+import type { ScanView } from "./bindings/ScanView";
 import type { DiagnosisResult } from "./bindings/DiagnosisResult";
 import type { GameModeEvent } from "./bindings/GameModeEvent";
 import type { GameProfile } from "./bindings/GameProfile";
@@ -87,6 +96,24 @@ export const api = {
   netInfo: () => invoke<NetView>("net_info"),
   netTestStart: (remote: string | null, seconds: number) => invoke<void>("net_test_start", { remote, seconds }),
   netTestCancel: () => invoke<void>("net_test_cancel"),
+
+  cleanupDrives: () => invoke<DriveView[]>("cleanup_drives"),
+  cleanupLastScan: () => invoke<ScanView | null>("cleanup_last_scan"),
+  cleanupScanStart: (drive: string, full: boolean) => invoke<void>("cleanup_scan_start", { drive, full }),
+  cleanupScanCancel: () => invoke<void>("cleanup_scan_cancel"),
+  cleanupDryRun: (paths: string[]) => invoke<DryRunView>("cleanup_dry_run", { paths }),
+  cleanupExecute: (planId: number, allowWithoutRestorePoint: boolean) =>
+    invoke<void>("cleanup_execute", { planId, allowWithoutRestorePoint }),
+  cleanupExecCancel: () => invoke<void>("cleanup_exec_cancel"),
+  cleanupJournal: () => invoke<JournalRecord[]>("cleanup_journal"),
+  cleanupGrowth: (drive: string) => invoke<GrowthView | null>("cleanup_growth", { drive }),
+  cleanupQuarantine: () => invoke<QuarantineView>("cleanup_quarantine"),
+  cleanupQuarantineRestore: (id: string) => invoke<JournalRecord>("cleanup_quarantine_restore", { id }),
+  cleanupQuarantinePurge: (id: string) => invoke<JournalRecord>("cleanup_quarantine_purge", { id }),
+  cleanupDism: (allowWithoutRestorePoint: boolean) => invoke<JournalRecord>("cleanup_dism", { allowWithoutRestorePoint }),
+  cleanupHibernate: (enable: boolean, allowWithoutRestorePoint: boolean) =>
+    invoke<JournalRecord>("cleanup_hibernate", { enable, allowWithoutRestorePoint }),
+  cleanupReveal: (path: string) => invoke<void>("cleanup_reveal", { path }),
 };
 
 type Events = {
@@ -101,6 +128,11 @@ type Events = {
   "net-progress": NetProgress;
   "net-done": NetResult;
   "net-error": CmdError;
+  "cleanup-progress": ScanProgress;
+  "cleanup-scan-done": ScanView;
+  "cleanup-exec-progress": ExecProgress;
+  "cleanup-exec-done": ExecView;
+  "cleanup-error": CmdError;
 };
 
 /** Підписка на подію бекенду. Повертає функцію відписки. */

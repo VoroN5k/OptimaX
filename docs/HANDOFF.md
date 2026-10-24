@@ -3,7 +3,7 @@
 Файл для нового агента (іншої сесії Claude Code), щоб продовжити роботу без попереднього
 контексту. Оновлюй його наприкінці кожної сесії. Обов'язкові правила — у `CLAUDE.md`.
 
-Останнє оновлення: 2026-10-23.
+Останнє оновлення: 2026-10-24.
 
 ---
 
@@ -30,10 +30,41 @@
 Після етапів: старт запису «з гри» (Ctrl+Shift+F9 / авто), повідомлення поверх гри
 (`optimax_core::toast`), центрування колонки вмісту на широких екранах.
 
-## 3. Поточна робота: гілка `feature/laptop-network`
+## 3. Поточна робота: гілка `feature/cleaning` (модуль «Очищення», CLAUDE.md розд. 11)
+
+Стан: реалізовано, **не закомічено** (комітить користувач). Перевірки зелені (fmt, clippy
+`-D warnings`, 258 тестів, svelte-check, check:i18n).
+
+- Крейт `crates/cleanup` (`optimax-cleanup`), без залежності від tweaks/diagnosis/frametime:
+  `path` (нормалізація Windows-шляхів рядками, відмова на `..`/ADS/UNC), `pattern`
+  (`%VAR%` + `*` як цілий компонент), `guard` (жорсткий чорний список: заборонені зони +
+  контейнери), `rules` (TOML-база, валідація → пониження до ⚪), `fs` (`FsApi`, `StdFs`,
+  `MemFs` з junction/8.3/зайнятими файлами), `scan` (корені правил + паралельний обхід диска
+  на `std::thread`), `plan` (сухий прогін і виконання з повторною перевіркою кожного файлу),
+  `quarantine`, `journal`, `snapshot` («Що виросло»), `system` (DISM, powercfg, Провідник).
+- База: `crates/cleanup/rules/*.toml`, 21 правило, у кожному `source` і `verified_on`.
+  Шляхи звірено на ПК розробника (Windows 11 Home 22631) і з документацією / обробниками
+  `VolumeCaches` у реєстрі. **Не додано** (немає офіційного джерела й тек на ПК розробника):
+  розпаковані інсталятори NVIDIA `C:\NVIDIA\DisplayDriver` і AMD `C:\AMD`, Delivery
+  Optimization, Steam htmlcache, `target/`/`node_modules`.
+- Застосунок: `crates/app/src/commands/cleanup.rs`, події `cleanup-progress`,
+  `cleanup-scan-done`, `cleanup-exec-progress`, `cleanup-exec-done`, `cleanup-error`;
+  налаштування `Settings.cleanup` (термін і диск карантину, автовидалення після терміну).
+  Дані: `%LOCALAPPDATA%\OptimaX\{cleanup-journal.json, quarantine.json, snapshots-<диск>.json,
+  Quarantine\}`.
+- UI: `ui/src/screens/Cleanup.svelte` + `components/Cleanup*.svelte`, `VerdictBadge.svelte`;
+  глобальний стан `cl` у `state.svelte.ts`. TS-типи очищення з конфліктними іменами
+  перейменовано: `CleanupVerdict`, `CleanupCategory`, `CleanupOutcome`.
+- Наживо перевірено (без адміна, лише читання): скан за правилами ~8 с, повний скан C:
+  (80 ГБ) ~14 с release / ~27 с debug, сухий прогін, усі вкладки екрана. **Не перевірено**:
+  справжнє видалення / карантин / відновлення, DISM, powercfg, точка відновлення, зупинка
+  wuauserv — потребують прав адміністратора й згоди користувача.
+- Приклад: `cargo run --release -p optimax-cleanup --example scan -- C:\ [full]` (лише читання).
+
+## 3a. Попередня гілка `feature/laptop-network` (злито в `main`)
 
 Мета — зробити повністю робочими екрани **«Мережа»** і **«Ноутбук»** (зараз решта
-екранів-заглушок: Очищення, Програми, Автозавантаження, Вигляд — не чіпати без запиту).
+екранів-заглушок: Програми, Автозавантаження, Вигляд — не чіпати без запиту).
 
 ### 3.1 Мережа — ГОТОВО (закомічено: `feat(network): …`)
 
@@ -57,43 +88,55 @@
   віртуальні), замір до роутера 150/150, ~0,5 мс, «Мережа стабільна». Пінги до зовнішніх
   вузлів наживо не слались (рішення користувача — нічого без його відома).
 
-### 3.2 Ноутбук — НЕ РОЗПОЧАТО (наступна задача)
+### 3.2 Ноутбук — ГОТОВО (реалізовано, потребує перевірки на реальному ноутбуці)
 
-Рішення користувача (вже погоджено, повторно не питати):
-- **Зміни системи дозволені** (через рушій твіків: план → перегляд → журнал → відкат):
-  1. **Відеокарта для гри** на системах із двома GPU: значення реєстру
-     `HKCU\Software\Microsoft\DirectX\UserGpuPreferences`, ім'я = **повний шлях до exe**,
-     дані `REG_SZ "GpuPreference=2;"` (2 — висока продуктивність, 1 — енергоощадна, 0 / немає
-     значення — вирішує Windows). Рушій уже підтримує `SettingTarget::Registry` з
-     `SettingValue::Registry(Option<RegValue>)` — нової цілі не треба, лише новий
-     `Desired`/`TweakId` у `crates/tweaks/src/catalog.rs` + `engine.rs`. Повний шлях exe
-     брати з запущеного процесу (QueryFullProcessImageName) або вибору файлу.
-     Гібрид визначати через DXGI `IDXGIFactory6::EnumAdapterByGpuPreference`
-     (HIGH_PERFORMANCE vs MINIMUM_POWER дають різні адаптери).
-  2. **Режим живлення Windows** (найкраща продуктивність / збалансований / економія):
-     функцій **немає в крейті `windows`** — це недокументовані експорти `powrprof.dll`
-     `PowerGetEffectiveOverlayScheme(GUID*)` / `PowerSetActiveOverlayScheme(GUID)`.
-     Користувач погодив: викликати через `GetProcAddress`; якщо експорту немає — пункт
-     ховається, не падає; в UI позначка «недокументоване API». Додати в `PowerApi`
-     (`crates/core/src/power.rs`) методи з реалізацією за замовчуванням «не підтримується»,
-     у рушій — нову ціль `SettingTarget::PowerMode` / `SettingValue::PowerMode(GUID)` за
-     зразком `PowerScheme`, тест «застосувати → відкотити». GUID режимів (з пам'яті —
-     **перевірити** читанням поточного значення на ПК користувача; режим є й на десктопі):
-     економія `961cc777-2547-4f9d-8174-7d86181b8a7a`, збалансований — нульовий GUID,
-     краща продуктивність `3af9b8d9-7c97-431d-ad78-34a8bfea439f`,
-     найкраща `ded574b5-45a0-4f42-8737-46345c09c238`.
-- **Лише читання / висновки**: живлення від мережі чи батареї (`GetSystemPowerStatus`),
-  заряд, знос батареї (проєктна vs фактична ємність) і цикли — `IOCTL_BATTERY_QUERY_*`
-  через SetupAPI (зразок Microsoft «Enumerating battery devices»), швидкість розряду.
-  У діагностиці — доказ «гра йшла від батареї».
-- Розміщення: стан і знахідки — `crates/audit`, зміни — `crates/tweaks`
-  (рішення користувача; окремого крейту для ноутбука не робити).
-- Категорія знахідок `Category::Battery` уже додана в `core`.
-- **ПК користувача — десктоп** (немає батареї): ноутбук перевіряється лише тестами з
-  імітацією + наживо стан «це не ноутбук» і читання режиму живлення. Сказати про це чесно.
+#### Що реалізовано
 
-### 3.3 Дрібниці, що лишились
+- **`crates/core/src/power.rs`** — overlay GUIDs (економія / збалансований / краща / найкраща
+  продуктивність) + нові методи `PowerApi`: `get_effective_overlay`, `set_active_overlay`.
+- **`crates/core/src/power/windows.rs`** — `WinPower` реалізує overlay-методи через
+  `GetProcAddress("powrprof.dll", "PowerGetEffectiveOverlayScheme"/"PowerSetActiveOverlayScheme")`
+  ; якщо експорту немає — повертає `None`, не падає.
+- **`crates/audit/`** — типи `BatteryInfo`, `PowerSource`; читання батареї через
+  `IOCTL_BATTERY_QUERY_*` (SetupAPI); правила `check_battery` (знос, живлення від батареї під
+  час гри тощо).
+- **`crates/tweaks/`** — `GpuPref` (enum: Unset / PowerSaving / HighPerf), `TweakId::PowerMode`
+  і `TweakId::GpuPreference`, нові варіанти `Desired` та `SettingValue`, читання/запис/план у
+  `engine.rs`.
+  - GPU preference пише реєстровий ключ
+    `HKCU\Software\Microsoft\DirectX\UserGpuPreferences` (ім'я = повний шлях exe).
+  - Power mode використовує `SettingTarget::PowerMode` / `SettingValue::PowerMode(GUID)`.
+- **`crates/app/src/commands/laptop.rs`** — `LaptopView` (батарея + overlay-режим + GPU-преф),
+  команда `laptop_info`.
+- **TypeScript bindings** — `BatteryInfo.ts`, `PowerSource.ts`, `GpuPref.ts`, `LaptopView.ts`,
+  `UiDesired.ts` перегенеровано.
+- **`ui/src/screens/Laptop.svelte`** — екран з картками: стан батареї (заряд, знос, цикли),
+  segmented control режиму живлення (схований, якщо API недоступне), GPU preference для
+  вибраної гри.
+- **`ui/src/App.svelte`** — маршрут `laptop` підключений.
+- **`ui/src/components/Sidebar.svelte`** — `"laptop"` додано до `ready` Set.
+- `cargo check --workspace` проходить чисто.
 
+#### Потребує перевірки на реальному ноутбуці (десктоп не підходить)
+
+- Батарея: чи читаються IOCTL-дані (`design_mwh`, `cycle_count`, `wear_percent`).
+- Overlay mode: чи `PowerGetEffectiveOverlayScheme` доступний і повертає правильний GUID.
+- GPU preference: чи реєстровий ключ `UserGpuPreferences` пишеться і читається коректно.
+- Перевірити стан «це не ноутбук» (батарейний блок відсутній) — UI повинен коректно
+  відображатись на десктопі (картка батареї прихована / показує «не виявлено»).
+
+#### Погоджені рішення (повторно не питати)
+
+- Окремого крейту для ноутбука **немає** — стан і знахідки в `crates/audit`, зміни в
+  `crates/tweaks`.
+- GPU-preference береться лише через вибір exe з запущених процесів або файлового діалогу —
+  повний шлях до exe є ключем реєстру.
+- В UI є позначка «недокументоване API» біля overlay-режиму.
+- Мережевих «твіків» (Nagle тощо) **не пропонувати**.
+
+### 3.3 Що залишилось у гілці `feature/laptop-network`
+
+- **Тести** для `check_battery` (знос, правила), `engine` PowerMode plan → apply → rollback.
 - `README.md` — заглушка користувача (UTF-16, «GateX»); не чіпати без запиту.
 - Запропонувати користувачу виняток для шрифтів OFL у `CLAUDE.md` (Inter, JetBrains Mono
   вбудовані з його згоди) — це його файл, лише запропонувати.
@@ -107,6 +150,9 @@ Windows 11 Pro, Ryzen 7 5800X, RTX 4070 SUPER; основний монітор 2
 у вікні 1280×720 для апскейлу). Застосунок вимагає прав адміністратора.
 
 ## 5. Технічні пастки (уже траплялись)
+
+- **C: майже повний** (~3–4 ГБ вільно): окремі `CARGO_TARGET_DIR` для збірок класти на D:
+  (напр. `D:/Projects/PCOptimize/OptimaX/target/dev-invoker`), не в тимчасову теку на C:.
 
 - **Dev-збірка без адміна:** `OPTIMAX_DEV_AS_INVOKER=1` діє **під час збірки** (build.rs),
   не запуску: `OPTIMAX_DEV_AS_INVOKER=1 cargo build -p optimax-app`. Debug-збірка бере UI
@@ -122,6 +168,14 @@ Windows 11 Pro, Ryzen 7 5800X, RTX 4070 SUPER; основний монітор 2
 - `ui/scripts/check-i18n.mjs` шукає ключі за префіксами; динамічні ключі (шаблонні рядки)
   треба дописувати в нього вручну. Тексти — лише в `crates/core/locales/uk.json`.
 - Svelte 5: `{#snippet}` всередині тегу компонента стає його пропом — оголошувати поза ним.
+- Svelte 5: `{@const r = x}` — похідне значення. Якщо в обробнику спершу `x = null`, а потім
+  читати `r`, там уже `null` (тиха TypeError, дія не виконується). Брати потрібне з `r` до
+  обнулення. Саме так «Продовжити без точки відновлення» в Очищенні нічого не робило.
+- Модалки (`Modal.svelte`) займають лише область вмісту (`left: --sidebar-width`): сайдбар
+  накладається поверх, тож вікно на весь екран ховалося під нього при масштабі 125%.
+- Автоматизація UI: якщо на передньому плані вікно з правами адміністратора (OptimaX від
+  адміна, адмінський PowerShell), Windows блокує штучні кліки зі звичайного процесу. Скрипт
+  кліків прив'язувати до PID свого тестового процесу, не до першого вікна `optimax`.
 - Апскейл: системний курсор, схований через `MagShowSystemCursor`, WGC у кадр не малює —
   тому курсор малюється власним шаром; черга показу обмежена 1 кадром + пропуск кадру, що
   не встигає на свій V-Sync (інакше стійке відставання на кадр).
@@ -133,6 +187,6 @@ Windows 11 Pro, Ryzen 7 5800X, RTX 4070 SUPER; основний монітор 2
 ```
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace            # зараз 212 тестів
+cargo test --workspace            # зараз 258 тестів
 cd ui && npm run check && npm run check:i18n
 ```

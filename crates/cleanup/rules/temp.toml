@@ -1,0 +1,41 @@
+# Тимчасові файли. Кожне правило: джерело + на чому перевірено (CLAUDE.md, розд. 11.2).
+# Вердикти: safe 🟢 / consequences 🟡 / protected 🔴 / unknown ⚪.
+
+[[rule]]
+id = "user_temp"
+category = "temp"
+paths = ['%LOCALAPPDATA%\Temp']
+description = "Тимчасова тека вашого облікового запису: програми й інсталятори кладуть сюди проміжні файли й зазвичай прибирають їх, але не завжди."
+verdict = "safe"
+regenerates = true
+consequences = "Нічого помітного: видаляються лише файли, яких не чіпали понад 7 днів. Файли, зайняті запущеними програмами, буде пропущено."
+method = "delete"
+min_age_days = 7
+source = "Microsoft Learn, cleanmgr: «You can safely delete temporary files that haven't been modified within the last week» (https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cleanmgr). Штатний обробник «Очищення диска»: HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VolumeCaches\\Temporary Files (Folder містить %LOCALAPPDATA%\\Temp, LastAccess = 7)."
+verified_on = "Windows 11 Home 23H2 (збірка 22631): шлях і обробник VolumeCaches перевірено на ПК, 2026-10-24"
+
+[[rule]]
+id = "windows_temp"
+category = "temp"
+paths = ['%SystemRoot%\Temp']
+description = "Системна тимчасова тека Windows: проміжні файли служб, оновлень та інсталяторів, що працюють від імені системи."
+verdict = "safe"
+regenerates = true
+consequences = "Нічого помітного: видаляються лише файли, яких не чіпали понад 7 днів. Зайняті файли буде пропущено."
+method = "delete"
+min_age_days = 7
+source = "Microsoft Learn, cleanmgr (https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cleanmgr). Штатний обробник «Очищення диска»: VolumeCaches\\Temporary Files (Folder містить %SystemRoot%\\Temp, LastAccess = 7)."
+verified_on = "Windows 11 Home 23H2 (збірка 22631): шлях і обробник VolumeCaches перевірено на ПК, 2026-10-24"
+
+[[rule]]
+id = "recycle_bin"
+category = "temp"
+paths = ['%SystemDrive%\$Recycle.Bin']
+description = "Кошик: файли, які ви видалили, але ще не стерли остаточно."
+verdict = "consequences"
+regenerates = false
+consequences = "Після очищення Кошика видалені файли вже не відновити звичайним способом. Перегляньте вміст перед очищенням."
+method = "manual_only"
+manual_hint = "Відкрийте Кошик, перегляньте вміст і виберіть «Очистити кошик». OptimaX видалені вами файли сама не стирає."
+source = "Microsoft Learn, cleanmgr: «These files aren't permanently removed until you empty the Recycle Bin» (https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cleanmgr)"
+verified_on = "Windows 11 Home 23H2 (збірка 22631): шлях перевірено на ПК, 2026-10-24"

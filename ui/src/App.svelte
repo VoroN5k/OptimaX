@@ -2,12 +2,13 @@
   import { onMount } from "svelte";
   import { api, on } from "./lib/api";
   import type { DotsStats } from "./lib/dots";
-  import { gm, pushLog, ui, up } from "./lib/state.svelte";
+  import { cl, flashBg, gm, logLocal, pushLog, ui, up } from "./lib/state.svelte";
   import BackgroundDots from "./components/BackgroundDots.svelte";
   import LogPanel from "./components/LogPanel.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import Analysis from "./screens/Analysis.svelte";
   import Backups from "./screens/Backups.svelte";
+  import Cleanup from "./screens/Cleanup.svelte";
   import Diagnosis from "./screens/Diagnosis.svelte";
   import Games from "./screens/Games.svelte";
   import Hardware from "./screens/Hardware.svelte";
@@ -25,6 +26,26 @@
     const subs = [
       on("log", pushLog),
       on("upscale", (v) => (up.view = v)),
+      on("cleanup-progress", (p) => (cl.progress = p)),
+      on("cleanup-scan-done", (v) => {
+        cl.view = v;
+        cl.scanning = false;
+        cl.progress = null;
+      }),
+      on("cleanup-exec-progress", (p) => (cl.execProgress = p)),
+      on("cleanup-exec-done", (v) => {
+        cl.lastExec = v;
+        cl.executing = false;
+        cl.execProgress = null;
+        flashBg("ok");
+      }),
+      on("cleanup-error", (e) => {
+        cl.error = e.message;
+        logLocal("error", e.message);
+        cl.scanning = false;
+        cl.executing = false;
+        flashBg("warn");
+      }),
       on("gamemode", (e) => {
         switch (e.kind) {
           case "watching":
@@ -90,6 +111,8 @@
           <Laptop />
         {:else if ui.screen === "network"}
           <Network />
+        {:else if ui.screen === "cleanup"}
+          <Cleanup />
         {:else if ui.screen === "upscale"}
           <Upscale />
         {:else if ui.screen === "backups"}

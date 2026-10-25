@@ -268,7 +268,9 @@
           {/if}
           <p class="small muted">
             {tk("ui.clean.free", { free: size(current?.free_bytes), total: size(current?.total_bytes) })}
-            · {tk(report?.full ? "ui.clean.mode_full_done" : "ui.clean.mode_rules_done", { s: ((report?.duration_ms ?? 0) / 1000).toFixed(1) })}
+            {#if !cl.scanning}
+              · {tk(report?.full ? "ui.clean.mode_full_done" : "ui.clean.mode_rules_done", { s: ((report?.duration_ms ?? 0) / 1000).toFixed(1) })}
+            {/if}
           </p>
           {#if report?.cancelled}<p class="small warn-text">{tk("ui.clean.cancelled")}</p>{/if}
         {:else}

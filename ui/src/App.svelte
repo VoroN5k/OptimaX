@@ -27,6 +27,10 @@
       on("log", pushLog),
       on("upscale", (v) => (up.view = v)),
       on("cleanup-progress", (p) => (cl.progress = p)),
+      // Проміжний звіт: знайдене видно ще до кінця скану (вибір заблоковано, поки скан триває).
+      on("cleanup-scan-partial", (v) => {
+        if (cl.scanning) cl.view = v;
+      }),
       on("cleanup-scan-done", (v) => {
         cl.view = v;
         cl.scanning = false;

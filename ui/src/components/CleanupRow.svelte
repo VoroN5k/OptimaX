@@ -28,6 +28,12 @@
   let open = $state(false);
   const id = `row-${Math.random().toString(36).slice(2, 8)}`;
   const partial = $derived(item.selectable && item.eligible_bytes < item.bytes);
+  // Правило дозволяє чистити, але зараз під умови нічого не підпадає (визначає бекенд).
+  const nothingNote = $derived(
+    item.rule?.min_age_days != null
+      ? tk("ui.clean.nothing_age", { days: item.rule.min_age_days, total: size(item.bytes) })
+      : tk("ui.clean.nothing", { total: size(item.bytes) }),
+  );
 </script>
 
 <div class="row" class:checked>
@@ -41,6 +47,14 @@
         aria-label={tk("ui.clean.select", { path: item.path })}
         onchange={(e) => ontoggle?.((e.currentTarget as HTMLInputElement).checked)}
       />
+    {:else if item.nothing_eligible}
+      <input
+        type="checkbox"
+        disabled
+        title={tk("ui.clean.nothing_short")}
+        aria-label={tk("ui.clean.nothing_short")}
+        aria-describedby="{id}-nothing"
+      />
     {/if}
   </div>
   <div class="body">
@@ -51,6 +65,9 @@
     </div>
     {#if item.remainder}
       <p class="small dim">{tk("ui.clean.remainder")}</p>
+    {/if}
+    {#if item.nothing_eligible}
+      <p class="small muted" id="{id}-nothing">{nothingNote}</p>
     {/if}
     {#if partial}
       <p class="small dim">{tk("ui.clean.partial", { eligible: size(item.eligible_bytes), total: size(item.bytes) })}</p>
@@ -122,6 +139,10 @@
     margin: 0;
     accent-color: var(--accent-from);
     cursor: pointer;
+  }
+  input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
   }
   .body {
     flex: 1;

@@ -43,6 +43,8 @@ pub struct RuleInfo {
     pub manual_hint: Option<String>,
     /// Правило понижене до ⚪ через помилку валідації.
     pub demoted: bool,
+    /// Умова правила: видаляються лише файли, яких не чіпали стільки днів.
+    pub min_age_days: Option<u32>,
 }
 
 impl RuleInfo {
@@ -56,6 +58,7 @@ impl RuleInfo {
             verified_on: r.rule.verified_on.clone().unwrap_or_default(),
             manual_hint: r.rule.manual_hint.clone(),
             demoted: r.demoted,
+            min_age_days: r.rule.min_age_days,
         }
     }
 }
@@ -82,6 +85,9 @@ pub struct Item {
     pub eligible_files: u64,
     /// Можна вибрати для очищення (🟢 / 🟡 з методом delete).
     pub selectable: bool,
+    /// Правило дозволяє видалення, але зараз під його умови не підпадає жоден файл
+    /// (напр., усі файли використовувались нещодавно), тож вибрати нічого.
+    pub nothing_eligible: bool,
     /// Правило (немає — невідоме).
     pub rule: Option<RuleInfo>,
     /// Зона чорного списку.
@@ -221,8 +227,14 @@ pub struct RootWalk {
     pub reparse_skipped: u64,
 }
 
+/// Прогрес обходу кореня: файлів і байтів побачено досі.
+pub type WalkTick<'a> = dyn Fn(u64, u64) + Sync + 'a;
+
+/// Як часто повідомляти про прогрес під час обходу.
+const TICK_EVERY: Duration = Duration::from_millis(200);
+
 /// Обходить корінь правила (каталог або файл), не заходячи в reparse points, і відбирає файли
-/// за умовами правила. Нічого не змінює.
+/// за умовами правила. Нічого не змінює. Один потік, без прогресу.
 pub fn walk_root(
     fs: &dyn FsApi,
     rule: &LoadedRule,
@@ -231,21 +243,35 @@ pub fn walk_root(
     now_unix: i64,
     cancel: &CancelToken,
 ) -> RootWalk {
+    walk_root_with(fs, rule, root, root_meta, now_unix, 1, cancel, &|_, _| {})
+}
+
+/// Те саме, що [`walk_root`], але підкаталоги обходять `threads` потоків, а `tick` отримує
+/// прогрес не частіше ніж раз на 200 мс. Результат не залежить від кількості потоків.
+#[allow(clippy::too_many_arguments)]
+pub fn walk_root_with(
+    fs: &dyn FsApi,
+    rule: &LoadedRule,
+    root: &str,
+    root_meta: &Meta,
+    now_unix: i64,
+    threads: usize,
+    cancel: &CancelToken,
+    tick: &WalkTick<'_>,
+) -> RootWalk {
     let mut out = RootWalk::default();
-    let r = &rule.rule;
-    let old_enough = |m: &Meta| match r.min_age_days {
-        Some(days) => now_unix - m.newest_unix >= i64::from(days) * 86_400,
-        None => true,
+    let mut filter = RootFilter {
+        rule,
+        root,
+        now_unix,
+        // Для 🔴 / ⚪ і штатних способів список файлів не потрібен — лише розмір.
+        collect: rule.deletable(),
+        kept: Vec::new(),
     };
-    let name_ok = |name: &str| {
-        r.file_patterns.is_empty() || r.file_patterns.iter().any(|p| path::glob_name(p, name))
-    };
-    // Для 🔴 / ⚪ і штатних способів список файлів не потрібен — лише розмір.
-    let collect = rule.deletable();
     if root_meta.kind == Kind::File {
         out.bytes = root_meta.len;
         out.files = 1;
-        if collect && old_enough(root_meta) && name_ok(path::file_name(root)) {
+        if filter.takes(path::file_name(root), root_meta, false) {
             out.eligible.push(Candidate {
                 path: root.to_string(),
                 bytes: root_meta.len,
@@ -253,8 +279,6 @@ pub fn walk_root(
         }
         return out;
     }
-    // «Залишити N найновіших» — серед прямих нащадків кореня.
-    let mut kept: Vec<String> = Vec::new();
     let top = match fs.read_dir(root) {
         Ok(t) => t,
         Err(_) => {
@@ -262,60 +286,59 @@ pub fn walk_root(
             return out;
         }
     };
-    if let Some(n) = r.keep_latest {
+    // «Залишити N найновіших» — серед прямих нащадків кореня.
+    if let Some(n) = rule.rule.keep_latest {
         let mut by_age: Vec<_> = top.iter().filter(|e| !e.meta.reparse).collect();
         by_age.sort_by_key(|e| std::cmp::Reverse(e.meta.newest_unix));
-        kept = by_age
+        filter.kept = by_age
             .iter()
             .take(usize::try_from(n).unwrap_or(usize::MAX))
             .map(|e| path::key(&path::join(root, &e.name)))
             .collect();
     }
-    // Обхід у глибину з явним стеком: (каталог, вміст уже прочитано?, під «залишити»?).
-    let mut stack: Vec<(String, Option<Vec<crate::fs::Entry>>, bool)> =
-        vec![(root.to_string(), Some(top), false)];
+    let shared = WalkShared {
+        stack: Mutex::new(vec![Job {
+            dir: root.to_string(),
+            entries: Some(top),
+            keep: false,
+        }]),
+        wake: Condvar::new(),
+        pending: AtomicUsize::new(1),
+        files: AtomicU64::new(0),
+        bytes: AtomicU64::new(0),
+        last_tick: Mutex::new(Instant::now()),
+    };
+    let threads = threads.clamp(1, 16);
+    let parts: Vec<WalkPart> = if threads == 1 {
+        vec![walk_worker(fs, &filter, &shared, cancel, tick)]
+    } else {
+        std::thread::scope(|s| {
+            let handles: Vec<_> = (0..threads)
+                .map(|_| s.spawn(|| walk_worker(fs, &filter, &shared, cancel, tick)))
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| {
+                    // Потік, що впав, втрачає свою частину — позначаємо це як неприступний каталог.
+                    h.join().unwrap_or_else(|_| WalkPart {
+                        unreadable_dirs: 1,
+                        ..WalkPart::default()
+                    })
+                })
+                .collect()
+        })
+    };
     let mut dirs_with_candidates: Vec<String> = Vec::new();
-    while let Some((dir, entries, keep)) = stack.pop() {
-        if cancel.is_cancelled() {
-            break;
-        }
-        let entries = match entries {
-            Some(e) => e,
-            None => match fs.read_dir(&dir) {
-                Ok(e) => e,
-                Err(_) => {
-                    out.unreadable_dirs += 1;
-                    continue;
-                }
-            },
-        };
-        let mut had_candidate = false;
-        for e in entries {
-            let p = path::join(&dir, &e.name);
-            if e.meta.reparse {
-                out.reparse_skipped += 1;
-                continue;
-            }
-            let keep_this = keep || (!kept.is_empty() && kept.contains(&path::key(&p)));
-            match e.meta.kind {
-                Kind::Dir => stack.push((p, None, keep_this)),
-                Kind::File => {
-                    out.bytes += e.meta.len;
-                    out.files += 1;
-                    if collect && !keep_this && old_enough(&e.meta) && name_ok(&e.name) {
-                        out.eligible.push(Candidate {
-                            path: p,
-                            bytes: e.meta.len,
-                        });
-                        had_candidate = true;
-                    }
-                }
-            }
-        }
-        if had_candidate && !path::eq_ci(&dir, root) {
-            dirs_with_candidates.push(dir);
-        }
+    for p in parts {
+        out.bytes += p.bytes;
+        out.files += p.files;
+        out.unreadable_dirs += p.unreadable_dirs;
+        out.reparse_skipped += p.reparse_skipped;
+        out.eligible.extend(p.eligible);
+        dirs_with_candidates.extend(p.dirs_with_candidates);
     }
+    // Порядок потоків випадковий — сортуємо, щоб сухий прогін і план були відтворюваними.
+    out.eligible.sort_unstable_by(|a, b| a.path.cmp(&b.path));
     // Від найглибших до верхніх, плюс їхні батьки в межах кореня.
     let mut seen: HashSet<String> = HashSet::new();
     let mut all: Vec<String> = Vec::new();
@@ -333,18 +356,187 @@ pub fn walk_root(
             cur = path::parent(c);
         }
     }
-    all.sort_by_key(|d| std::cmp::Reverse(path::depth(d)));
+    all.sort_by(|a, b| path::depth(b).cmp(&path::depth(a)).then_with(|| a.cmp(b)));
     out.dirs = all;
     out
 }
 
+/// Умови правила для одного кореня.
+struct RootFilter<'a> {
+    rule: &'a LoadedRule,
+    root: &'a str,
+    now_unix: i64,
+    collect: bool,
+    /// Ключі прямих нащадків кореня під «залишити N найновіших».
+    kept: Vec<String>,
+}
+
+impl RootFilter<'_> {
+    /// Файл підпадає під правило.
+    fn takes(&self, name: &str, meta: &Meta, keep: bool) -> bool {
+        let r = &self.rule.rule;
+        let old_enough = match r.min_age_days {
+            Some(days) => self.now_unix - meta.newest_unix >= i64::from(days) * 86_400,
+            None => true,
+        };
+        let name_ok =
+            r.file_patterns.is_empty() || r.file_patterns.iter().any(|p| path::glob_name(p, name));
+        self.collect && !keep && old_enough && name_ok
+    }
+
+    fn is_kept(&self, p: &str) -> bool {
+        !self.kept.is_empty() && self.kept.contains(&path::key(p))
+    }
+}
+
+/// Каталог до обходу.
+struct Job {
+    dir: String,
+    /// Вміст уже прочитано (корінь).
+    entries: Option<Vec<crate::fs::Entry>>,
+    /// Під «залишити N найновіших».
+    keep: bool,
+}
+
+/// Частина результату одного потоку.
+#[derive(Default)]
+struct WalkPart {
+    bytes: u64,
+    files: u64,
+    eligible: Vec<Candidate>,
+    dirs_with_candidates: Vec<String>,
+    unreadable_dirs: u64,
+    reparse_skipped: u64,
+}
+
+struct WalkShared {
+    /// Стек, а не черга: обхід у глибину тримає менше шляхів у пам'яті.
+    stack: Mutex<Vec<Job>>,
+    wake: Condvar,
+    pending: AtomicUsize,
+    files: AtomicU64,
+    bytes: AtomicU64,
+    last_tick: Mutex<Instant>,
+}
+
+fn walk_worker(
+    fs: &dyn FsApi,
+    f: &RootFilter<'_>,
+    sh: &WalkShared,
+    cancel: &CancelToken,
+    tick: &WalkTick<'_>,
+) -> WalkPart {
+    let mut part = WalkPart::default();
+    let mut subdirs: Vec<Job> = Vec::new();
+    loop {
+        let job = {
+            let mut st = sh.stack.lock().unwrap_or_else(PoisonError::into_inner);
+            loop {
+                if cancel.is_cancelled() {
+                    return part;
+                }
+                if let Some(j) = st.pop() {
+                    break j;
+                }
+                if sh.pending.load(Ordering::Acquire) == 0 {
+                    sh.wake.notify_all();
+                    return part;
+                }
+                st = sh
+                    .wake
+                    .wait_timeout(st, Duration::from_millis(20))
+                    .map(|(g, _)| g)
+                    .unwrap_or_else(|e| e.into_inner().0);
+            }
+        };
+        let (files0, bytes0) = (part.files, part.bytes);
+        visit(fs, f, job, &mut part, &mut subdirs);
+        if !subdirs.is_empty() {
+            let n = subdirs.len();
+            let mut st = sh.stack.lock().unwrap_or_else(PoisonError::into_inner);
+            sh.pending.fetch_add(n, Ordering::AcqRel);
+            st.append(&mut subdirs);
+            drop(st);
+            sh.wake.notify_all();
+        }
+        if sh.pending.fetch_sub(1, Ordering::AcqRel) == 1 {
+            // Останній каталог — будимо тих, хто чекає, щоб вони завершились.
+            sh.wake.notify_all();
+        }
+        let (df, db) = (part.files - files0, part.bytes - bytes0);
+        let files = sh.files.fetch_add(df, Ordering::Relaxed) + df;
+        let bytes = sh.bytes.fetch_add(db, Ordering::Relaxed) + db;
+        let mut last = sh.last_tick.lock().unwrap_or_else(PoisonError::into_inner);
+        if last.elapsed() >= TICK_EVERY {
+            *last = Instant::now();
+            drop(last);
+            tick(files, bytes);
+        }
+    }
+}
+
+/// Читає один каталог: рахує файли, відбирає кандидатів, підкаталоги — у `subdirs`.
+fn visit(
+    fs: &dyn FsApi,
+    f: &RootFilter<'_>,
+    job: Job,
+    part: &mut WalkPart,
+    subdirs: &mut Vec<Job>,
+) {
+    let entries = match job.entries {
+        Some(e) => e,
+        None => match fs.read_dir(&job.dir) {
+            Ok(e) => e,
+            Err(_) => {
+                part.unreadable_dirs += 1;
+                return;
+            }
+        },
+    };
+    let mut had_candidate = false;
+    for e in entries {
+        if e.meta.reparse {
+            part.reparse_skipped += 1;
+            continue;
+        }
+        let p = path::join(&job.dir, &e.name);
+        let keep = job.keep || f.is_kept(&p);
+        match e.meta.kind {
+            Kind::Dir => subdirs.push(Job {
+                dir: p,
+                entries: None,
+                keep,
+            }),
+            Kind::File => {
+                part.bytes += e.meta.len;
+                part.files += 1;
+                if f.takes(&e.name, &e.meta, keep) {
+                    part.eligible.push(Candidate {
+                        path: p,
+                        bytes: e.meta.len,
+                    });
+                    had_candidate = true;
+                }
+            }
+        }
+    }
+    if had_candidate && !path::eq_ci(&job.dir, f.root) {
+        part.dirs_with_candidates.push(job.dir);
+    }
+}
+
 /// Скан диска за правилами (і, за потреби, повний обхід).
+///
+/// Спершу обходяться корені, які можна чистити (вони швидкі), потім 🔴 (WinSxS, Installer —
+/// великі, лише для інформації). Після кожної з цих фаз `partial` отримує проміжний звіт, щоб
+/// екран показав знайдене, не чекаючи кінця скану; остаточний звіт — результат функції.
 pub fn scan(
     fs: &dyn FsApi,
     rules: &RuleSet,
     opts: &ScanOptions,
     cancel: &CancelToken,
     progress: &(dyn Fn(ScanProgress) + Sync),
+    partial: &dyn Fn(&ScanReport),
 ) -> ScanReport {
     let started = Instant::now();
     let mut report = ScanReport {
@@ -359,55 +551,80 @@ pub fn scan(
         cancelled: false,
         sizes: Vec::new(),
     };
+    let elapsed_ms = || u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let (mut dirs, mut files, mut bytes) = (0u64, 0u64, 0u64);
-    for lr in rules.rules() {
-        for pat in lr
-            .patterns
+    for protected in [false, true] {
+        let pass = rules
+            .rules()
             .iter()
-            .filter(|p| path::eq_ci(p.drive(), &opts.drive))
-        {
-            for (root, meta) in expand_roots(fs, pat) {
-                if cancel.is_cancelled() {
-                    break;
+            .filter(|lr| (lr.verdict() == Verdict::Protected) == protected);
+        for lr in pass {
+            for pat in lr
+                .patterns
+                .iter()
+                .filter(|p| path::eq_ci(p.drive(), &opts.drive))
+            {
+                for (root, meta) in expand_roots(fs, pat) {
+                    if cancel.is_cancelled() {
+                        break;
+                    }
+                    let at = |f: u64, b: u64| ScanProgress {
+                        phase: ScanPhase::Rules,
+                        dirs,
+                        files: files + f,
+                        bytes: bytes + b,
+                        current: root.clone(),
+                    };
+                    // Показуємо корінь, який обходимо зараз, а не попередній.
+                    progress(at(0, 0));
+                    // Корінь може збігтися зі ще суворішим правилом — тоді показуємо суворіший вердикт.
+                    let cls = rules.classify(&root);
+                    let walk = walk_root_with(
+                        fs,
+                        lr,
+                        &root,
+                        &meta,
+                        opts.now_unix,
+                        opts.threads,
+                        cancel,
+                        &|f, b| progress(at(f, b)),
+                    );
+                    dirs += 1;
+                    files += walk.files;
+                    bytes += walk.bytes;
+                    if walk.files == 0 && walk.unreadable_dirs == 0 {
+                        continue;
+                    }
+                    let verdict = cls.verdict.max(lr.verdict());
+                    let eligible_bytes = walk.eligible.iter().map(|c| c.bytes).sum();
+                    let may_delete = lr.deletable() && verdict == lr.verdict();
+                    report.unreadable_dirs += walk.unreadable_dirs;
+                    report.items.push(Item {
+                        path: root,
+                        category: lr.rule.category,
+                        verdict,
+                        method: lr.method(),
+                        bytes: walk.bytes,
+                        files: walk.files,
+                        eligible_bytes,
+                        eligible_files: walk.eligible.len() as u64,
+                        selectable: may_delete && eligible_bytes > 0,
+                        nothing_eligible: may_delete && eligible_bytes == 0 && walk.bytes > 0,
+                        rule: Some(RuleInfo::of(lr)),
+                        zone: cls.zone,
+                        unreadable_dirs: walk.unreadable_dirs,
+                        remainder: false,
+                    });
                 }
-                // Корінь може збігтися зі ще суворішим правилом — тоді показуємо суворіший вердикт.
-                let cls = rules.classify(&root);
-                let walk = walk_root(fs, lr, &root, &meta, opts.now_unix, cancel);
-                dirs += 1;
-                files += walk.files;
-                bytes += walk.bytes;
-                progress(ScanProgress {
-                    phase: ScanPhase::Rules,
-                    dirs,
-                    files,
-                    bytes,
-                    current: root.clone(),
-                });
-                if walk.files == 0 && walk.unreadable_dirs == 0 {
-                    continue;
-                }
-                let verdict = cls.verdict.max(lr.verdict());
-                let eligible_bytes = walk.eligible.iter().map(|c| c.bytes).sum();
-                report.unreadable_dirs += walk.unreadable_dirs;
-                report.items.push(Item {
-                    path: root,
-                    category: lr.rule.category,
-                    verdict,
-                    method: lr.method(),
-                    bytes: walk.bytes,
-                    files: walk.files,
-                    eligible_bytes,
-                    eligible_files: walk.eligible.len() as u64,
-                    selectable: lr.deletable() && verdict == lr.verdict() && eligible_bytes > 0,
-                    rule: Some(RuleInfo::of(lr)),
-                    zone: cls.zone,
-                    unreadable_dirs: walk.unreadable_dirs,
-                    remainder: false,
-                });
             }
         }
+        report.items.sort_by_key(|i| std::cmp::Reverse(i.bytes));
+        // Після 🔴 проміжний звіт потрібен лише перед довгим обходом диска.
+        if !cancel.is_cancelled() && (!protected || opts.full) {
+            report.duration_ms = elapsed_ms();
+            partial(&report);
+        }
     }
-    report.items.sort_by_key(|i| std::cmp::Reverse(i.bytes));
     if opts.full && !cancel.is_cancelled() {
         let tree = walk_drive(fs, rules, opts, cancel, progress);
         report.scanned_bytes = tree.total(0);
@@ -419,7 +636,7 @@ pub fn scan(
         .sizes
         .extend(report.items.iter().map(|i| (i.path.clone(), i.bytes)));
     report.cancelled = cancel.is_cancelled();
-    report.duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    report.duration_ms = elapsed_ms();
     report
 }
 
@@ -493,6 +710,7 @@ impl Tree {
                     eligible_bytes: 0,
                     eligible_files: 0,
                     selectable: false,
+                    nothing_eligible: false,
                     rule: None,
                     zone: cls.zone,
                     unreadable_dirs: 0,
@@ -737,7 +955,14 @@ mod tests {
     #[test]
     fn rule_scan_respects_age_and_wildcards() {
         let fs = sample();
-        let report = scan(&fs, &rules(), &opts(false), &CancelToken::new(), &|_| {});
+        let report = scan(
+            &fs,
+            &rules(),
+            &opts(false),
+            &CancelToken::new(),
+            &|_| {},
+            &|_| {},
+        );
         let temp = report
             .items
             .iter()
@@ -792,7 +1017,14 @@ mod tests {
     #[test]
     fn full_scan_reports_unknown_big_folders() {
         let fs = sample();
-        let report = scan(&fs, &rules(), &opts(true), &CancelToken::new(), &|_| {});
+        let report = scan(
+            &fs,
+            &rules(),
+            &opts(true),
+            &CancelToken::new(),
+            &|_| {},
+            &|_| {},
+        );
         let big = report
             .unknown
             .iter()
@@ -836,6 +1068,167 @@ verified_on = "test"
             paths,
             vec![r"C:\Drv\560.00\a.bin"],
             "найновіша збірка лишається"
+        );
+    }
+
+    /// Дерево з кількома рівнями й кандидатами в різних гілках.
+    fn wide_temp(fs: &MemFs) -> &'static str {
+        let temp = r"C:\Users\Test\AppData\Local\Temp";
+        for a in 0..12 {
+            for b in 0..5 {
+                let age = if (a + b) % 3 == 0 { DAY } else { 30 * DAY };
+                fs.add_file(
+                    &format!(r"{temp}\a{a}\b{b}\f.tmp"),
+                    10 + a * 7 + b,
+                    NOW - age,
+                );
+                fs.add_file(&format!(r"{temp}\a{a}\b{b}\deep\g.tmp"), 3, NOW - 30 * DAY);
+            }
+            fs.add_file(&format!(r"{temp}\a{a}\top.tmp"), 1, NOW - 30 * DAY);
+        }
+        fs.add_link(&format!(r"{temp}\a3\evil"), r"C:\Windows\System32", true);
+        temp
+    }
+
+    #[test]
+    fn parallel_walk_matches_single_thread() {
+        let fs = MemFs::new();
+        let temp = wide_temp(&fs);
+        let rs = rules();
+        let rule = rs.get(rs.index_of("user_temp").unwrap()).unwrap();
+        let meta = fs.metadata(temp).unwrap();
+        let one = walk_root(&fs, rule, temp, &meta, NOW, &CancelToken::new());
+        for threads in [2, 4, 8] {
+            let many = walk_root_with(
+                &fs,
+                rule,
+                temp,
+                &meta,
+                NOW,
+                threads,
+                &CancelToken::new(),
+                &|_, _| {},
+            );
+            assert_eq!(many.bytes, one.bytes, "{threads} потоків");
+            assert_eq!(many.files, one.files);
+            assert_eq!(many.eligible, one.eligible);
+            assert_eq!(many.dirs, one.dirs);
+            assert_eq!(many.reparse_skipped, 1);
+        }
+        assert!(one.eligible.iter().all(|c| !c.path.contains("evil")));
+        // Каталоги — від найглибших до верхніх.
+        let depths: Vec<_> = one.dirs.iter().map(|d| path::depth(d)).collect();
+        assert!(depths.windows(2).all(|w| w[0] >= w[1]));
+    }
+
+    #[test]
+    fn cancelled_parallel_walk_stops() {
+        let fs = MemFs::new();
+        let temp = wide_temp(&fs);
+        let rs = rules();
+        let rule = rs.get(rs.index_of("user_temp").unwrap()).unwrap();
+        let meta = fs.metadata(temp).unwrap();
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let walk = walk_root_with(&fs, rule, temp, &meta, NOW, 4, &cancel, &|_, _| {});
+        assert_eq!(walk.files, 0);
+        assert!(walk.eligible.is_empty());
+    }
+
+    #[test]
+    fn protected_roots_go_last_and_partial_reports_arrive() {
+        let fs = sample();
+        let order = Mutex::new(Vec::<String>::new());
+        let partials = Mutex::new(Vec::<Vec<Verdict>>::new());
+        let progress = |p: ScanProgress| {
+            let mut o = order.lock().unwrap();
+            if o.last() != Some(&p.current) {
+                o.push(p.current);
+            }
+        };
+        let partial = |r: &ScanReport| {
+            partials
+                .lock()
+                .unwrap()
+                .push(r.items.iter().map(|i| i.verdict).collect())
+        };
+        let report = scan(
+            &fs,
+            &rules(),
+            &opts(false),
+            &CancelToken::new(),
+            &progress,
+            &partial,
+        );
+        let order = order.into_inner().unwrap();
+        let winsxs = order.iter().position(|p| p.ends_with("WinSxS")).unwrap();
+        let temp = order
+            .iter()
+            .position(|p| p.ends_with(r"Local\Temp"))
+            .unwrap();
+        assert!(
+            temp < winsxs,
+            "🔴 обходиться після того, що можна чистити: {order:?}"
+        );
+        // Прогрес кореня приходить до його обходу: WinSxS з'являється в прогресі, хоча після нього
+        // більше нічого немає.
+        assert_eq!(order.last().map(String::as_str), Some(r"C:\Windows\WinSxS"));
+        let partials = partials.into_inner().unwrap();
+        assert_eq!(partials.len(), 1, "за правилами — один проміжний звіт");
+        assert!(partials[0].iter().all(|v| *v != Verdict::Protected));
+        assert!(report.items.iter().any(|i| i.verdict == Verdict::Protected));
+
+        let count = Mutex::new(0);
+        scan(
+            &fs,
+            &rules(),
+            &opts(true),
+            &CancelToken::new(),
+            &|_| {},
+            &|_| {
+                *count.lock().unwrap() += 1;
+            },
+        );
+        assert_eq!(
+            *count.lock().unwrap(),
+            2,
+            "повний скан — ще один перед обходом диска"
+        );
+    }
+
+    #[test]
+    fn nothing_eligible_when_all_files_fresh() {
+        let fs = MemFs::new();
+        fs.add_file(
+            r"C:\Users\Test\AppData\Local\Temp\fresh.tmp",
+            300,
+            NOW - DAY,
+        )
+        .add_file(r"C:\Windows\WinSxS\x\comp.dll", 300, NOW);
+        let report = scan(
+            &fs,
+            &rules(),
+            &opts(false),
+            &CancelToken::new(),
+            &|_| {},
+            &|_| {},
+        );
+        let temp = report
+            .items
+            .iter()
+            .find(|i| i.rule.as_ref().is_some_and(|r| r.id == "user_temp"))
+            .unwrap();
+        assert!(!temp.selectable);
+        assert!(temp.nothing_eligible);
+        assert_eq!(temp.rule.as_ref().unwrap().min_age_days, Some(7));
+        let winsxs = report
+            .items
+            .iter()
+            .find(|i| i.path.ends_with("WinSxS"))
+            .unwrap();
+        assert!(
+            !winsxs.nothing_eligible,
+            "🔴 не «чекає» — його не можна вибрати взагалі"
         );
     }
 }

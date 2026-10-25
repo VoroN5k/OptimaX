@@ -1090,7 +1090,10 @@ pub fn cleanup_reveal(state: State<'_, AppState>, path: String) -> CmdResult<()>
         r.items
             .iter()
             .chain(r.unknown.iter())
-            .any(|i| path::eq_ci(&i.path, &p))
+            .chain(r.protected_zones.iter())
+            .any(|i| {
+                path::eq_ci(&i.path, &p) || i.top_subdirs.iter().any(|d| path::eq_ci(&d.path, &p))
+            })
             || r.sizes.iter().any(|(s, _)| path::eq_ci(s, &p))
     });
     let settings = lock(&state.settings).cleanup.clone();

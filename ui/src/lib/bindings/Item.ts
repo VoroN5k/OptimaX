@@ -3,6 +3,7 @@ import type { CleanupCategory } from "./CleanupCategory";
 import type { CleanupVerdict } from "./CleanupVerdict";
 import type { Method } from "./Method";
 import type { RuleInfo } from "./RuleInfo";
+import type { SubDir } from "./SubDir";
 import type { Zone } from "./Zone";
 
 /**
@@ -62,6 +63,14 @@ zone: Zone | null,
  * Розмір — лише файли самої теки та дрібних підтек (великі підтеки показано окремо).
  */
 remainder: boolean, 
+/**
+ * Повний скан: скільки дрібних підтек входить у розмір.
+ */
+small_dirs: number, 
+/**
+ * Повний скан: найбільші з цих дрібних підтек (до [`SUBDIRS_SHOWN`]).
+ */
+top_subdirs: Array<SubDir>, 
 /**
  * Каталогів, які не вдалося прочитати (немає доступу).
  */

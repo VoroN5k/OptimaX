@@ -16,8 +16,10 @@ use std::time::{Duration, Instant};
 
 /// Великі невідомі теки — від цього розміру.
 pub const UNKNOWN_MIN_BYTES: u64 = 512 * 1024 * 1024;
-/// Скільки невідомих тек показувати.
+/// Скільки невідомих тек показувати (і окремо — скільки тек із зон «не чіпати»).
 pub const UNKNOWN_LIMIT: usize = 30;
+/// Скільки найбільших дрібних підтек показувати в рядку повного скану.
+pub const SUBDIRS_SHOWN: usize = 8;
 /// У знімок розмірів потрапляють теки від цього розміру…
 pub const SNAPSHOT_MIN_BYTES: u64 = 100 * 1024 * 1024;
 /// …і не глибше цього рівня.
@@ -63,6 +65,16 @@ impl RuleInfo {
     }
 }
 
+/// Підтека рядка повного скану (менша за поріг окремого рядка).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct SubDir {
+    /// Шлях.
+    pub path: String,
+    /// Байтів.
+    pub bytes: u64,
+}
+
 /// Об'єкт у звіті скану.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -94,6 +106,10 @@ pub struct Item {
     pub zone: Option<Zone>,
     /// Розмір — лише файли самої теки та дрібних підтек (великі підтеки показано окремо).
     pub remainder: bool,
+    /// Повний скан: скільки дрібних підтек входить у розмір.
+    pub small_dirs: u64,
+    /// Повний скан: найбільші з цих дрібних підтек (до [`SUBDIRS_SHOWN`]).
+    pub top_subdirs: Vec<SubDir>,
     /// Каталогів, які не вдалося прочитати (немає доступу).
     pub unreadable_dirs: u64,
 }
@@ -112,8 +128,11 @@ pub struct ScanReport {
     pub duration_ms: u64,
     /// Об'єкти за правилами.
     pub items: Vec<Item>,
-    /// Великі теки, яких база не знає (лише повний скан).
+    /// Великі теки, яких база не знає (лише повний скан, лише ⚪).
     pub unknown: Vec<Item>,
+    /// Великі теки в зонах чорного списку — системні, програми, особисті файли (лише повний
+    /// скан). Що це — відомо, але правила немає й видалення неможливе.
+    pub protected_zones: Vec<Item>,
     /// Усього байтів, побачених повним сканом.
     pub scanned_bytes: u64,
     /// Каталогів, які не вдалося прочитати.
@@ -546,6 +565,7 @@ pub fn scan(
         duration_ms: 0,
         items: Vec::new(),
         unknown: Vec::new(),
+        protected_zones: Vec::new(),
         scanned_bytes: 0,
         unreadable_dirs: 0,
         cancelled: false,
@@ -614,6 +634,8 @@ pub fn scan(
                         zone: cls.zone,
                         unreadable_dirs: walk.unreadable_dirs,
                         remainder: false,
+                        small_dirs: 0,
+                        top_subdirs: Vec::new(),
                     });
                 }
             }
@@ -629,7 +651,7 @@ pub fn scan(
         let tree = walk_drive(fs, rules, opts, cancel, progress);
         report.scanned_bytes = tree.total(0);
         report.unreadable_dirs += tree.unreadable;
-        report.unknown = tree.unknown(rules);
+        (report.unknown, report.protected_zones) = tree.unknown(rules);
         report.sizes = tree.snapshot_sizes();
     }
     report
@@ -667,7 +689,8 @@ impl Tree {
     }
 
     /// Великі теки без правила: спускаємось у великих нащадків, показуємо «місця концентрації».
-    fn unknown(&self, rules: &RuleSet) -> Vec<Item> {
+    /// Повертає (невідоме ⚪, теки із зон «не чіпати»), кожне — до [`UNKNOWN_LIMIT`].
+    fn unknown(&self, rules: &RuleSet) -> (Vec<Item>, Vec<Item>) {
         let mut found: Vec<(u32, u64, bool)> = Vec::new();
         let mut stack = vec![0u32];
         while let Some(i) = stack.pop() {
@@ -690,34 +713,60 @@ impl Tree {
             }
         }
         found.sort_by_key(|(_, b, _)| std::cmp::Reverse(*b));
-        found
-            .into_iter()
-            .take(UNKNOWN_LIMIT)
-            .map(|(i, bytes, remainder)| {
-                let p = self.path(i).to_string();
-                let cls = rules.classify(&p);
-                Item {
-                    path: p,
-                    category: Category::Unknown,
-                    verdict: if cls.zone.is_some() {
-                        Verdict::Protected
-                    } else {
-                        Verdict::Unknown
-                    },
-                    method: Method::ManualOnly,
-                    bytes,
-                    files: 0,
-                    eligible_bytes: 0,
-                    eligible_files: 0,
-                    selectable: false,
-                    nothing_eligible: false,
-                    rule: None,
-                    zone: cls.zone,
-                    unreadable_dirs: 0,
-                    remainder,
-                }
-            })
-            .collect()
+        let (mut unknown, mut zones) = (Vec::new(), Vec::new());
+        for (i, bytes, remainder) in found {
+            if unknown.len() >= UNKNOWN_LIMIT && zones.len() >= UNKNOWN_LIMIT {
+                break;
+            }
+            let p = self.path(i).to_string();
+            let cls = rules.classify(&p);
+            let list = if cls.zone.is_some() {
+                &mut zones
+            } else {
+                &mut unknown
+            };
+            if list.len() >= UNKNOWN_LIMIT {
+                continue;
+            }
+            // Дрібні підтеки, з яких складається розмір рядка (великі показано окремими рядками).
+            let mut small: Vec<u32> = self.children[i as usize]
+                .iter()
+                .copied()
+                .filter(|c| self.total(*c) < UNKNOWN_MIN_BYTES)
+                .collect();
+            small.sort_by_key(|c| std::cmp::Reverse(self.total(*c)));
+            list.push(Item {
+                path: p,
+                category: Category::Unknown,
+                verdict: if cls.zone.is_some() {
+                    Verdict::Protected
+                } else {
+                    Verdict::Unknown
+                },
+                method: Method::ManualOnly,
+                bytes,
+                files: 0,
+                eligible_bytes: 0,
+                eligible_files: 0,
+                selectable: false,
+                nothing_eligible: false,
+                rule: None,
+                zone: cls.zone,
+                unreadable_dirs: 0,
+                remainder,
+                small_dirs: small.len() as u64,
+                top_subdirs: small
+                    .iter()
+                    .take(SUBDIRS_SHOWN)
+                    .filter(|c| self.total(**c) > 0)
+                    .map(|c| SubDir {
+                        path: self.path(*c).to_string(),
+                        bytes: self.total(*c),
+                    })
+                    .collect(),
+            });
+        }
+        (unknown, zones)
     }
 
     fn snapshot_sizes(&self) -> Vec<(String, u64)> {
@@ -1230,5 +1279,60 @@ verified_on = "test"
             !winsxs.nothing_eligible,
             "🔴 не «чекає» — його не можна вибрати взагалі"
         );
+    }
+
+    #[test]
+    fn full_scan_splits_zones_and_lists_small_subdirs() {
+        const MIB: u64 = 1024 * 1024;
+        let fs = sample();
+        fs.add_file(r"C:\Program Files\Game\data.pak", GIB, NOW)
+            .add_file(r"C:\Data\Proj\Big\x.bin", 600 * MIB, NOW)
+            .add_file(r"C:\Data\Proj\s1\x.bin", 300 * MIB, NOW)
+            .add_file(r"C:\Data\Proj\s2\x.bin", 200 * MIB, NOW)
+            .add_file(r"C:\Data\Proj\s3\x.bin", 100 * MIB, NOW)
+            .add_file(r"C:\Data\Proj\loose.bin", 10 * MIB, NOW);
+        let report = scan(
+            &fs,
+            &rules(),
+            &opts(true),
+            &CancelToken::new(),
+            &|_| {},
+            &|_| {},
+        );
+        assert!(report.unknown.iter().all(|i| i.verdict == Verdict::Unknown));
+        assert!(report.unknown.iter().all(|i| i.zone.is_none()));
+        let game = report
+            .protected_zones
+            .iter()
+            .find(|i| i.path == r"C:\Program Files\Game")
+            .unwrap();
+        assert_eq!(game.verdict, Verdict::Protected);
+        assert!(!report
+            .unknown
+            .iter()
+            .any(|i| i.path.starts_with(r"C:\Program Files")));
+        let rest = report
+            .unknown
+            .iter()
+            .find(|i| i.path == r"C:\Data\Proj")
+            .unwrap();
+        assert!(rest.remainder);
+        assert_eq!(rest.bytes, 610 * MIB);
+        assert_eq!(rest.small_dirs, 3);
+        let subs: Vec<_> = rest
+            .top_subdirs
+            .iter()
+            .map(|d| (d.path.as_str(), d.bytes))
+            .collect();
+        assert_eq!(
+            subs,
+            vec![
+                (r"C:\Data\Proj\s1", 300 * MIB),
+                (r"C:\Data\Proj\s2", 200 * MIB),
+                (r"C:\Data\Proj\s3", 100 * MIB),
+            ],
+            "найбільші спершу, велика Big — окремим рядком"
+        );
+        assert!(report.unknown.iter().any(|i| i.path == r"C:\Data\Proj\Big"));
     }
 }

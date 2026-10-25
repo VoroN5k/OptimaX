@@ -47,6 +47,11 @@
   let journalKey = $state(0);
   /** Що зараз виконується (точка відновлення, DISM, powercfg) — щоб довгі кроки було видно. */
   let running = $state<string | null>(null);
+  /** Група «Відоме, не чіпати» згорнута за замовчуванням: там нічого робити. */
+  let showZones = $state(false);
+  /** «Невідоме»: спершу найбільші, решта — за кнопкою. */
+  const UNKNOWN_SHOWN = 10;
+  let showAllUnknown = $state(false);
 
   /** Помилка: у банер (видно з будь-якого місця сторінки) і в «Журнал дій». */
   function fail(msg: string) {
@@ -201,6 +206,7 @@
     }
   }
 
+  const zonesBytes = $derived((report?.protected_zones ?? []).reduce((s, i) => s + i.bytes, 0));
   const catBytes = (items: Item[]) => items.filter((i) => i.selectable).reduce((s, i) => s + i.eligible_bytes, 0);
   const share = $derived(
     cl.execProgress && cl.execProgress.total ? Math.min(1, cl.execProgress.done / cl.execProgress.total) : 0,
@@ -215,6 +221,7 @@
       disabled={locked}
       ontoggle={(on) => toggle(item.path, on)}
       onreveal={() => reveal(item.path)}
+      onrevealpath={reveal}
       ondism={() => (toolAsk = "dism")}
       onhibernate={() => (toolAsk = "hibernate")}
     />
@@ -387,11 +394,31 @@
         {#if !report?.full}
           <p class="small muted">{tk("ui.clean.unknown_need_full")}</p>
         {:else if report.unknown.length}
-          <div class="rows">{@render rows(report.unknown)}</div>
+          <div class="rows">{@render rows(showAllUnknown ? report.unknown : report.unknown.slice(0, UNKNOWN_SHOWN))}</div>
+          {#if report.unknown.length > UNKNOWN_SHOWN}
+            <div class="more">
+              <Button small variant="ghost" onclick={() => (showAllUnknown = !showAllUnknown)}>
+                {showAllUnknown ? tk("ui.clean.unknown_less") : tk("ui.clean.unknown_more", { n: report.unknown.length - UNKNOWN_SHOWN })}
+              </Button>
+            </div>
+          {/if}
         {:else}
           <p class="small muted">{tk("ui.clean.unknown_none")}</p>
         {/if}
       </Card>
+      {#if report?.full && report.protected_zones.length}
+        <Card
+          title={tk("ui.clean.zones_title")}
+          subtitle={tk("ui.clean.zones_subtitle", { n: report.protected_zones.length, size: size(zonesBytes) })}
+        >
+          {#snippet actions()}
+            <Button small variant="ghost" onclick={() => (showZones = !showZones)}>
+              {tk(showZones ? "ui.clean.zones_hide" : "ui.clean.zones_show")}
+            </Button>
+          {/snippet}
+          {#if showZones}<div class="rows">{@render rows(report.protected_zones)}</div>{/if}
+        </Card>
+      {/if}
       {#if view.suggest_move}
         <Card title={tk("ui.clean.move_title")}>
           <p class="muted">{tk("ui.clean.move_text")}</p>
@@ -549,6 +576,11 @@
   .rows {
     display: grid;
     gap: calc(var(--space) * 2);
+  }
+  .more {
+    display: flex;
+    justify-content: center;
+    padding-top: calc(var(--space) * 2);
   }
   .warn-text,
   .warn {

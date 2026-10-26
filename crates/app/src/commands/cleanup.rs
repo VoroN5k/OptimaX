@@ -1,4 +1,5 @@
-//! Очищення диска: скан (`cleanup-progress`, `cleanup-scan-done`, `cleanup-error`), сухий прогін,
+//! Очищення диска: скан (`cleanup-progress`, `cleanup-scan-partial`, `cleanup-scan-done`,
+//! `cleanup-error`), сухий прогін,
 //! очищення (`cleanup-exec-progress`, `cleanup-exec-done`), карантин, журнал, «Що виросло» і
 //! штатні засоби Windows (DISM, powercfg). Вердикти визначає лише бекенд.
 
@@ -437,7 +438,7 @@ pub fn cleanup_scan_start(
         .ok()
         .filter(|r| path::is_drive_root(r))
         .ok_or_else(|| CmdError::Forbidden(format!("«{drive}» — не корінь диска")))?;
-    let (cancel, rules) = {
+    let (cancel, rules, issues) = {
         let mut c = lock(&state.cleanup);
         if let Some(why) = c.busy() {
             return Err(failed(why));
@@ -445,7 +446,8 @@ pub fn cleanup_scan_start(
         let t = CancelToken::new();
         c.scan = Some(t.clone());
         c.plan = None;
-        (t, c.rules())
+        let rules = c.rules();
+        (t, rules, c.rule_issues.clone())
     };
     let threads = std::thread::available_parallelism()
         .map(|n| (n.get() / 2).clamp(1, 6))
@@ -467,9 +469,19 @@ pub fn cleanup_scan_start(
                 now_unix: now_unix(),
                 threads,
             };
-            let report = scan(&StdFs, &rules, &opts, &cancel, &|p| {
-                let _ = app.emit("cleanup-progress", p);
-            });
+            // Проміжний звіт лише для показу: вибір і сухий прогін ідуть за остаточним.
+            let report = scan(
+                &StdFs,
+                &rules,
+                &opts,
+                &cancel,
+                &|p| {
+                    let _ = app.emit("cleanup-progress", p);
+                },
+                &|r| {
+                    let _ = app.emit("cleanup-scan-partial", make_view(r.clone(), issues.clone()));
+                },
+            );
             if !report.cancelled {
                 save_snapshot(&report);
             }
@@ -1078,7 +1090,10 @@ pub fn cleanup_reveal(state: State<'_, AppState>, path: String) -> CmdResult<()>
         r.items
             .iter()
             .chain(r.unknown.iter())
-            .any(|i| path::eq_ci(&i.path, &p))
+            .chain(r.protected_zones.iter())
+            .any(|i| {
+                path::eq_ci(&i.path, &p) || i.top_subdirs.iter().any(|d| path::eq_ci(&d.path, &p))
+            })
             || r.sizes.iter().any(|(s, _)| path::eq_ci(s, &p))
     });
     let settings = lock(&state.settings).cleanup.clone();

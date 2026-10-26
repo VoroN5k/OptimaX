@@ -25,7 +25,13 @@ fn main() -> anyhow::Result<()> {
         now_unix: now,
         threads: 4,
     };
-    let report = scan(&StdFs, &rules, &opts, &CancelToken::new(), &|_| {});
+    let report = scan(&StdFs, &rules, &opts, &CancelToken::new(), &|_| {}, &|r| {
+        println!(
+            "проміжний звіт: {} об'єктів за {} мс",
+            r.items.len(),
+            r.duration_ms
+        )
+    });
     println!(
         "скан {} ({}): {} мс, неприступних тек {}",
         report.drive,

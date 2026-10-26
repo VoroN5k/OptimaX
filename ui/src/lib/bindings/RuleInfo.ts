@@ -35,4 +35,8 @@ manual_hint: string | null,
 /**
  * Правило понижене до ⚪ через помилку валідації.
  */
-demoted: boolean, };
+demoted: boolean, 
+/**
+ * Умова правила: видаляються лише файли, яких не чіпали стільки днів.
+ */
+min_age_days: number | null, };

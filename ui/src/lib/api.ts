@@ -129,6 +129,7 @@ type Events = {
   "net-done": NetResult;
   "net-error": CmdError;
   "cleanup-progress": ScanProgress;
+  "cleanup-scan-partial": ScanView;
   "cleanup-scan-done": ScanView;
   "cleanup-exec-progress": ExecProgress;
   "cleanup-exec-done": ExecView;

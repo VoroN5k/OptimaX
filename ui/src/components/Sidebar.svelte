@@ -16,7 +16,7 @@
 
 <nav class="sidebar" aria-label={tk("ui.nav.label")}>
   <div class="logo">
-    <span class="mark" aria-hidden="true"></span>
+    <span class="mark" data-splash-mark aria-hidden="true"></span>
     <div>
       <strong>OptimaX</strong>
       <span class="small dim">by X44TO</span>
@@ -93,6 +93,11 @@
       radial-gradient(circle, var(--bg-sidebar) 32%, transparent 34%),
       var(--accent-gradient);
     box-shadow: 0 0 18px var(--accent-glow);
+    transition: opacity var(--dur) var(--ease);
+  }
+  /* Знак проявляється, коли до нього долітають точки заставки. */
+  :global(:root.splash-mark) .mark {
+    opacity: 0;
   }
   .group {
     display: grid;

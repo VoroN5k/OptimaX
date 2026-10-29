@@ -42,13 +42,15 @@ const SLOW_FRAME_MS = 6;
 const BUCKETS = 16; // відтінки градієнта (спрайти)
 const SPRITE_PX = 32;
 
-function hexToRgb(hex: string): [number, number, number] {
+/** `#rrggbb` / `#rgb` → [r, g, b]. */
+export function hexToRgb(hex: string): [number, number, number] {
   const h = hex.trim().replace("#", "");
   const n = parseInt(h.length === 3 ? h.replace(/(.)/g, "$1$1") : h, 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-function makeSprite(rgb: [number, number, number], px: number): HTMLCanvasElement {
+/** М'яка кругла точка з підсвіченим центром (малюється один раз, у кадрі лише drawImage). */
+export function makeSprite(rgb: [number, number, number], px: number): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = c.height = px;
   const g = c.getContext("2d");

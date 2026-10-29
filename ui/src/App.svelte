@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, on } from "./lib/api";
   import type { DotsStats } from "./lib/dots";
+  import { rememberSplash } from "./lib/splash";
   import { cl, flashBg, gm, logLocal, pushLog, ui, up } from "./lib/state.svelte";
   import BackgroundDots from "./components/BackgroundDots.svelte";
   import LogPanel from "./components/LogPanel.svelte";
@@ -22,10 +23,14 @@
   let dotsStats = $state<DotsStats | null>(null);
 
   onMount(() => {
-    void api.upscaleState().then((v) => (up.view = v));
+    void api.upscaleState().then((v) => {
+      up.view = v;
+    });
     const subs = [
       on("log", pushLog),
-      on("upscale", (v) => (up.view = v)),
+      on("upscale", (v) => {
+        up.view = v;
+      }),
       on("cleanup-progress", (p) => (cl.progress = p)),
       // Проміжний звіт: знайдене видно ще до кінця скану (вибір заблоковано, поки скан триває).
       on("cleanup-scan-partial", (v) => {
@@ -82,6 +87,9 @@
   // Фон — лише на «Аналізі» й «Діагностиці»; вимикається в режимі гри, під час вимірювань,
   // в економному режимі й коли користувач вимкнув його в налаштуваннях.
   const showBg = $derived(ui.screen === "analysis" || ui.screen === "diagnosis");
+  // Заставка запуску вирішується до читання налаштувань — запам'ятовуємо їх локально.
+  $effect(() => rememberSplash(ui.settings.animation !== "off" && !ui.settings.economy));
+
   const animate = $derived(
     showBg && ui.settings.animation !== "off" && !ui.settings.economy && !ui.gameActive && !ui.measuring,
   );
@@ -146,6 +154,14 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
+    transition:
+      opacity var(--dur-slow) var(--ease),
+      transform var(--dur-slow) var(--ease);
+  }
+  /* Під заставкою запуску контент прихований; з'являється fade + зсув на 8px. */
+  :global(:root.splashing) .main {
+    opacity: 0;
+    transform: translateY(8px);
   }
   .screen {
     flex: 1;

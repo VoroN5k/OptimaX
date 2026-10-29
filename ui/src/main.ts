@@ -13,11 +13,14 @@ import { mount } from "svelte";
 import App from "./App.svelte";
 import { api } from "./lib/api";
 import { setCatalog, tk } from "./lib/i18n";
+import { startSplash } from "./lib/splash";
 import { logLocal, ui } from "./lib/state.svelte";
 
 async function boot(): Promise<void> {
   const target = document.getElementById("app");
   if (!target) return;
+  // Заставка грає паралельно із завантаженням даних бекенду, а не після нього.
+  const splash = startSplash();
   try {
     // Каталог потрібен до першого рендеру, інакше користувач побачить сирі ключі.
     setCatalog(await api.catalog());
@@ -37,9 +40,11 @@ async function boot(): Promise<void> {
     if (startup.error) logLocal("error", startup.error);
   } catch (e) {
     target.textContent = `OptimaX: ${String(e)}`;
+    splash?.cancel();
     return;
   }
   mount(App, { target });
+  splash?.ready();
 }
 
 void boot();

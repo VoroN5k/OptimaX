@@ -50,3 +50,6 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 .DS_Store
+
+# --- Релізи (docs/RELEASE.md): локальні архіви для GitHub Releases ---
+/release/

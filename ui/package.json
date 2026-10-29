@@ -10,7 +10,8 @@
     "check:i18n": "node scripts/check-i18n.mjs",
     "tauri": "tauri",
     "app:dev": "cd ../crates/app && tauri dev",
-    "app:build": "cd ../crates/app && tauri build --no-bundle"
+    "app:build": "cd ../crates/app && tauri build --no-bundle",
+    "app:bundle": "cd ../crates/app && tauri build --bundles nsis"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.1",

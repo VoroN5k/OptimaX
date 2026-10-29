@@ -11,11 +11,12 @@
 
 ## Завантажити
 
-[**Releases**](../../releases): завантаж `OptimaX-<версія>-win-x64.zip`, розпакуй,
-запусти `OptimaX.exe`.
+[**Releases**](../../releases), два варіанти:
+- `OptimaX-<версія>-win-x64-setup.exe` — інсталятор (Program Files, ярлик у «Пуск»);
+- `OptimaX-<версія>-win-x64.zip` — портативна версія: розпакуй і запусти `OptimaX.exe`.
 
-- Портативна збірка: нічого не встановлюється. Потрібен **WebView2** (на Windows 11 є
-  вбудований, на Windows 10 майже завжди є; якщо ні — програма підкаже).
+- Потрібен **WebView2** (на Windows 11 є вбудований, на Windows 10 майже завжди є; якщо
+  ні — програма підкаже).
 - Потрібні права адміністратора — Windows спитає при запуску.
 - Exe не підписаний сертифікатом, тож SmartScreen може показати «Windows захистив ваш ПК»:
   «Докладніше» → «Однаково запустити».
@@ -51,6 +52,7 @@ cd ui
 npm ci
 npm run app:dev     # розробка (гаряче перезавантаження інтерфейсу)
 npm run app:build   # портативний exe → target\release\optimax.exe
+npm run app:bundle  # exe + інсталятор NSIS → target\release\bundle\nsis\
 ```
 
 Перевірки перед комітом:

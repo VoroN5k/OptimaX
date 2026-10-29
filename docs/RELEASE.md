@@ -1,7 +1,11 @@
 # Як випустити бету OptimaX на GitHub
 
-Результат: на сторінці **Releases** репозиторію `VoroN5k/OptimaX` лежить zip з портативним
-`optimax.exe`, який друзі просто завантажують і запускають. Нічого не встановлюється.
+Результат: на сторінці **Releases** репозиторію `VoroN5k/OptimaX` лежать два файли:
+- `OptimaX-<версія>-win-x64-setup.exe` — інсталятор (NSIS): Program Files, ярлик у «Пуск»,
+  видалення через «Програми й компоненти»;
+- `OptimaX-<версія>-win-x64.zip` — портативна версія: розпакував і запустив.
+
+Усередині обох — той самий `optimax.exe`.
 
 Що всередині `optimax.exe`:
 - увесь інтерфейс (Svelte-збірка вбудовується в exe);
@@ -11,6 +15,8 @@
 
 Що потрібно на ПК друга: Windows 10/11 x64 і **WebView2** (на Win11 вбудований, на Win10
 майже завжди є; якщо немає — програма сама скаже й запропонує офіційний інсталятор).
+Інсталятор WebView2 сам **не** ставить (`webviewInstallMode: skip`): за CLAUDE.md 2.1 —
+лише за згодою користувача, а це вже робить програма при старті.
 
 ---
 
@@ -98,29 +104,40 @@ git push
 
 ```powershell
 cd ui
-npm run app:build
+npm run app:bundle
 cd ..
 ```
 
-`app:build` — це `tauri build --no-bundle`: Tauri сам запускає `npm run build` (фронтенд),
-потім `cargo build --release` і кладе результат у:
+`app:bundle` — це `tauri build --bundles nsis`: Tauri сам запускає `npm run build`
+(фронтенд), потім `cargo build --release`, потім NSIS. Результат:
 
 ```
-target\release\optimax.exe
+target\release\optimax.exe                                   портативний exe (≈ 15 МБ)
+target\release\bundle\nsis\OptimaX_0.1.0_x64-setup.exe        інсталятор (≈ 3,7 МБ)
 ```
 
-Розмір ≈ 15 МБ (збірка 2026-10-30: 15 723 008 байт), повторна збірка — ≈ 1,5 хв.
-Інсталятор (MSI/NSIS) не створюється навмисно — це портативна збірка.
+Повторна збірка — ≈ 1,5 хв. Налаштування інсталятора — `bundle` у
+`crates/app/tauri.conf.json`: лише NSIS (MSI свідомо не робимо), встановлення для всіх
+користувачів у Program Files, мови українська й англійська, `THIRD_PARTY_LICENSES.txt`
+кладеться поруч з exe.
 
-**Швидка перевірка exe перед публікацією** (обов'язково, це вже не dev-режим):
+> **Перша збірка інсталятора** завантажує NSIS і плагін `nsis_tauri_utils` з
+> `github.com/tauri-apps` (Tauri перевіряє їхній хеш) і кешує їх у `%LOCALAPPDATA%\tauri`.
+> Потрібен інтернет; далі збирається офлайн.
+>
+> Лише exe без інсталятора: `npm run app:build` (`tauri build --no-bundle`).
+
+**Швидка перевірка перед публікацією** (обов'язково, це вже не dev-режим):
 1. Запусти `target\release\optimax.exe` → має з'явитися запит UAC → заставка → «Аналіз».
 2. Пройди «Діагностику» з будь-якою грою (перевіряє вбудований PresentMon).
 3. «Очищення» → скан (лише скан, без видалення).
 4. Закрий програму.
+5. Запусти `OptimaX_0.1.0_x64-setup.exe` → встанови → запусти з меню «Пуск» → закрий →
+   видали через «Параметри → Програми». Тека `C:\Program Files\OptimaX` має зникнути.
 
 ---
 
-## 5. Архів і контрольна сума
+## 5. Файли релізу й контрольні суми
 
 ```powershell
 $v = "0.1.0-beta.1"
@@ -129,12 +146,13 @@ New-Item -ItemType Directory -Force $dir | Out-Null
 Copy-Item target\release\optimax.exe "$dir\OptimaX.exe"
 Copy-Item THIRD_PARTY_LICENSES "$dir\THIRD_PARTY_LICENSES.txt"
 Compress-Archive -Path "$dir\*" -DestinationPath "release\OptimaX-$v-win-x64.zip" -Force
-Get-FileHash "release\OptimaX-$v-win-x64.zip" -Algorithm SHA256
+Copy-Item target\release\bundle\nsis\OptimaX_*_x64-setup.exe "release\OptimaX-$v-win-x64-setup.exe"
+Get-FileHash "release\OptimaX-$v-win-x64-setup.exe", "release\OptimaX-$v-win-x64.zip" -Algorithm SHA256
 ```
 
 - `THIRD_PARTY_LICENSES` **обов'язково** кладемо поруч: ліцензія PresentMon (MIT) і шрифтів
-  (OFL) вимагає передавати їхній текст разом із програмою.
-- SHA-256 з останньої команди скопіюй в опис релізу — друзі зможуть звірити файл.
+  (OFL) вимагає передавати їхній текст разом із програмою (в інсталяторі це вже налаштовано).
+- Обидва SHA-256 з останньої команди скопіюй в опис релізу — друзі зможуть звірити файли.
 - Тека `release\` уже в `.gitignore` — у git вона не потрапить.
 
 ---
@@ -153,7 +171,8 @@ git push origin v0.1.0-beta.1
 2. **Choose a tag** → `v0.1.0-beta.1`.
 3. **Release title**: `OptimaX 0.1.0 beta 1`.
 4. Опис — шаблон нижче.
-5. Перетягни `release\OptimaX-0.1.0-beta.1-win-x64.zip` у поле **Attach binaries**.
+5. Перетягни `release\OptimaX-0.1.0-beta.1-win-x64-setup.exe` і
+   `release\OptimaX-0.1.0-beta.1-win-x64.zip` у поле **Attach binaries**.
 6. Постав галочку **Set as a pre-release** (GitHub позначить реліз як бету).
 7. **Publish release**.
 
@@ -171,21 +190,24 @@ git push origin v0.1.0-beta.1
 - WebView2 (на Win11 є; на Win10 програма підкаже, якщо немає)
 - права адміністратора (Windows спитає при запуску)
 
-### Як запустити
-1. Завантаж `OptimaX-0.1.0-beta.1-win-x64.zip`, розпакуй у будь-яку теку.
-2. Запусти `OptimaX.exe`.
-3. Windows може показати «Windows захистив ваш ПК» — програма не підписана сертифікатом.
-   Натисни «Докладніше» → «Однаково запустити».
+### Як встановити
+- **Інсталятор:** завантаж `OptimaX-0.1.0-beta.1-win-x64-setup.exe` і запусти.
+- **Без встановлення:** завантаж `OptimaX-0.1.0-beta.1-win-x64.zip`, розпакуй у будь-яку
+  теку, запусти `OptimaX.exe`.
+
+Windows може показати «Windows захистив ваш ПК» — програма не підписана сертифікатом.
+Натисни «Докладніше» → «Однаково запустити».
 
 ### Що нового
 (вставити розділ з CHANGELOG.md)
 
 ### SHA-256
-`<хеш із кроку 5>`
+- `OptimaX-0.1.0-beta.1-win-x64-setup.exe`: `<хеш із кроку 5>`
+- `OptimaX-0.1.0-beta.1-win-x64.zip`: `<хеш із кроку 5>`
 ```
 
 > Через GitHub CLI (необов'язково): `winget install GitHub.cli`, `gh auth login`, далі
-> `gh release create v0.1.0-beta.1 release\OptimaX-0.1.0-beta.1-win-x64.zip --prerelease --title "OptimaX 0.1.0 beta 1" --notes-file notes.md`.
+> `gh release create v0.1.0-beta.1 release\OptimaX-0.1.0-beta.1-win-x64-setup.exe release\OptimaX-0.1.0-beta.1-win-x64.zip --prerelease --title "OptimaX 0.1.0 beta 1" --notes-file release\notes.md`.
 
 ---
 
@@ -197,7 +219,10 @@ git push origin v0.1.0-beta.1
   exe (PresentMon), часом викликає хибне спрацювання евристики. Якщо в когось трапиться —
   хай надішле назву антивіруса й текст попередження; не радь друзям вимикати захист.
 - **Дані програми** лежать у `%LOCALAPPDATA%\OptimaX` (журнали, карантин, налаштування).
-  Видалити програму = видалити exe й цю теку (спершу відновити потрібне з карантину).
+  Деінсталятор їх **не** видаляє (його галочка «видалити дані» прибирає лише
+  `%LOCALAPPDATA%\com.x44to.optimax` — дані WebView2). Так безпечніше: у карантині можуть
+  бути файли, які людина ще захоче відновити. Повністю прибрати = видалити програму, потім
+  цю теку (спершу відновити потрібне з карантину).
 - **Ліцензія самого OptimaX.** У репозиторії немає файлу `LICENSE` — тобто юридично всі
   права твої й код ніхто не може використовувати. Для роздачі exe друзям це не заважає;
   якщо репозиторій буде публічним і ти хочеш дозволити використання коду — додай ліцензію.

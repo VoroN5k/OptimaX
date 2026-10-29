@@ -189,6 +189,7 @@ pub fn diagnose_timeline(tl: &Timeline, ctx: &Context) -> Diagnosis {
         rules::vram_pressure(&a),
         rules::throttling(&a),
         rules::stutter(&a),
+        rules::composed_present(&a),
     ]
     .into_iter()
     .flatten()

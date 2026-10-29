@@ -27,6 +27,8 @@ pub struct CsvFrameParser {
     between_display: Option<usize>,
     cpu_busy: Option<usize>,
     gpu_busy: Option<usize>,
+    sync_interval: Option<usize>,
+    allows_tearing: Option<usize>,
 }
 
 /// Ділить рядок CSV на поля з підтримкою лапок і `""` всередині них.
@@ -94,6 +96,8 @@ impl CsvFrameParser {
             between_display: find(&header, &["MsBetweenDisplayChange"]),
             cpu_busy: find(&header, &["MsCPUBusy"]),
             gpu_busy: find(&header, &["MsGPUBusy"]),
+            sync_interval: find(&header, &["SyncInterval"]),
+            allows_tearing: find(&header, &["AllowsTearing"]),
         })
     }
 
@@ -144,6 +148,10 @@ impl CsvFrameParser {
             ms_between_display_change: opt_f64(&f, self.between_display),
             ms_cpu_busy: opt_f64(&f, self.cpu_busy),
             ms_gpu_busy: opt_f64(&f, self.gpu_busy),
+            sync_interval: opt_f64(&f, self.sync_interval)
+                .filter(|v| v.fract() == 0.0 && v.abs() <= 16.0)
+                .map(|v| v as i32),
+            allows_tearing: opt_f64(&f, self.allows_tearing).map(|v| v != 0.0),
         }))
     }
 }
@@ -170,6 +178,27 @@ pub fn parse_csv(text: &str) -> Result<(Vec<FrameRecord>, usize), FrametimeError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame::PresentMode;
+
+    #[test]
+    fn present_mode_names_round_trip() {
+        for (m, name) in PresentMode::NAMES {
+            assert_eq!(PresentMode::parse(name), m);
+            assert_eq!(m.as_str(), name);
+        }
+        assert_eq!(
+            PresentMode::parse(" composed: flip "),
+            PresentMode::ComposedFlip
+        );
+        assert_eq!(PresentMode::parse("Other"), PresentMode::Other);
+        assert_eq!(PresentMode::parse(""), PresentMode::Other);
+        assert_eq!(PresentMode::Other.is_composed(), None);
+        assert_eq!(PresentMode::ComposedFlip.is_composed(), Some(true));
+        assert_eq!(
+            PresentMode::HardwareComposedIndependentFlip.is_composed(),
+            Some(false)
+        );
+    }
 
     /// Справжній вивід PresentMon 2.6.0 з `--qpc_time` (записаний на ПК розробника).
     const REAL_V2_QPC: &str = include_str!("../tests/data/presentmon-2.6.0-qpc.csv");
@@ -186,6 +215,12 @@ mod tests {
         assert!(f.ms_between_presents > 0.0);
         assert!(f.ms_gpu_busy.is_some());
         assert_eq!(f.present_mode, "Hardware Composed: Independent Flip");
+        assert_eq!(f.sync_interval, Some(0));
+        assert_eq!(f.allows_tearing, Some(false));
+        // Усі режими з реального файлу розпізнаються.
+        for f in &frames {
+            assert_ne!(PresentMode::parse(&f.present_mode), PresentMode::Other);
+        }
         // У файлі впереміш кадри кількох процесів (не відсортовані глобально),
         // але в межах одного swap chain час зростає.
         assert!(frames.iter().any(|f| f.application != "Spotify.exe"));

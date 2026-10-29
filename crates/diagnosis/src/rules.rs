@@ -3,7 +3,7 @@
 
 use crate::timeline::{SamplePoint, Timeline};
 use optimax_core::{Category, Finding, FindingBuilder, Impact, Text};
-use optimax_frametime::{find_spikes, FrameStats};
+use optimax_frametime::{find_spikes, FrameStats, PresentMode};
 use optimax_metrics::ThrottleReason;
 use std::collections::HashMap;
 
@@ -175,6 +175,72 @@ pub fn frame_cap(a: &Analysis<'_>) -> Option<Finding> {
     if core_busy >= 0.5 {
         // Ядро в стелі при стабільному ліміті — найімовірніше, цикл очікування кадру.
         d = d.evidence(Text::new("diag.ev.core_busy_wait"), pct(core_busy));
+    }
+    Some(d.build())
+}
+
+/// Кадри гри здебільшого показуються через композицію DWM (`Composed: …` у PresentMon), а не
+/// напряму (Independent Flip, апаратний оверлей, ексклюзивний повний екран).
+///
+/// Це прямий факт із PresentMon, тож впевненість висока. Скільки затримки додає композиція
+/// саме в цій грі, не вимірюється: порада — перевірити й порівняти новим записом.
+/// Джерело класифікації: таблиця PresentMode у `README-ConsoleApplication.md` PresentMon 2.6.0.
+pub fn composed_present(a: &Analysis<'_>) -> Option<Finding> {
+    let frames = &a.timeline.frames;
+    let mut counts: HashMap<PresentMode, usize> = HashMap::new();
+    let mut known = 0usize;
+    for f in frames {
+        if f.present_mode.is_composed().is_some() {
+            known += 1;
+            *counts.entry(f.present_mode).or_default() += 1;
+        }
+    }
+    // Колонки немає або режим не розпізнано в більшості кадрів — висновків не робимо.
+    if known == 0 || known * 2 < frames.len() {
+        return None;
+    }
+    let composed: Vec<_> = frames
+        .iter()
+        .filter(|f| f.present_mode.is_composed() == Some(true))
+        .collect();
+    let share = composed.len() as f64 / known as f64;
+    if share < MOSTLY {
+        return None;
+    }
+    let top = counts
+        .iter()
+        .filter(|(m, _)| m.is_composed() == Some(true))
+        .max_by(|x, y| x.1.cmp(y.1).then(y.0.as_str().cmp(x.0.as_str())))
+        .map_or(PresentMode::ComposedFlip, |(m, _)| *m);
+    let mut d = draft(
+        "present.composed",
+        Category::Display,
+        Impact::Info,
+        conf(70.0 + 25.0 * share),
+    )
+    .arg("share", format!("{:.0}", share * 100.0))
+    .arg("mode", top.as_str())
+    .advice()
+    .evidence(Text::new("diag.ev.composed_share"), pct(share))
+    .evidence(
+        Text::new("diag.ev.present_mode"),
+        Text::new("value.raw").arg("v", top.as_str()),
+    );
+    if let Some(si) = median(
+        composed
+            .iter()
+            .filter_map(|f| f.sync_interval.map(f64::from))
+            .collect(),
+    ) {
+        d = d.evidence(
+            Text::new("diag.ev.sync_interval"),
+            Text::new("value.raw").arg("v", format!("{si:.0}")),
+        );
+    }
+    let tearing: Vec<bool> = composed.iter().filter_map(|f| f.allows_tearing).collect();
+    if !tearing.is_empty() {
+        let on = tearing.iter().filter(|t| **t).count() as f64 / tearing.len() as f64;
+        d = d.evidence(Text::new("diag.ev.allows_tearing"), pct(on));
     }
     Some(d.build())
 }

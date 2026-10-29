@@ -492,6 +492,8 @@ mod tests {
             ms_between_display_change: None,
             ms_cpu_busy: None,
             ms_gpu_busy: None,
+            sync_interval: None,
+            allows_tearing: None,
         }
     }
 

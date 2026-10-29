@@ -1,6 +1,6 @@
 //! Спільна шкала часу: кадри гри та знімки метрик у мілісекундах від старту запису.
 
-use optimax_frametime::{main_swap_chain, Recording};
+use optimax_frametime::{main_swap_chain, PresentMode, Recording};
 use optimax_metrics::{Snapshot, ThrottleReason};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -16,6 +16,12 @@ pub struct FramePoint {
     pub cpu_busy_ms: Option<f64>,
     /// Час роботи GPU над кадром, мс.
     pub gpu_busy_ms: Option<f64>,
+    /// Шлях кадру на екран (колонка `PresentMode`).
+    pub present_mode: PresentMode,
+    /// Синхроінтервал, який запросила гра.
+    pub sync_interval: Option<i32>,
+    /// Чи дозволено розриви кадру.
+    pub allows_tearing: Option<bool>,
 }
 
 /// Стан відеокарти в момент знімка.
@@ -125,6 +131,9 @@ impl Timeline {
                 frametime_ms: f.ms_between_presents,
                 cpu_busy_ms: f.ms_cpu_busy,
                 gpu_busy_ms: f.ms_gpu_busy,
+                present_mode: PresentMode::parse(&f.present_mode),
+                sync_interval: f.sync_interval,
+                allows_tearing: f.allows_tearing,
             })
             .collect();
         frames.sort_by(|a, b| a.t_ms.total_cmp(&b.t_ms));

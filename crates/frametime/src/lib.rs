@@ -18,7 +18,7 @@ pub mod stats;
 #[cfg(windows)]
 mod acl;
 
-pub use frame::{FrameRecord, FrameTimestamp};
+pub use frame::{FrameRecord, FrameTimestamp, PresentMode};
 pub use gate::{EndReason, Gate, Observation, Phase, StartMode};
 pub use presentmon::{BundledPresentMon, Target};
 pub use recording::{

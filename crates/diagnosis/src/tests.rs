@@ -3,7 +3,7 @@
 use super::*;
 use crate::timeline::{FramePoint, GpuPoint, SamplePoint, Timeline};
 use optimax_core::{Catalog, Confidence};
-use optimax_frametime::{FrameRecord, FrameTimestamp, Target};
+use optimax_frametime::{FrameRecord, FrameTimestamp, PresentMode, Target};
 use optimax_metrics::{
     CpuSnapshot, DiskSnapshot, GpuSnapshot, MemorySnapshot, ProcessSample, Snapshot, ThrottleReason,
 };
@@ -49,6 +49,9 @@ fn timeline(frametimes: &[f64], sample: impl Fn(f64, usize) -> SamplePoint) -> T
                 frametime_ms: ft,
                 cpu_busy_ms: None,
                 gpu_busy_ms: None,
+                present_mode: PresentMode::HardwareIndependentFlip,
+                sync_interval: Some(0),
+                allows_tearing: Some(true),
             }
         })
         .collect();
@@ -67,6 +70,16 @@ fn timeline(frametimes: &[f64], sample: impl Fn(f64, usize) -> SamplePoint) -> T
         frames,
         samples,
     }
+}
+
+/// Перші `share` кадрів — у режимі `mode`, решта лишається як була.
+fn with_mode(mut tl: Timeline, mode: PresentMode, share: f64) -> Timeline {
+    let n = (tl.frames.len() as f64 * share) as usize;
+    for f in tl.frames.iter_mut().take(n) {
+        f.present_mode = mode;
+        f.allows_tearing = Some(false);
+    }
+    tl
 }
 
 fn ids(d: &Diagnosis) -> Vec<&str> {
@@ -374,6 +387,69 @@ fn actionable_config_findings_are_included() {
 }
 
 #[test]
+fn composed_present_reported_with_evidence() {
+    let tl = with_mode(
+        timeline(&jittery(8.0, 3000), |_, _| base_sample()),
+        PresentMode::ComposedFlip,
+        0.9,
+    );
+    let d = diagnose_timeline(&tl, &Context::default());
+    let f = find(&d, "present.composed").unwrap();
+    assert_eq!(f.category, Category::Display);
+    assert!(f.advice.is_some());
+    // Прямий факт PresentMon: 70 + 25 × 0.9.
+    assert_eq!(f.confidence, Confidence::new(93));
+    let ev = |key: &str| {
+        f.evidence
+            .iter()
+            .find(|e| e.label.key == key)
+            .map(|e| e.value.clone())
+    };
+    assert_eq!(
+        ev("diag.ev.present_mode").unwrap(),
+        Text::new("value.raw").arg("v", "Composed: Flip")
+    );
+    assert!(ev("diag.ev.sync_interval").is_some());
+    assert_eq!(
+        ev("diag.ev.allows_tearing").unwrap(),
+        Text::new("value.pct").arg("v", "0")
+    );
+    assert!(d.verdicts.iter().all(|v| v.expected_gain.is_none()));
+}
+
+#[test]
+fn direct_or_mixed_present_is_not_reported() {
+    let base = || timeline(&jittery(8.0, 3000), |_, _| base_sample());
+    let reported = |tl: &Timeline| {
+        find(
+            &diagnose_timeline(tl, &Context::default()),
+            "present.composed",
+        )
+        .is_some()
+    };
+    // Напряму (Independent Flip, апаратний оверлей) — нічого не кажемо.
+    assert!(!reported(&base()));
+    assert!(!reported(&with_mode(
+        base(),
+        PresentMode::HardwareComposedIndependentFlip,
+        1.0
+    )));
+    // Композиція лише частину часу (менше 60 %) — не переважна.
+    assert!(!reported(&with_mode(
+        base(),
+        PresentMode::ComposedFlip,
+        0.4
+    )));
+    // Режим невідомий у більшості кадрів (колонку вимкнено) — без висновку, навіть якщо
+    // решта кадрів складена DWM.
+    let mut unknown = with_mode(base(), PresentMode::Other, 0.7);
+    for f in unknown.frames.iter_mut().skip(2100) {
+        f.present_mode = PresentMode::ComposedFlip;
+    }
+    assert!(!reported(&unknown));
+}
+
+#[test]
 fn every_verdict_text_is_localized() {
     let catalog = Catalog::ukrainian().unwrap();
     let ft = spiky();
@@ -444,6 +520,14 @@ fn every_verdict_text_is_localized() {
             timeline(&[8.0; 50], |_, _| base_sample()),
             Context::default(),
         ),
+        (
+            with_mode(
+                timeline(&jittery(8.0, 3000), |_, _| base_sample()),
+                PresentMode::ComposedCopyGpuGdi,
+                1.0,
+            ),
+            Context::default(),
+        ),
     ];
     let mut seen = std::collections::BTreeSet::new();
     for (tl, ctx) in &scenarios {
@@ -478,6 +562,7 @@ fn every_verdict_text_is_localized() {
         "stutter.unknown",
         "stutter.isolated",
         "background",
+        "present.composed",
     ] {
         assert!(seen.contains(id), "сценарії не покривають {id}: {seen:?}");
     }
@@ -502,6 +587,8 @@ fn frame(pid: u32, sc: &str, app: &str, qpc: i64, ft: f64) -> FrameRecord {
         ms_between_display_change: None,
         ms_cpu_busy: Some(ft * 0.5),
         ms_gpu_busy: Some(ft * 0.9),
+        sync_interval: None,
+        allows_tearing: None,
     }
 }
 

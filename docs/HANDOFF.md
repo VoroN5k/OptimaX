@@ -30,7 +30,7 @@
 Після етапів: старт запису «з гри» (Ctrl+Shift+F9 / авто), повідомлення поверх гри
 (`optimax_core::toast`), центрування колонки вмісту на широких екранах.
 
-## 2a. Заставка запуску (на `main`, не закомічено)
+## 2a. Заставка запуску (на `main`, закомічено `24065b0`)
 
 - `ui/src/lib/splash.ts` — окремий canvas поверх усього; стартує в `main.ts` до запитів бекенду,
   `ready()` після `mount`, `cancel()` при помилці запуску. Ціль польоту — `[data-splash-mark]`
@@ -40,6 +40,16 @@
   оновлюється `$effect` у `App.svelte` з `ui.settings.animation`/`economy`.
 - Час кадру пишеться в консоль DevTools: `[splash] N точок, K кадрів, X мс/кадр`. **Не виміряно**
   на реальному запуску — потрібна перевірка користувачем.
+
+## 2b. Вердикт режиму показу (PresentMode), не закомічено
+
+- `optimax_frametime::PresentMode` — 7 рядків дослівно з `PresentModeToString`
+  (PresentMon v2.6.0, `PresentMon/CsvOutput.cpp`), решта → `Other`. `is_composed()`:
+  `Composed: *` → так; `Hardware*` (зокрема `Hardware Composed: Independent Flip` — апаратний
+  оверлей) → ні. Опис режимів — таблиця в `README-ConsoleApplication.md` того ж тегу.
+- `rules::composed_present`: режим відомий у ≥ 50 % кадрів і композиція в ≥ 60 % з них;
+  `Impact::Info`, `Category::Display`, впевненість 70 + 25 × частка, з порадою.
+- Не перевірено на реальній грі у вікні — потрібен запис користувачем.
 
 ## 3. Поточна робота: гілка `feature/cleaning` (модуль «Очищення», CLAUDE.md розд. 11)
 

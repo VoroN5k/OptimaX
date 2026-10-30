@@ -42,6 +42,9 @@ pub struct Settings {
     /// Очищення диска.
     #[serde(default)]
     pub cleanup: CleanupSettings,
+    /// Перевіряти оновлення при запуску (мережевий запит до GitHub; за замовчуванням вимкнено).
+    #[serde(default)]
+    pub update_check_on_start: bool,
 }
 
 /// Налаштування очищення.
@@ -87,6 +90,7 @@ impl Default for Settings {
             upscale: optimax_upscale::UpscaleSettings::default(),
             upscale_hotkey: true,
             cleanup: CleanupSettings::default(),
+            update_check_on_start: false,
         }
     }
 }

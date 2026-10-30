@@ -1,4 +1,5 @@
 // Глобальний стан інтерфейсу (руни Svelte 5).
+import type { UpdateStatus } from "./bindings/UpdateStatus";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { ExecProgress } from "./bindings/ExecProgress";
 import type { ExecView } from "./bindings/ExecView";
@@ -33,6 +34,8 @@ export const ui = $state({
   gamemodeWatching: false,
   /** Іде запис frametime / A/B-бенчмарк — анімація вимикається. */
   measuring: false,
+  /** Результат останньої перевірки оновлень (за кнопкою або при запуску, якщо дозволено). */
+  update: null as UpdateStatus | null,
 });
 
 export const log = $state({ lines: [] as LogLine[] });

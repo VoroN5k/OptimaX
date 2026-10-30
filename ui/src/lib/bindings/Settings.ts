@@ -35,4 +35,8 @@ upscale_hotkey: boolean,
 /**
  * Очищення диска.
  */
-cleanup: CleanupSettings, };
+cleanup: CleanupSettings, 
+/**
+ * Перевіряти оновлення при запуску (мережевий запит до GitHub; за замовчуванням вимкнено).
+ */
+update_check_on_start: boolean, };

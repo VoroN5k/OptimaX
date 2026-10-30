@@ -91,6 +91,21 @@
 - Не перевірено на реальному Windows: що Explorer поважає наш запис при наступному вході й що
   Диспетчер задач показує зміну — чекліст у звіті.
 
+## 2f. Оновлення з програми (не закомічено)
+
+- `tauri-plugin-updater` ~2.13.3 (2.14.1 свідомо не взято — 2 дні від виходу). Ініціалізація в
+  `lib.rs`, конфіг — `plugins.updater` у `tauri.conf.json` (endpoint
+  `releases/latest/download/latest.json`, `installMode: passive`), `createUpdaterArtifacts: true`.
+- **`pubkey` поки `REPLACE_WITH_PUBLIC_KEY`** — користувач має згенерувати ключ
+  (`docs/RELEASE.md`, крок 0) і вставити публічний. До того перевірка оновлень не працює.
+- `commands/update.rs`: `update_check`, `update_install(version)` (повторно перевіряє версію й
+  адресу, лише для встановленої копії), `update_open_page`. «Встановлено» = тека exe збігається
+  з `InstallLocation` у ключі `Uninstall\OptimaX` (HKLM або HKCU); портативний exe Tauri теж
+  позначає як nsis, тому за типом бандла визначати не можна.
+- `require_signed_version` (захист від даунгрейду) не ввімкнено: невідомо, чи CLI 2.12.4 пише
+  версію в підпис — перевірити `.sig` після першої підписаної збірки.
+- Налаштування `update_check_on_start` (за замовчуванням false).
+
 ## 3. Поточна робота: гілка `feature/cleaning` (модуль «Очищення», CLAUDE.md розд. 11)
 
 Стан: реалізовано, **не закомічено** (комітить користувач). Перевірки зелені (fmt, clippy

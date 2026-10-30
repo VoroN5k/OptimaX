@@ -11,7 +11,8 @@
     "tauri": "tauri",
     "app:dev": "cd ../crates/app && tauri dev",
     "app:build": "cd ../crates/app && tauri build --no-bundle",
-    "app:bundle": "cd ../crates/app && tauri build --bundles nsis"
+    "app:bundle": "cd ../crates/app && tauri build --bundles nsis",
+    "release:latest": "node scripts/latest-json.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.1",

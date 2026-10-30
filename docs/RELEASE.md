@@ -34,6 +34,25 @@ Visual Studio Build Tools з «Desktop development with C++», Node.js 22 (`node
 **Сторінка репозиторію** — `README.md` (що це, вимоги, посилання на Releases). Перед
 релізом перевір, що опис «Що вміє» відповідає тому, що реально є в збірці.
 
+**Оновлення з програми: репозиторій має бути публічним** — інакше програма друзів не
+дістане `latest.json` (для приватних репозиторіїв плагін Tauri цього не описує).
+
+**Ключ підпису оновлень (один раз).** Інсталятор, який програма завантажує сама, перевіряється
+за цифровим підписом; публічний ключ вшитий у програму, приватний — лише в тебе.
+
+```powershell
+cd ui
+npm run tauri signer generate -- -w "$env:USERPROFILE\.tauri\optimax.key"
+cd ..
+```
+
+- Команда спитає пароль і створить `optimax.key` (приватний) і `optimax.key.pub` (публічний).
+- Вміст `optimax.key.pub` встав у `crates/app/tauri.conf.json` → `plugins.updater.pubkey`
+  (замість `REPLACE_WITH_PUBLIC_KEY`) і закоміть — публічний ключ не секрет.
+- **Приватний ключ і пароль — нікому й нікуди в git.** Збережи копію в надійному місці
+  (менеджер паролів, зашифрована флешка). **Загубиш ключ — уже встановлені копії більше не
+  зможуть оновитися з програми**: друзям доведеться один раз перевстановити вручну.
+
 ---
 
 ## 1. Номер версії
@@ -43,13 +62,12 @@ Visual Studio Build Tools з «Desktop development with C++», Node.js 22 (`node
 - `crates/app/tauri.conf.json` → `"version"`;
 - `ui/package.json` → `"version"`.
 
-Для бет простіше лишити в цих файлах числову версію (`0.1.0` — її видно внизу сайдбара),
-а позначку «бета» давати тегом і назвою релізу: `v0.1.0-beta.1`, `v0.1.0-beta.2`, …
-Коли бета стане стабільною — `v0.1.0` без суфікса; наступна серія — версія `0.2.0`
-у трьох файлах і теги `v0.2.0-beta.N`.
+**Кожен реліз — нова числова версія** (`0.1.1` → `0.1.2` → …), тег — `v` + версія
+(`v0.1.2`). Саме так програма будує адресу інсталятора, а оновлення з'являється лише тоді,
+коли версія на GitHub більша за встановлену. Позначка «бета» — лише в назві й описі релізу.
 
-> Версію з суфіксом (`0.1.0-beta.1`) прямо в файлах ще не перевіряли зі збіркою Tauri
-> (Windows записує у властивості exe лише числа). Якщо захочеш — спершу пробна збірка.
+> Старі теги `v0.1.0-beta.1` лишаються як є, але нові релізи з суфіксом у тезі програма не
+> знайде. Версію з суфіксом прямо в файлах зі збіркою Tauri не перевіряли.
 
 ---
 
@@ -84,7 +102,7 @@ cd ..
 ```markdown
 ## [Unreleased]
 
-## [0.1.0-beta.1] - 2026-10-30
+## [0.1.2] - 2026-10-31
 
 ### Додано
 ...
@@ -94,7 +112,7 @@ cd ..
 
 ```powershell
 git add CHANGELOG.md
-git commit -m "chore: release 0.1.0-beta.1"
+git commit -m "chore: release 0.1.2"
 git push
 ```
 
@@ -103,10 +121,19 @@ git push
 ## 4. Збірка
 
 ```powershell
+# Приватний ключ підпису — лише в цьому вікні PowerShell (файли .env не працюють).
+$env:TAURI_SIGNING_PRIVATE_KEY = "$env:USERPROFILE\.tauri\optimax.key"
+$p = Read-Host "Пароль ключа" -AsSecureString   # працює і в PowerShell 5.1, і в 7
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+  [Runtime.InteropServices.Marshal]::SecureStringToBSTR($p))
 cd ui
 npm run app:bundle
+npm run release:latest   # release\latest.json з підписом і описом із CHANGELOG
 cd ..
 ```
+
+Без ключа збірка інсталятора зупиниться з помилкою підпису — це навмисно
+(`createUpdaterArtifacts: true`): реліз без підпису оновити з програми неможливо.
 
 `app:bundle` — це `tauri build --bundles nsis`: Tauri сам запускає `npm run build`
 (фронтенд), потім `cargo build --release`, потім NSIS. Результат:
@@ -114,6 +141,8 @@ cd ..
 ```
 target\release\optimax.exe                                   портативний exe (≈ 15 МБ)
 target\release\bundle\nsis\OptimaX_0.1.0_x64-setup.exe        інсталятор (≈ 3,7 МБ)
+target\release\bundle\nsis\OptimaX_0.1.0_x64-setup.exe.sig    підпис інсталятора
+release\latest.json                                           опис оновлення для програми
 ```
 
 Повторна збірка — ≈ 1,5 хв. Налаштування інсталятора — `bundle` у
@@ -140,7 +169,7 @@ target\release\bundle\nsis\OptimaX_0.1.0_x64-setup.exe        інсталято
 ## 5. Файли релізу й контрольні суми
 
 ```powershell
-$v = "0.1.0-beta.1"
+$v = "0.1.2"
 $dir = "release\OptimaX-$v"
 New-Item -ItemType Directory -Force $dir | Out-Null
 Copy-Item target\release\optimax.exe "$dir\OptimaX.exe"
@@ -149,6 +178,10 @@ Compress-Archive -Path "$dir\*" -DestinationPath "release\OptimaX-$v-win-x64.zip
 Copy-Item target\release\bundle\nsis\OptimaX_*_x64-setup.exe "release\OptimaX-$v-win-x64-setup.exe"
 Get-FileHash "release\OptimaX-$v-win-x64-setup.exe", "release\OptimaX-$v-win-x64.zip" -Algorithm SHA256
 ```
+
+- **Ім'я інсталятора не змінюй**: `latest.json` посилається саме на
+  `OptimaX-<версія>-win-x64-setup.exe` у релізі з тегом `v<версія>`. Перейменування не псує
+  підпис — підписано вміст файлу, а не ім'я.
 
 - `THIRD_PARTY_LICENSES` **обов'язково** кладемо поруч: ліцензія PresentMon (MIT) і шрифтів
   (OFL) вимагає передавати їхній текст разом із програмою (в інсталяторі це вже налаштовано).
@@ -162,23 +195,24 @@ Get-FileHash "release\OptimaX-$v-win-x64-setup.exe", "release\OptimaX-$v-win-x64
 **Тег** (позначає коміт, з якого зібрано exe):
 
 ```powershell
-git tag -a v0.1.0-beta.1 -m "OptimaX 0.1.0-beta.1"
-git push origin v0.1.0-beta.1
+git tag -a v0.1.2 -m "OptimaX 0.1.2"
+git push origin v0.1.2
 ```
 
 **Реліз через сайт:**
 1. `https://github.com/VoroN5k/OptimaX/releases` → **Draft a new release**.
-2. **Choose a tag** → `v0.1.0-beta.1`.
-3. **Release title**: `OptimaX 0.1.0 beta 1`.
+2. **Choose a tag** → `v0.1.2`.
+3. **Release title**: `OptimaX 0.1.2 beta`.
 4. Опис — шаблон нижче.
-5. Перетягни `release\OptimaX-0.1.0-beta.1-win-x64-setup.exe` і
-   `release\OptimaX-0.1.0-beta.1-win-x64.zip` у поле **Attach binaries**.
-6. Постав галочку **Set as a pre-release** (GitHub позначить реліз як бету).
+5. Перетягни в поле **Attach binaries** (не в текст опису!) три файли:
+   `release\OptimaX-0.1.2-win-x64-setup.exe`, `release\OptimaX-0.1.2-win-x64.zip`,
+   `release\latest.json`.
+6. Галочку **Set as a pre-release** **не** став: програма шукає оновлення за адресою
+   `releases/latest/download/latest.json`, а вона веде лише на звичайні релізи.
 7. **Publish release**.
 
-Посилання для друзів: `https://github.com/VoroN5k/OptimaX/releases/latest` веде лише на
-стабільні релізи, тож для бет давай пряме посилання на реліз:
-`https://github.com/VoroN5k/OptimaX/releases/tag/v0.1.0-beta.1`.
+Посилання для друзів одне назавжди: `https://github.com/VoroN5k/OptimaX/releases/latest`.
+Хто вже встановив інсталятором — побачить оновлення в «Налаштування → Оновлення».
 
 **Шаблон опису:**
 
@@ -191,8 +225,8 @@ git push origin v0.1.0-beta.1
 - права адміністратора (Windows спитає при запуску)
 
 ### Як встановити
-- **Інсталятор:** завантаж `OptimaX-0.1.0-beta.1-win-x64-setup.exe` і запусти.
-- **Без встановлення:** завантаж `OptimaX-0.1.0-beta.1-win-x64.zip`, розпакуй у будь-яку
+- **Інсталятор:** завантаж `OptimaX-0.1.2-win-x64-setup.exe` і запусти.
+- **Без встановлення:** завантаж `OptimaX-0.1.2-win-x64.zip`, розпакуй у будь-яку
   теку, запусти `OptimaX.exe`.
 
 Windows може показати «Windows захистив ваш ПК» — програма не підписана сертифікатом.
@@ -202,12 +236,12 @@ Windows може показати «Windows захистив ваш ПК» — �
 (вставити розділ з CHANGELOG.md)
 
 ### SHA-256
-- `OptimaX-0.1.0-beta.1-win-x64-setup.exe`: `<хеш із кроку 5>`
-- `OptimaX-0.1.0-beta.1-win-x64.zip`: `<хеш із кроку 5>`
+- `OptimaX-0.1.2-win-x64-setup.exe`: `<хеш із кроку 5>`
+- `OptimaX-0.1.2-win-x64.zip`: `<хеш із кроку 5>`
 ```
 
 > Через GitHub CLI (необов'язково): `winget install GitHub.cli`, `gh auth login`, далі
-> `gh release create v0.1.0-beta.1 release\OptimaX-0.1.0-beta.1-win-x64-setup.exe release\OptimaX-0.1.0-beta.1-win-x64.zip --prerelease --title "OptimaX 0.1.0 beta 1" --notes-file release\notes.md`.
+> `gh release create v0.1.2 release\OptimaX-0.1.2-win-x64-setup.exe release\OptimaX-0.1.2-win-x64.zip release\latest.json --title "OptimaX 0.1.2 beta" --notes-file release\notes.md`.
 
 ---
 

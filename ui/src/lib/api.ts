@@ -39,6 +39,8 @@ import type { StartupEntry } from "./bindings/StartupEntry";
 import type { StartupReport } from "./bindings/StartupReport";
 import type { Text } from "./bindings/Text";
 import type { UiDesired } from "./bindings/UiDesired";
+import type { UpdateProgress } from "./bindings/UpdateProgress";
+import type { UpdateStatus } from "./bindings/UpdateStatus";
 import type { UpscaleView } from "./bindings/UpscaleView";
 
 /** Помилка команди (те, що повертає бекенд, або транспортна). */
@@ -55,6 +57,11 @@ export const api = {
   feedbackReport: () => invoke<string>("feedback_report"),
   /** Записи автозапуску з поточним станом і навантаженням. */
   startupList: () => invoke<StartupEntry[]>("startup_list"),
+  /** Перевірка оновлень (запит до GitHub). */
+  updateCheck: () => invoke<UpdateStatus>("update_check"),
+  /** Завантажує й запускає інсталятор; програма закриється. */
+  updateInstall: (version: string) => invoke<void>("update_install", { version }),
+  updateOpenPage: () => invoke<void>("update_open_page"),
   feedbackReveal: (path: string) => invoke<void>("feedback_reveal", { path }),
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
@@ -136,6 +143,7 @@ type Events = {
   "net-error": CmdError;
   "cleanup-progress": ScanProgress;
   "cleanup-scan-partial": ScanView;
+  "update-progress": UpdateProgress;
   "cleanup-scan-done": ScanView;
   "cleanup-exec-progress": ExecProgress;
   "cleanup-exec-done": ExecView;

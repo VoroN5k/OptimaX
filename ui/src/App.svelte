@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, on } from "./lib/api";
+  import { api, asCmdError, on } from "./lib/api";
+  import { tk } from "./lib/i18n";
   import type { DotsStats } from "./lib/dots";
   import { rememberSplash } from "./lib/splash";
   import { cl, flashBg, gm, logLocal, pushLog, ui, up } from "./lib/state.svelte";
@@ -24,6 +25,16 @@
   let dotsStats = $state<DotsStats | null>(null);
 
   onMount(() => {
+    // Перевірка оновлень при запуску — лише якщо користувач сам її ввімкнув (мережевий запит).
+    if (ui.settings.update_check_on_start) {
+      void api
+        .updateCheck()
+        .then((s) => {
+          ui.update = s;
+          if (s.available) logLocal("info", tk("ui.update.available_log", { v: s.available.version }));
+        })
+        .catch((e) => logLocal("warn", tk("ui.update.check_failed", { message: asCmdError(e).message })));
+    }
     void api.upscaleState().then((v) => {
       up.view = v;
     });

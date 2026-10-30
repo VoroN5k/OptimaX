@@ -119,6 +119,40 @@ impl From<UiDesired> for optimax_tweaks::Desired {
     }
 }
 
+/// Нова версія на GitHub Releases.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct AvailableUpdate {
+    /// Версія.
+    pub version: String,
+    /// Що нового (текст із latest.json).
+    pub notes: Option<String>,
+    /// Дата публікації (РРРР-ММ-ДД).
+    pub date: Option<String>,
+}
+
+/// Результат перевірки оновлень.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct UpdateStatus {
+    /// Поточна версія.
+    pub current: String,
+    /// Новіша версія (`None` — встановлено останню).
+    pub available: Option<AvailableUpdate>,
+    /// Цю копію встановив інсталятор (лише її можна оновити з програми).
+    pub installed: bool,
+}
+
+/// Прогрес завантаження оновлення.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct UpdateProgress {
+    /// Завантажено, байт.
+    pub downloaded: u64,
+    /// Розмір, байт (якщо сервер його повідомив).
+    pub total: Option<u64>,
+}
+
 /// Чому перемикача автозапуску немає.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]

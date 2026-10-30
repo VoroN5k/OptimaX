@@ -72,6 +72,8 @@ fn export_typescript_bindings() {
         PowerSchemes,
         UiDesired,
         StartupEntry,
+        UpdateStatus,
+        UpdateProgress,
         PlanHandle,
         ApplyResult,
         optimax_tweaks::JournalEntry,

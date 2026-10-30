@@ -31,7 +31,7 @@ pub fn run() -> anyhow::Result<()> {
 mod app {
     use crate::commands::{
         ab, audit, cleanup, diagnosis, feedback, gamemode, laptop, metrics, network, startup,
-        system, tweaks, upscale,
+        system, tweaks, update, upscale,
     };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
@@ -149,6 +149,7 @@ mod app {
         let state = AppState::new()?;
         let app = tauri::Builder::default()
             .manage(state)
+            .plugin(tauri_plugin_updater::Builder::new().build())
             .setup(move |app| {
                 let handle = app.handle().clone();
                 std::thread::Builder::new()
@@ -184,6 +185,9 @@ mod app {
                 system::app_info,
                 feedback::feedback_report,
                 startup::startup_list,
+                update::update_check,
+                update::update_install,
+                update::update_open_page,
                 feedback::feedback_reveal,
                 system::get_catalog,
                 system::startup_report,

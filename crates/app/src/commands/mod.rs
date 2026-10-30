@@ -12,6 +12,7 @@ pub mod network;
 pub mod startup;
 pub mod system;
 pub mod tweaks;
+pub mod update;
 pub mod upscale;
 
 use crate::error::{CmdError, CmdResult};

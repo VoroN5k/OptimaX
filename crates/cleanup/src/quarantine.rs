@@ -298,6 +298,15 @@ impl<'a> Quarantine<'a> {
         Ok(out)
     }
 
+    /// Тека партії — справжній каталог: жоден компонент шляху не веде через junction/symlink.
+    /// Індекс лежить у теці, доступній на запис без прав адміністратора, тож шлях із нього може
+    /// бути підробленим.
+    fn is_real_dir(&self, dir: &str) -> bool {
+        self.fs
+            .canonicalize(dir)
+            .is_ok_and(|c| path::eq_ci(&c, dir))
+    }
+
     fn restore_one(&self, dir: &str, e: &QuarantineEntry, rules: &RuleSet) -> Result<(), String> {
         let original = path::normalize(&e.original).map_err(|x| x.to_string())?;
         let cls = rules.classify(&original);
@@ -308,7 +317,7 @@ impl<'a> Quarantine<'a> {
         if !rule_ok || !rules.guard().allows_delete(&original) {
             return Err("шлях більше не відповідає правилу".into());
         }
-        if !stored_in(dir, &e.stored) {
+        if !stored_in(dir, &e.stored) || !self.is_real_dir(dir) {
             return Err("файл карантину поза текою карантину".into());
         }
         if self.fs.metadata(&original).is_ok() {
@@ -341,8 +350,9 @@ impl<'a> Quarantine<'a> {
         let batch = self.batches[idx].clone();
         let mut out = BatchOutcome::default();
         let mut left = Vec::new();
+        let real_dir = self.is_real_dir(&batch.dir);
         for e in batch.entries {
-            let inside = stored_in(&batch.dir, &e.stored);
+            let inside = real_dir && stored_in(&batch.dir, &e.stored);
             let plain = self
                 .fs
                 .metadata(&e.stored)
@@ -520,5 +530,54 @@ mod tests {
         assert_eq!(res.quarantined_bytes, 100);
         assert!(fs.exists(&format!(r"{DX}\a.nvph")));
         assert_eq!(q.batches()[0].entries.len(), 1);
+    }
+
+    /// Індекс карантину лежить у теці, куди може писати процес без прав адміністратора.
+    /// Підроблена партія з junction у шляху не повинна чіпати файли поза карантином.
+    fn forged_index(fs: &MemFs) -> Quarantine<'_> {
+        let evil = r"C:\Users\Test\AppData\Local\Temp\Quarantine\x";
+        fs.add_file(r"C:\Windows\System32\kernel32.dll", 10, 0)
+            .add_link(evil, r"C:\Windows\System32", true);
+        let batch = QuarantineBatch {
+            id: "x".into(),
+            created_unix: 0,
+            expires_unix: 0,
+            dir: evil.into(),
+            same_volume: true,
+            state: BatchState::Active,
+            entries: vec![QuarantineEntry {
+                original: format!(r"{DX}\a.nvph"),
+                stored: format!(r"{evil}\kernel32.dll"),
+                bytes: 10,
+                rule_id: "nvidia_shader_cache".into(),
+            }],
+        };
+        fs.write_text_atomic(INDEX, &serde_json::to_string(&[batch]).unwrap())
+            .unwrap();
+        Quarantine::open(
+            fs,
+            INDEX,
+            r"C:\Users\Test\AppData\Local\OptimaX\Quarantine",
+            7,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn forged_batch_through_junction_is_not_purged() {
+        let fs = MemFs::new();
+        let mut q = forged_index(&fs);
+        let _ = q.purge("x");
+        assert!(fs.exists(r"C:\Windows\System32\kernel32.dll"));
+    }
+
+    #[test]
+    fn forged_batch_through_junction_is_not_restored() {
+        let (fs, rs) = setup();
+        fs.remove_file(&format!(r"{DX}\a.nvph")).unwrap();
+        let mut q = forged_index(&fs);
+        let _ = q.restore("x", &rs);
+        assert!(fs.exists(r"C:\Windows\System32\kernel32.dll"));
+        assert!(!fs.exists(&format!(r"{DX}\a.nvph")));
     }
 }

@@ -446,6 +446,25 @@ impl MemFs {
         Ok(cur)
     }
 
+    /// Справжній шлях об'єкта для операції над ним самим (`DeleteFile`, `MoveFile`,
+    /// `symlink_metadata`): проміжні посилання й короткі імена розкриваються, як у справжній ОС,
+    /// останній компонент — ні (видаляється чи переміщується саме посилання, а не ціль).
+    fn locate(st: &MemState, p: &str) -> String {
+        let Ok(norm) = path::normalize(p) else {
+            return p.to_string();
+        };
+        let real = match path::parent(&norm).map(|parent| Self::resolve(st, parent)) {
+            Some(Ok(dir)) => path::join(&dir, path::file_name(&norm)),
+            _ => norm,
+        };
+        st.aliases.get(&path::key(&real)).cloned().unwrap_or(real)
+    }
+
+    /// Шлях для операції, що слідує й за останнім посиланням (читання, копіювання вмісту).
+    fn follow(st: &MemState, p: &str) -> String {
+        Self::resolve(st, p).unwrap_or_else(|_| Self::locate(st, p))
+    }
+
     fn mutate(st: &mut MemState, op: String) {
         st.mutations.push(op);
     }
@@ -480,8 +499,7 @@ impl FsApi for MemFs {
 
     fn metadata(&self, p: &str) -> Result<Meta, FsError> {
         let st = self.st();
-        let key = path::key(p);
-        let key = st.aliases.get(&key).map(|r| path::key(r)).unwrap_or(key);
+        let key = path::key(&Self::locate(&st, p));
         st.nodes.get(&key).map(Self::meta_of).ok_or_else(|| nf(p))
     }
 
@@ -491,7 +509,8 @@ impl FsApi for MemFs {
 
     fn remove_file(&self, p: &str) -> Result<(), FsError> {
         let mut st = self.st();
-        let key = path::key(p);
+        let real = Self::locate(&st, p);
+        let key = path::key(&real);
         match st.nodes.get(&key) {
             Some(n) if n.locked => Err(FsError::new(FsErrorKind::Busy, p.to_string())),
             Some(MemNode {
@@ -499,7 +518,7 @@ impl FsApi for MemFs {
                 ..
             }) => {
                 st.nodes.remove(&key);
-                Self::mutate(&mut st, format!("remove_file {p}"));
+                Self::mutate(&mut st, format!("remove_file {real}"));
                 Ok(())
             }
             Some(_) => Err(FsError::new(FsErrorKind::Other, format!("{p}: не файл"))),
@@ -509,7 +528,8 @@ impl FsApi for MemFs {
 
     fn remove_empty_dir(&self, p: &str) -> Result<(), FsError> {
         let mut st = self.st();
-        let key = path::key(p);
+        let real = Self::locate(&st, p);
+        let key = path::key(&real);
         match st.nodes.get(&key) {
             Some(MemNode {
                 kind: MemKind::Dir, ..
@@ -518,7 +538,7 @@ impl FsApi for MemFs {
                     return Err(FsError::new(FsErrorKind::NotEmpty, p.to_string()));
                 }
                 st.nodes.remove(&key);
-                Self::mutate(&mut st, format!("remove_dir {p}"));
+                Self::mutate(&mut st, format!("remove_dir {real}"));
                 Ok(())
             }
             Some(_) => Err(FsError::new(FsErrorKind::Other, format!("{p}: не каталог"))),
@@ -528,7 +548,8 @@ impl FsApi for MemFs {
 
     fn rename(&self, from: &str, to: &str) -> Result<(), FsError> {
         let mut st = self.st();
-        let (fk, tk) = (path::key(from), path::key(to));
+        let (real_from, real_to) = (Self::locate(&st, from), Self::locate(&st, to));
+        let (fk, tk) = (path::key(&real_from), path::key(&real_to));
         let node = st.nodes.get(&fk).cloned().ok_or_else(|| nf(from))?;
         if node.locked {
             return Err(FsError::new(FsErrorKind::Busy, from.to_string()));
@@ -536,7 +557,7 @@ impl FsApi for MemFs {
         if st.nodes.contains_key(&tk) {
             return Err(FsError::new(FsErrorKind::Exists, to.to_string()));
         }
-        let parent_ok = path::parent(to).is_some_and(|p| {
+        let parent_ok = path::parent(&real_to).is_some_and(|p| {
             matches!(
                 st.nodes.get(&path::key(p)),
                 Some(MemNode {
@@ -555,45 +576,50 @@ impl FsApi for MemFs {
         st.nodes.insert(
             tk,
             MemNode {
-                path: to.to_string(),
+                path: real_to.clone(),
                 ..node
             },
         );
-        Self::mutate(&mut st, format!("rename {from} -> {to}"));
+        Self::mutate(&mut st, format!("rename {real_from} -> {real_to}"));
         Ok(())
     }
 
     fn copy_file(&self, from: &str, to: &str) -> Result<u64, FsError> {
-        let node = self
-            .st()
-            .nodes
-            .get(&path::key(from))
-            .cloned()
-            .ok_or_else(|| nf(from))?;
+        let (node, real_to) = {
+            let st = self.st();
+            let node = st
+                .nodes
+                .get(&path::key(&Self::follow(&st, from)))
+                .cloned()
+                .ok_or_else(|| nf(from))?;
+            (node, Self::locate(&st, to))
+        };
         let MemKind::File { len, .. } = node.kind else {
             return Err(FsError::new(FsErrorKind::Other, format!("{from}: не файл")));
         };
-        if self.exists(to) {
+        if self.exists(&real_to) {
             return Err(FsError::new(FsErrorKind::Exists, to.to_string()));
         }
-        if !path::parent(to).is_some_and(|p| self.exists(p)) {
+        if !path::parent(&real_to).is_some_and(|p| self.exists(p)) {
             return Err(nf(to));
         }
-        self.insert(to, node.kind.clone(), node.newest_unix);
-        Self::mutate(&mut self.st(), format!("copy {from} -> {to}"));
+        self.insert(&real_to, node.kind.clone(), node.newest_unix);
+        Self::mutate(&mut self.st(), format!("copy {from} -> {real_to}"));
         Ok(len)
     }
 
     fn create_dir_all(&self, p: &str) -> Result<(), FsError> {
-        if !self.exists(p) {
-            self.insert(p, MemKind::Dir, 0);
-            Self::mutate(&mut self.st(), format!("mkdir {p}"));
+        let real = Self::follow(&self.st(), p);
+        if !self.exists(&real) {
+            self.insert(&real, MemKind::Dir, 0);
+            Self::mutate(&mut self.st(), format!("mkdir {real}"));
         }
         Ok(())
     }
 
     fn read_text(&self, p: &str) -> Result<Option<String>, FsError> {
-        match self.st().nodes.get(&path::key(p)) {
+        let st = self.st();
+        match st.nodes.get(&path::key(&Self::follow(&st, p))) {
             Some(MemNode {
                 kind: MemKind::File { text, .. },
                 ..
@@ -604,15 +630,16 @@ impl FsApi for MemFs {
     }
 
     fn write_text_atomic(&self, p: &str, text: &str) -> Result<(), FsError> {
+        let real = Self::follow(&self.st(), p);
         self.insert(
-            p,
+            &real,
             MemKind::File {
                 len: text.len() as u64,
                 text: Some(text.to_string()),
             },
             0,
         );
-        Self::mutate(&mut self.st(), format!("write {p}"));
+        Self::mutate(&mut self.st(), format!("write {real}"));
         Ok(())
     }
 }
@@ -642,6 +669,25 @@ mod tests {
             fs.read_dir(r"C:\Temp\evil").unwrap()[0].name,
             "kernel32.dll"
         );
+    }
+
+    #[test]
+    fn memfs_operations_follow_intermediate_links_like_windows() {
+        let fs = MemFs::new();
+        fs.add_file(r"C:\Windows\System32\a.dll", 10, 0)
+            .add_file(r"C:\Windows\System32\b.dll", 10, 0)
+            .add_link(r"C:\Temp\evil", r"C:\Windows\System32", true);
+        // `DeleteFileW` / `symlink_metadata` розкривають junction у середині шляху.
+        assert!(!fs.metadata(r"C:\Temp\evil\a.dll").unwrap().reparse);
+        fs.remove_file(r"C:\Temp\evil\a.dll").unwrap();
+        assert!(!fs.exists(r"C:\Windows\System32\a.dll"));
+        fs.add_dir(r"C:\Temp\q");
+        fs.rename(r"C:\Temp\evil\b.dll", r"C:\Temp\q\b.dll")
+            .unwrap();
+        assert!(!fs.exists(r"C:\Windows\System32\b.dll"));
+        assert!(fs.exists(r"C:\Temp\q\b.dll"));
+        // Саме посилання (останній компонент) не розкривається.
+        assert!(fs.metadata(r"C:\Temp\evil").unwrap().reparse);
     }
 
     #[test]

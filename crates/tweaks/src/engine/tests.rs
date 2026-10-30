@@ -679,3 +679,198 @@ fn startup_refuses_system_missing_and_odd_entries() {
         })
     ));
 }
+
+/// Журнал лежить у теці, куди може писати процес без прав адміністратора. Підроблений запис
+/// не повинен змусити OptimaX (з правами адміністратора) записати довільне значення в реєстр.
+mod forged_journal {
+    use super::*;
+
+    const IFEO: &str =
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\sethc.exe";
+
+    fn forged(state: EntryState) -> JournalEntry {
+        JournalEntry {
+            id: 1,
+            tweak_id: "game_mode".into(),
+            target: SettingTarget::Registry {
+                hive: RegHive::LocalMachine,
+                path: IFEO.into(),
+                name: "Debugger".into(),
+            },
+            old: SettingValue::Registry(Some(RegValue::String(r"C:\Users\Test\evil.exe".into()))),
+            new: SettingValue::Registry(None),
+            created_unix: 0,
+            state,
+            restore_point: None,
+        }
+    }
+
+    fn setup(state: EntryState) -> (MemRegistry, MemStore) {
+        let mut reg = registry_with_gamebar(None);
+        // Ключ існує — запис у нього вдався б, тож тест не пройде «випадково».
+        reg.create_key(RegHive::LocalMachine, IFEO);
+        let store = MemStore::new();
+        store.save(&[forged(state)]).unwrap();
+        (reg, store)
+    }
+
+    fn debugger(reg: &MemRegistry) -> Option<RegValue> {
+        reg.read_value(RegHive::LocalMachine, IFEO, "Debugger")
+            .unwrap()
+    }
+
+    #[test]
+    fn pending_entry_with_foreign_target_is_not_written_on_startup() {
+        let (reg, store) = setup(EntryState::Pending);
+        let power = MemPower::new(guids::BALANCED);
+        let restore = CountingRestore::ok();
+        let mut e = Engine::new(&reg, &power, &restore, &store).unwrap();
+        let _ = e.recover_pending();
+        assert_eq!(debugger(&reg), None);
+        assert!(!matches!(
+            store.snapshot()[0].state,
+            EntryState::RolledBack { .. }
+        ));
+    }
+
+    #[test]
+    fn applied_entry_with_foreign_target_is_not_rolled_back() {
+        let (reg, store) = setup(EntryState::Applied);
+        let power = MemPower::new(guids::BALANCED);
+        let restore = CountingRestore::ok();
+        let mut e = Engine::new(&reg, &power, &restore, &store).unwrap();
+        assert!(e.rollback(1).is_err());
+        assert_eq!(debugger(&reg), None);
+    }
+
+    fn entry(
+        tweak: &str,
+        target: SettingTarget,
+        old: SettingValue,
+        new: SettingValue,
+    ) -> JournalEntry {
+        JournalEntry {
+            tweak_id: tweak.into(),
+            target,
+            old,
+            new,
+            ..forged(EntryState::Applied)
+        }
+    }
+
+    fn reg(hive: RegHive, path: &str, name: &str) -> SettingTarget {
+        SettingTarget::Registry {
+            hive,
+            path: path.into(),
+            name: name.into(),
+        }
+    }
+
+    #[test]
+    fn genuine_targets_of_every_tweak_are_accepted() {
+        use crate::startup::StartupSource;
+        use optimax_core::process::{PriorityClass, ProcessInfo};
+        use optimax_core::service::ServiceState;
+        let none = || SettingValue::Registry(None);
+        let ok = [
+            entry(
+                "game_mode",
+                reg(RegHive::CurrentUser, GAME_MODE_KEY, GAME_MODE_VALUE),
+                none(),
+                SettingValue::Registry(Some(RegValue::Dword(1))),
+            ),
+            entry(
+                "gpu_preference",
+                reg(RegHive::CurrentUser, GPU_PREF_KEY, r"D:\Games\game.exe"),
+                none(),
+                SettingValue::Registry(Some(RegValue::String("GpuPreference=2;".into()))),
+            ),
+            entry(
+                "startup_app",
+                reg(
+                    RegHive::LocalMachine,
+                    &StartupSource::MachineRun32.approved_key(),
+                    "Steam",
+                ),
+                none(),
+                SettingValue::Registry(Some(RegValue::Binary(vec![3; 12]))),
+            ),
+            entry(
+                "power_scheme",
+                SettingTarget::PowerScheme,
+                SettingValue::PowerScheme(guids::BALANCED.into()),
+                SettingValue::PowerScheme(guids::HIGH_PERFORMANCE.into()),
+            ),
+            entry(
+                "process_priority",
+                SettingTarget::ProcessPriority {
+                    process: ProcessInfo {
+                        pid: 42,
+                        name: "chrome.exe".into(),
+                        start_time: 1,
+                    },
+                },
+                SettingValue::Priority(PriorityClass::Normal),
+                SettingValue::Priority(PriorityClass::BelowNormal),
+            ),
+            entry(
+                "service",
+                SettingTarget::Service {
+                    name: "WSearch".into(),
+                },
+                SettingValue::Service(ServiceState::Running),
+                SettingValue::Service(ServiceState::Stopped),
+            ),
+        ];
+        for e in &ok {
+            assert!(is_known_target(e), "{}", e.target.location());
+        }
+    }
+
+    #[test]
+    fn mismatched_tweak_target_or_type_is_rejected() {
+        let bad = [
+            // Ключ ігрового режиму, але інше значення.
+            entry(
+                "game_mode",
+                reg(RegHive::CurrentUser, GAME_MODE_KEY, "Debugger"),
+                SettingValue::Registry(None),
+                SettingValue::Registry(Some(RegValue::Dword(1))),
+            ),
+            // Правильний ключ, але рядок замість DWORD.
+            entry(
+                "game_mode",
+                reg(RegHive::CurrentUser, GAME_MODE_KEY, GAME_MODE_VALUE),
+                SettingValue::Registry(Some(RegValue::String("x".into()))),
+                SettingValue::Registry(None),
+            ),
+            // Ціль іншого твіку під чужим ідентифікатором.
+            entry(
+                "power_scheme",
+                SettingTarget::Service {
+                    name: "WSearch".into(),
+                },
+                SettingValue::Service(optimax_core::service::ServiceState::Running),
+                SettingValue::Service(optimax_core::service::ServiceState::Stopped),
+            ),
+            // Служба поза списком дозволених.
+            entry(
+                "service",
+                SettingTarget::Service {
+                    name: "MpsSvc".into(),
+                },
+                SettingValue::Service(optimax_core::service::ServiceState::Stopped),
+                SettingValue::Service(optimax_core::service::ServiceState::Running),
+            ),
+            entry(
+                "unknown_tweak",
+                SettingTarget::PowerScheme,
+                SettingValue::PowerScheme(guids::BALANCED.into()),
+                SettingValue::PowerScheme(guids::BALANCED.into()),
+            ),
+        ];
+        for e in &bad {
+            assert!(!is_known_target(e), "{}", e.target.location());
+        }
+    }
+}

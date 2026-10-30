@@ -1,6 +1,6 @@
 //! Застосування й відкат змін із журналом.
 
-use crate::catalog::{Desired, GpuPref};
+use crate::catalog::{Desired, GpuPref, TweakId};
 use crate::change::{
     describe_power_mode, describe_registry, describe_scheme, describe_service, Plan, PlannedChange,
     SettingTarget, SettingValue,
@@ -20,6 +20,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const GAME_MODE_KEY: &str = r"Software\Microsoft\GameBar";
 /// Значення ігрового режиму (REG_DWORD: 1 — увімкнено, 0 — вимкнено, відсутнє — увімкнено).
 pub const GAME_MODE_VALUE: &str = "AutoGameModeEnabled";
+/// Ключ вибору GPU для exe.
+const GPU_PREF_KEY: &str = r"Software\Microsoft\DirectX\UserGpuPreferences";
 /// Опис точки відновлення.
 pub const RESTORE_POINT_DESCRIPTION: &str = "OptimaX: перед зміною налаштувань";
 
@@ -57,6 +59,47 @@ fn now_unix() -> i64 {
 /// Ціль, що зникає сама (процес завершився) — тоді відкочувати нічого.
 fn is_ephemeral(target: &SettingTarget) -> bool {
     matches!(target, SettingTarget::ProcessPriority { .. })
+}
+
+/// Запис журналу веде саме туди, куди рушій пише для цього твіку, і з тим самим типом значення.
+/// Журнал лежить у теці, доступній на запис без прав адміністратора, тому перед відкатом
+/// (запис із правами адміністратора) підроблений запис не має вести до довільного ключа чи служби.
+fn is_known_target(entry: &JournalEntry) -> bool {
+    let reg_values = |ok: fn(&RegValue) -> bool| {
+        [&entry.old, &entry.new].into_iter().all(|v| match v {
+            SettingValue::Registry(v) => v.as_ref().is_none_or(ok),
+            _ => false,
+        })
+    };
+    match (TweakId::parse(&entry.tweak_id), &entry.target) {
+        (Some(TweakId::GameMode), SettingTarget::Registry { hive, path, name }) => {
+            *hive == RegHive::CurrentUser
+                && path == GAME_MODE_KEY
+                && name == GAME_MODE_VALUE
+                && reg_values(|v| matches!(v, RegValue::Dword(_)))
+        }
+        (Some(TweakId::GpuPreference), SettingTarget::Registry { hive, path, name }) => {
+            *hive == RegHive::CurrentUser
+                && path == GPU_PREF_KEY
+                && !name.is_empty()
+                && reg_values(|v| matches!(v, RegValue::String(_)))
+        }
+        (Some(TweakId::StartupApp), SettingTarget::Registry { hive, path, name }) => {
+            StartupSource::ALL
+                .iter()
+                .any(|s| s.hive() == *hive && s.approved_key() == *path)
+                && !name.is_empty()
+                && reg_values(|v| matches!(v, RegValue::Binary(_)))
+        }
+        (Some(TweakId::PowerScheme), SettingTarget::PowerScheme)
+        | (Some(TweakId::StandbyPurge), SettingTarget::StandbyList)
+        | (Some(TweakId::PowerMode), SettingTarget::PowerMode) => true,
+        (Some(TweakId::ProcessPriority), SettingTarget::ProcessPriority { process }) => {
+            !is_protected_process(&process.name)
+        }
+        (Some(TweakId::Service), SettingTarget::Service { name }) => is_stoppable_service(name),
+        _ => false,
+    }
 }
 
 /// Рушій змін. Одна «сесія» = один екземпляр: точка відновлення створюється перед першою зміною.
@@ -341,7 +384,6 @@ impl<'a> Engine<'a> {
                 exe_path,
                 preference,
             } => {
-                const GPU_PREF_KEY: &str = r"Software\Microsoft\DirectX\UserGpuPreferences";
                 let target = SettingTarget::Registry {
                     hive: RegHive::CurrentUser,
                     path: GPU_PREF_KEY.into(),
@@ -604,6 +646,12 @@ impl<'a> Engine<'a> {
             .find(|e| e.id == id && e.state == EntryState::Applied)
             .cloned()
             .ok_or(TweakError::NoSuchEntry(id))?;
+        if !is_known_target(&entry) {
+            return Err(TweakError::Forbidden(format!(
+                "запис #{id} ({}) не відповідає жодному твіку OptimaX — не відкочуємо",
+                entry.target.location()
+            )));
+        }
         match self.read(&entry.target) {
             Ok(current) if current != entry.new => {
                 return Err(TweakError::Conflict {
@@ -655,6 +703,19 @@ impl<'a> Engine<'a> {
             .cloned()
             .collect();
         for entry in &pending {
+            if !is_known_target(entry) {
+                tracing::warn!(
+                    "запис журналу #{} ({}) не відповідає жодному твіку OptimaX — пропущено",
+                    entry.id,
+                    entry.target.location()
+                );
+                if let Some(e) = self.entries.iter_mut().find(|e| e.id == entry.id) {
+                    e.state = EntryState::Failed {
+                        error: "запис не відповідає жодному твіку OptimaX — не виконано".into(),
+                    };
+                }
+                continue;
+            }
             let current = match self.read(&entry.target) {
                 Ok(v) => v,
                 Err(TweakError::Core(CoreError::NotFound(_))) if is_ephemeral(&entry.target) => {

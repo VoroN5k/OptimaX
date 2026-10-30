@@ -82,6 +82,8 @@ impl SkipReason {
             FsErrorKind::Busy => Self::Busy,
             FsErrorKind::Denied => Self::Denied,
             FsErrorKind::NotFound => Self::Gone,
+            FsErrorKind::Redirected => Self::Redirected,
+            FsErrorKind::Reparse => Self::Reparse,
             _ => Self::Error(message.to_string()),
         }
     }

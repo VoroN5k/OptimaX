@@ -4,7 +4,9 @@
 //! points: метадані беруться без розіменування, а за каталогом-посиланням обхід не йде.
 
 use crate::path;
+use optimax_core::safefs::{self, SafeFsError};
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Тип об'єкта.
@@ -51,6 +53,10 @@ pub enum FsErrorKind {
     NotEmpty,
     /// Ціль уже існує.
     Exists,
+    /// Шлях у момент операції вів не туди (junction, symlink, 8.3 по дорозі).
+    Redirected,
+    /// Сам об'єкт — reparse point.
+    Reparse,
     /// Інше.
     Other,
 }
@@ -124,6 +130,15 @@ fn io_err(e: &std::io::Error, what: &str) -> FsError {
     FsError::new(kind, format!("{what}: {e}"))
 }
 
+fn safe_err(e: SafeFsError, what: &str) -> FsError {
+    match e {
+        SafeFsError::Io(e) => io_err(&e, what),
+        SafeFsError::Redirected { .. } => FsError::new(FsErrorKind::Redirected, e.to_string()),
+        SafeFsError::Reparse(_) => FsError::new(FsErrorKind::Reparse, e.to_string()),
+        SafeFsError::WrongKind(_) => FsError::new(FsErrorKind::Other, e.to_string()),
+    }
+}
+
 fn unix(t: std::io::Result<std::time::SystemTime>) -> i64 {
     t.ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -186,26 +201,23 @@ impl FsApi for StdFs {
         Ok(path::normalize(s).unwrap_or_else(|_| s.to_string()))
     }
 
+    // Змінювальні операції — через дескриптор зі звіркою справжнього шляху (`safefs`): підміна
+    // проміжної теки на junction між перевіркою й операцією не переведе її на інший об'єкт.
+
     fn remove_file(&self, path: &str) -> Result<(), FsError> {
-        std::fs::remove_file(path).map_err(|e| io_err(&e, path))
+        safefs::delete_file(Path::new(path)).map_err(|e| safe_err(e, path))
     }
 
     fn remove_empty_dir(&self, path: &str) -> Result<(), FsError> {
-        std::fs::remove_dir(path).map_err(|e| io_err(&e, path))
+        safefs::delete_empty_dir(Path::new(path)).map_err(|e| safe_err(e, path))
     }
 
     fn rename(&self, from: &str, to: &str) -> Result<(), FsError> {
-        if std::fs::symlink_metadata(to).is_ok() {
-            return Err(FsError::new(FsErrorKind::Exists, to.to_string()));
-        }
-        std::fs::rename(from, to).map_err(|e| io_err(&e, from))
+        safefs::move_file(Path::new(from), Path::new(to)).map_err(|e| safe_err(e, from))
     }
 
     fn copy_file(&self, from: &str, to: &str) -> Result<u64, FsError> {
-        if std::fs::symlink_metadata(to).is_ok() {
-            return Err(FsError::new(FsErrorKind::Exists, to.to_string()));
-        }
-        std::fs::copy(from, to).map_err(|e| io_err(&e, from))
+        safefs::copy_file(Path::new(from), Path::new(to)).map_err(|e| safe_err(e, from))
     }
 
     fn create_dir_all(&self, path: &str) -> Result<(), FsError> {

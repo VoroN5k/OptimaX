@@ -13,6 +13,7 @@ pub mod memory;
 pub mod power;
 pub mod process;
 pub mod registry;
+pub mod safefs;
 pub mod service;
 pub mod toast;
 

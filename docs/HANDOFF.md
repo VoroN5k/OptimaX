@@ -63,6 +63,19 @@
 - Нових залежностей немає (zip свідомо не робили — один JSON).
 - Далі за планом користувача: WHEA/TDR із журналу подій, потім екран «Автозавантаження».
 
+## 2d. Помилки заліза з журналу подій (не закомічено)
+
+- `audit/src/win/events.rs` — `EvtQuery` + `EvtRender` (системні властивості й EventData),
+  XPath з `timediff(@SystemTime)`; ліміт 2000 подій. Тест `reads_real_system_log` читає
+  справжній журнал (лише читання).
+- `rules::check_hardware_events` + `whea_kind` (класифікація ID за маніфестом провайдера:
+  описи «fatal / corrected», компонент; ID 29 — Warning, але fatal). Знахідки: `hw.tdr`
+  (Moderate, ≥ 3 за період — High), `hw.whea_fatal` (High), `hw.whea_corrected` (Moderate),
+  `hw.none` (Info). Нова категорія `Category::HardwareErrors`, нова перевірка
+  `CheckId::HardwareEvents`; `SystemProbe::hardware_events` за замовчуванням `Ok(None)`.
+- Не перевірено на ПК, де TDR/WHEA справді є (на ПК користувача їх немає за 90 днів).
+- Далі за планом: екран «Автозавантаження».
+
 ## 3. Поточна робота: гілка `feature/cleaning` (модуль «Очищення», CLAUDE.md розд. 11)
 
 Стан: реалізовано, **не закомічено** (комітить користувач). Перевірки зелені (fmt, clippy

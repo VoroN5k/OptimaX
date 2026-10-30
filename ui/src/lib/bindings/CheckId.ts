@@ -3,4 +3,4 @@
 /**
  * Група перевірок, що читає одне джерело даних.
  */
-export type CheckId = "firmware" | "displays" | "gpus" | "power_plan" | "game_mode" | "hags";
+export type CheckId = "firmware" | "displays" | "gpus" | "power_plan" | "game_mode" | "hags" | "hardware_events";

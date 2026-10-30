@@ -22,6 +22,8 @@ pub enum CheckId {
     GameMode,
     /// HAGS.
     Hags,
+    /// Помилки заліза в журналі подій (TDR, WHEA).
+    HardwareEvents,
 }
 
 impl CheckId {
@@ -34,6 +36,7 @@ impl CheckId {
             Self::PowerPlan => "audit.check.power_plan",
             Self::GameMode => "audit.check.game_mode",
             Self::Hags => "audit.check.hags",
+            Self::HardwareEvents => "audit.check.hardware_events",
         })
     }
 }
@@ -123,6 +126,15 @@ pub fn run_audit(probe: &dyn SystemProbe, today: CivilDate) -> AuditReport {
         CheckId::Hags,
         probe.hags().map(|h| vec![rules::check_hags(&h)]),
     );
+    // `None` — джерела немає (мок), перевірку не показуємо ні як знахідку, ні як пропущену.
+    match probe.hardware_events(rules::HW_EVENTS_DAYS) {
+        Ok(Some(events)) => handle(
+            CheckId::HardwareEvents,
+            Ok(rules::check_hardware_events(&events)),
+        ),
+        Ok(None) => {}
+        Err(e) => handle(CheckId::HardwareEvents, Err(e)),
+    }
 
     // Стабільне сортування: спершу вплив, потім впевненість; порядок перевірок зберігається.
     findings.sort_by(|a, b| {
@@ -395,6 +407,28 @@ mod tests {
         for f in &rules::check_displays(&d) {
             collect(f);
         }
+        // Усі варіанти перевірки помилок заліза: нічого, TDR, фатальні й виправлені WHEA.
+        let ev = |provider: &str, id: u16| SystemEvent {
+            provider: provider.into(),
+            id,
+            level: 2,
+            date: today(),
+            data: vec!["nvlddmkm".into()],
+        };
+        for events in [
+            vec![],
+            vec![
+                ev(rules::DISPLAY_PROVIDER, rules::TDR_EVENT_ID),
+                ev(rules::WHEA_PROVIDER, 18),
+                ev(rules::WHEA_PROVIDER, 22),
+                ev(rules::WHEA_PROVIDER, 17),
+                ev(rules::WHEA_PROVIDER, 41),
+            ],
+        ] {
+            for f in &rules::check_hardware_events(&events) {
+                collect(f);
+            }
+        }
         for c in [
             CheckId::Firmware,
             CheckId::Displays,
@@ -402,6 +436,7 @@ mod tests {
             CheckId::PowerPlan,
             CheckId::GameMode,
             CheckId::Hags,
+            CheckId::HardwareEvents,
         ] {
             texts.push(c.name());
         }

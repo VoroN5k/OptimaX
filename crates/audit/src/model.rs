@@ -316,3 +316,18 @@ mod tests {
         assert_eq!(MemoryType::from_smbios(0x02).label(), "0x02");
     }
 }
+
+/// Подія журналу System, що стосується стабільності заліза (TDR, WHEA).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SystemEvent {
+    /// Джерело (Provider/@Name), напр. `Display` чи `Microsoft-Windows-WHEA-Logger`.
+    pub provider: String,
+    /// Event ID.
+    pub id: u16,
+    /// Рівень (2 — помилка, 3 — попередження, 4 — відомості).
+    pub level: u8,
+    /// Дата події (UTC).
+    pub date: CivilDate,
+    /// Рядкові дані події (EventData) у порядку вставки: `%1` — перший.
+    pub data: Vec<String>,
+}

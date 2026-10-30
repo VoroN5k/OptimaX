@@ -3,7 +3,7 @@
 use crate::gpu_info::nvidia_version;
 use crate::model::{
     BatteryInfo, BiosInfo, DisplayInfo, GameModeState, GpuAdapter, GpuVendor, HagsAdapter,
-    HagsInfo, HagsState, MemoryModule, MemoryType, PowerPlan, PowerSource, RebarState,
+    HagsInfo, HagsState, MemoryModule, MemoryType, PowerPlan, PowerSource, RebarState, SystemEvent,
 };
 use optimax_core::{Category, CivilDate, Evidence, Finding, FindingBuilder, Impact, Text};
 
@@ -369,6 +369,168 @@ pub fn check_battery(info: &BatteryInfo) -> Vec<Finding> {
     out
 }
 
+/// За скільки днів шукаємо помилки заліза в журналі подій.
+pub const HW_EVENTS_DAYS: u32 = 30;
+/// Джерело подій скидання драйвера відеокарти (класичне, повідомлення в `dxgwdi.dll`).
+pub const DISPLAY_PROVIDER: &str = "Display";
+/// «Display driver %1 stopped responding and has successfully recovered.» — текст із
+/// `dxgwdi.dll` (перевірено 2026-10-30, Windows 11 Pro 26300).
+pub const TDR_EVENT_ID: u16 = 4101;
+/// Провайдер апаратних помилок Windows (WHEA).
+pub const WHEA_PROVIDER: &str = "Microsoft-Windows-WHEA-Logger";
+/// Від стількох TDR за період проблема вважається регулярною, а не випадковою.
+const TDR_FREQUENT: usize = 3;
+
+/// Чи можна було виправити апаратну помилку.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WheaSeverity {
+    /// «A fatal hardware error has occurred.»
+    Fatal,
+    /// «A corrected hardware error has occurred.»
+    Corrected,
+}
+
+/// Компонент, що повідомив про помилку.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WheaComponent {
+    /// Ядро процесора (Machine Check) або північний міст AMD.
+    Processor,
+    /// Пам'ять.
+    Memory,
+    /// Шина чи пристрій PCI / PCI Express.
+    Pci,
+    /// Компонент не вказано в ID (видно лише в деталях події).
+    Other,
+}
+
+impl WheaComponent {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Processor => "audit.ev.whea.processor",
+            Self::Memory => "audit.ev.whea.memory",
+            Self::Pci => "audit.ev.whea.pci",
+            Self::Other => "audit.ev.whea.other",
+        }
+    }
+}
+
+/// Класифікація Event ID провайдера WHEA-Logger. Джерело — маніфест провайдера
+/// (`Get-WinEvent -ListProvider Microsoft-Windows-WHEA-Logger`, Windows 11 Pro 26300,
+/// 2026-10-30): описи «fatal / corrected hardware error» і «Component: …».
+/// ID 29 має рівень Warning, але в описі — «fatal», тож важить опис, а не рівень.
+/// Інформаційні (3) і невідомі ID — `None`.
+pub fn whea_kind(id: u16) -> Option<(WheaSeverity, WheaComponent)> {
+    use WheaComponent::{Memory, Other, Pci, Processor};
+    use WheaSeverity::{Corrected, Fatal};
+    Some(match id {
+        1 | 40 => (Fatal, Other),
+        2 | 41 => (Corrected, Other),
+        18 | 20 | 29 => (Fatal, Processor),
+        19 | 21 | 28 => (Corrected, Processor),
+        22 | 46 | 48 => (Fatal, Memory),
+        23 | 47 | 49 => (Corrected, Memory),
+        16 | 24 | 26 | 42 | 44 => (Fatal, Pci),
+        17 | 25 | 27 | 43 | 45 => (Corrected, Pci),
+        _ => return None,
+    })
+}
+
+/// Помилки заліза з журналу подій за [`HW_EVENTS_DAYS`] днів: скидання драйвера відеокарти
+/// (TDR) і апаратні помилки WHEA. Це факти з журналу, тож впевненість висока; причину
+/// не вгадуємо — поради лише як перевірки.
+pub fn check_hardware_events(events: &[SystemEvent]) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let tdr: Vec<&SystemEvent> = events
+        .iter()
+        .filter(|e| e.provider.eq_ignore_ascii_case(DISPLAY_PROVIDER) && e.id == TDR_EVENT_ID)
+        .collect();
+    if let Some(last) = tdr.iter().map(|e| e.date).max() {
+        let mut drivers: Vec<&str> = tdr
+            .iter()
+            .filter_map(|e| e.data.first().map(String::as_str))
+            .filter(|d| !d.is_empty())
+            .collect();
+        drivers.sort_unstable();
+        drivers.dedup();
+        let drivers = if drivers.is_empty() {
+            "?".to_string()
+        } else {
+            drivers.join(", ")
+        };
+        let impact = if tdr.len() >= TDR_FREQUENT {
+            Impact::High
+        } else {
+            Impact::Moderate
+        };
+        out.push(
+            draft("hw.tdr", Category::Gpu, impact, 95)
+                .arg("count", tdr.len())
+                .arg("days", HW_EVENTS_DAYS)
+                .arg("driver", &drivers)
+                .advice()
+                .evidence(
+                    Text::new("audit.ev.tdr_count"),
+                    Text::raw(tdr.len().to_string()),
+                )
+                .evidence(
+                    Text::new("audit.ev.last_event"),
+                    Text::raw(last.to_string()),
+                )
+                .evidence(Text::new("audit.ev.driver_name"), Text::raw(drivers))
+                .build(),
+        );
+    }
+
+    for severity in [WheaSeverity::Fatal, WheaSeverity::Corrected] {
+        let hits: Vec<(&SystemEvent, WheaComponent)> = events
+            .iter()
+            .filter(|e| e.provider.eq_ignore_ascii_case(WHEA_PROVIDER))
+            .filter_map(|e| match whea_kind(e.id) {
+                Some((s, c)) if s == severity => Some((e, c)),
+                _ => None,
+            })
+            .collect();
+        let Some(last) = hits.iter().map(|(e, _)| e.date).max() else {
+            continue;
+        };
+        let mut by_component: Vec<(WheaComponent, usize)> = Vec::new();
+        for (_, c) in &hits {
+            match by_component.iter_mut().find(|(k, _)| k == c) {
+                Some((_, n)) => *n += 1,
+                None => by_component.push((*c, 1)),
+            }
+        }
+        by_component.sort();
+        let (id, impact, confidence) = match severity {
+            WheaSeverity::Fatal => ("hw.whea_fatal", Impact::High, 95),
+            WheaSeverity::Corrected => ("hw.whea_corrected", Impact::Moderate, 90),
+        };
+        let mut d = draft(id, Category::HardwareErrors, impact, confidence)
+            .arg("count", hits.len())
+            .arg("days", HW_EVENTS_DAYS)
+            .advice();
+        for (c, n) in by_component {
+            d = d.evidence(Text::new(c.key()), Text::raw(n.to_string()));
+        }
+        out.push(
+            d.evidence(
+                Text::new("audit.ev.last_event"),
+                Text::raw(last.to_string()),
+            )
+            .build(),
+        );
+    }
+
+    if out.is_empty() {
+        out.push(
+            draft("hw.none", Category::HardwareErrors, Impact::Info, 90)
+                .arg("days", HW_EVENTS_DAYS)
+                .build(),
+        );
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -642,6 +804,106 @@ mod tests {
             ]
         );
         assert!(hags(HagsState::Disabled, None).advice.is_some());
+    }
+
+    fn event(provider: &str, id: u16, day: u8, data: &[&str]) -> SystemEvent {
+        SystemEvent {
+            provider: provider.into(),
+            id,
+            level: 3,
+            date: CivilDate::new(2026, 10, day).unwrap(),
+            data: data.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn whea_ids_follow_provider_manifest() {
+        use WheaComponent::*;
+        use WheaSeverity::*;
+        assert_eq!(whea_kind(17), Some((Corrected, Pci)));
+        assert_eq!(whea_kind(18), Some((Fatal, Processor)));
+        assert_eq!(whea_kind(19), Some((Corrected, Processor)));
+        assert_eq!(whea_kind(47), Some((Corrected, Memory)));
+        assert_eq!(whea_kind(46), Some((Fatal, Memory)));
+        // 29 — рівень Warning, але опис «fatal»: важить опис.
+        assert_eq!(whea_kind(29), Some((Fatal, Processor)));
+        assert_eq!(whea_kind(1), Some((Fatal, Other)));
+        // Інформаційна й невідомі події не рахуються.
+        assert_eq!(whea_kind(3), None);
+        assert_eq!(whea_kind(9999), None);
+    }
+
+    #[test]
+    fn no_hardware_events_is_reported_honestly() {
+        let f = check_hardware_events(&[]);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].id, "hw.none");
+        assert_eq!(f[0].impact, Impact::Info);
+        // Чужі події й інформаційний WHEA (3) теж не тривога.
+        let f = check_hardware_events(&[
+            event(DISPLAY_PROVIDER, 4107, 1, &[]),
+            event("Service Control Manager", TDR_EVENT_ID, 1, &[]),
+            event(WHEA_PROVIDER, 3, 1, &[]),
+        ]);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].id, "hw.none");
+    }
+
+    #[test]
+    fn tdr_counts_drivers_and_escalates_when_frequent() {
+        let one = check_hardware_events(&[event(DISPLAY_PROVIDER, TDR_EVENT_ID, 5, &["nvlddmkm"])]);
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].id, "hw.tdr");
+        assert_eq!(one[0].category, Category::Gpu);
+        assert_eq!(one[0].impact, Impact::Moderate);
+        assert!(one[0].advice.is_some());
+
+        let many = check_hardware_events(&[
+            event(DISPLAY_PROVIDER, TDR_EVENT_ID, 3, &["nvlddmkm"]),
+            event(DISPLAY_PROVIDER, TDR_EVENT_ID, 9, &["nvlddmkm"]),
+            event(DISPLAY_PROVIDER, TDR_EVENT_ID, 7, &["amdkmdag"]),
+        ]);
+        assert_eq!(many[0].impact, Impact::High);
+        let ev = |key: &str| {
+            many[0]
+                .evidence
+                .iter()
+                .find(|e| e.label.key == key)
+                .map(|e| e.value.clone())
+                .unwrap()
+        };
+        assert_eq!(ev("audit.ev.tdr_count"), Text::raw("3"));
+        assert_eq!(ev("audit.ev.last_event"), Text::raw("09.10.2026"));
+        assert_eq!(ev("audit.ev.driver_name"), Text::raw("amdkmdag, nvlddmkm"));
+    }
+
+    #[test]
+    fn whea_fatal_and_corrected_are_separate_findings() {
+        let f = check_hardware_events(&[
+            event(WHEA_PROVIDER, 18, 2, &[]),
+            event(WHEA_PROVIDER, 17, 4, &[]),
+            event(WHEA_PROVIDER, 17, 6, &[]),
+            event(WHEA_PROVIDER, 47, 1, &[]),
+        ]);
+        let ids: Vec<&str> = f.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(ids, ["hw.whea_fatal", "hw.whea_corrected"]);
+        assert_eq!(f[0].impact, Impact::High);
+        assert_eq!(f[0].category, Category::HardwareErrors);
+        assert_eq!(f[1].impact, Impact::Moderate);
+        // Виправлені: пам'ять 1, PCI 2 — по компонентах, у стабільному порядку.
+        let labels: Vec<(&str, Text)> = f[1]
+            .evidence
+            .iter()
+            .map(|e| (e.label.key.as_str(), e.value.clone()))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                ("audit.ev.whea.memory", Text::raw("1")),
+                ("audit.ev.whea.pci", Text::raw("2")),
+                ("audit.ev.last_event", Text::raw("06.10.2026")),
+            ]
+        );
     }
 
     #[test]

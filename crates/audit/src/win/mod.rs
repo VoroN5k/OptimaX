@@ -4,12 +4,14 @@
 mod battery;
 mod devices;
 mod display;
+mod events;
 mod firmware;
 mod hags;
 mod power;
 
 use crate::model::{
     BatteryInfo, DisplayInfo, FirmwareInfo, GameModeState, GpuAdapter, HagsInfo, PowerPlan,
+    SystemEvent,
 };
 use crate::probe::{read_game_mode, read_hags, SystemProbe};
 use nvml_wrapper::Nvml;
@@ -75,5 +77,9 @@ impl SystemProbe for WindowsProbe {
 
     fn battery_info(&self) -> Result<Option<BatteryInfo>, CoreError> {
         battery::read()
+    }
+
+    fn hardware_events(&self, days: u32) -> Result<Option<Vec<SystemEvent>>, CoreError> {
+        events::hardware(days).map(Some)
     }
 }

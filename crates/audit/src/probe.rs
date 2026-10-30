@@ -2,7 +2,7 @@
 
 use crate::model::{
     BatteryInfo, DisplayInfo, FirmwareInfo, GameModeState, GpuAdapter, HagsInfo, HagsState,
-    PowerPlan,
+    PowerPlan, SystemEvent,
 };
 use optimax_core::registry::{RegHive, RegValue, RegistryApi};
 use optimax_core::CoreError;
@@ -32,6 +32,11 @@ pub trait SystemProbe {
     fn hags(&self) -> Result<HagsInfo, CoreError>;
     /// Стан батареї. `Ok(None)` — батареї немає (десктоп або немає підтримки).
     fn battery_info(&self) -> Result<Option<BatteryInfo>, CoreError> {
+        Ok(None)
+    }
+    /// Події TDR і WHEA з журналу System за останні `days` днів.
+    /// `Ok(None)` — джерело недоступне (мок без даних); перевірка тоді не виконується.
+    fn hardware_events(&self, _days: u32) -> Result<Option<Vec<SystemEvent>>, CoreError> {
         Ok(None)
     }
 }

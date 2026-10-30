@@ -9,6 +9,7 @@ pub mod gamemode;
 pub mod laptop;
 pub mod metrics;
 pub mod network;
+pub mod startup;
 pub mod system;
 pub mod tweaks;
 pub mod upscale;

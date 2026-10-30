@@ -23,6 +23,11 @@ for (const f of files) {
 const screens = ["analysis", "optimization", "games", "diagnosis", "hardware", "laptop", "network", "upscale", "cleanup", "apps", "startup", "appearance", "backups", "settings"];
 for (const s of screens) used.add(`ui.nav.${s}`);
 for (const s of ["laptop", "network", "cleanup", "apps", "startup", "appearance"]) used.add(`ui.placeholder.${s}`);
+for (const s of ["user_run", "machine_run", "machine_run32", "user_folder", "common_folder"]) used.add(`ui.startup.source.${s}`);
+for (const k of ["system", "unknown_flag"]) {
+  used.add(`ui.startup.lock.${k}`);
+  used.add(`ui.startup.lock_short.${k}`);
+}
 for (const k of ["power_scheme", "process_priority", "service", "standby_list"]) used.add(`ui.target.${k}`);
 for (const k of ["pending", "applied", "performed", "rolled_back", "failed"]) used.add(`ui.backups.state.${k}`);
 for (const k of ["WSearch", "SysMain"]) used.add(`ui.games.service.${k}`);

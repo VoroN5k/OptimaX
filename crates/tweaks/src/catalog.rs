@@ -38,11 +38,13 @@ pub enum TweakId {
     PowerMode,
     /// GPU для конкретного exe (реєстр UserGpuPreferences).
     GpuPreference,
+    /// Програма в автозапуску (прапорець StartupApproved, як у Диспетчері задач).
+    StartupApp,
 }
 
 impl TweakId {
     /// Усі твіки каталогу.
-    pub const ALL: [TweakId; 7] = [
+    pub const ALL: [TweakId; 8] = [
         TweakId::PowerScheme,
         TweakId::GameMode,
         TweakId::ProcessPriority,
@@ -50,6 +52,7 @@ impl TweakId {
         TweakId::StandbyPurge,
         TweakId::PowerMode,
         TweakId::GpuPreference,
+        TweakId::StartupApp,
     ];
 
     /// Рядковий ідентифікатор (для журналу й ключів тексту).
@@ -62,6 +65,7 @@ impl TweakId {
             Self::StandbyPurge => "standby_purge",
             Self::PowerMode => "power_mode",
             Self::GpuPreference => "gpu_preference",
+            Self::StartupApp => "startup_app",
         }
     }
 
@@ -141,6 +145,15 @@ pub enum Desired {
         /// Бажаний GPU.
         preference: GpuPref,
     },
+    /// Увімкнути / вимкнути програму в автозапуску.
+    StartupApp {
+        /// Звідки запускається.
+        source: crate::startup::StartupSource,
+        /// Ім'я запису в Run або ім'я файлу в теці «Автозавантаження».
+        name: String,
+        /// Бажаний стан.
+        enabled: bool,
+    },
 }
 
 impl Desired {
@@ -153,6 +166,7 @@ impl Desired {
             Self::Service { .. } => TweakId::Service,
             Self::PowerMode(_) => TweakId::PowerMode,
             Self::GpuPreference { .. } => TweakId::GpuPreference,
+            Self::StartupApp { .. } => TweakId::StartupApp,
         }
     }
 }
@@ -181,6 +195,8 @@ mod tests {
         }
         for key in [
             "tweak.value.absent",
+            "tweak.startup_app.enabled",
+            "tweak.startup_app.disabled",
             "tweak.preview.where",
             "tweak.preview.old",
             "tweak.preview.new",

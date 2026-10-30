@@ -82,6 +82,15 @@ pub enum UiDesired {
         /// Бажаний GPU.
         preference: optimax_tweaks::catalog::GpuPref,
     },
+    /// Програма в автозапуску.
+    StartupApp {
+        /// Звідки запускається.
+        source: optimax_tweaks::startup::StartupSource,
+        /// Ім'я запису.
+        name: String,
+        /// Бажаний стан.
+        enabled: bool,
+    },
 }
 
 impl From<UiDesired> for optimax_tweaks::Desired {
@@ -97,8 +106,62 @@ impl From<UiDesired> for optimax_tweaks::Desired {
                 exe_path,
                 preference,
             },
+            UiDesired::StartupApp {
+                source,
+                name,
+                enabled,
+            } => Self::StartupApp {
+                source,
+                name,
+                enabled,
+            },
         }
     }
+}
+
+/// Чому перемикача автозапуску немає.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum StartupLock {
+    /// exe у теці Windows: системний компонент чи помічник драйвера — не вимикаємо.
+    System,
+    /// Прапорець StartupApproved має неочікуваний тип — не перезаписуємо.
+    UnknownFlag,
+}
+
+/// Процеси запису автозапуску, що працюють зараз (виміряно під час показу списку).
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct StartupRunning {
+    /// Скільки процесів із цим exe.
+    pub processes: u32,
+    /// CPU, % від усього процесора.
+    pub cpu_percent: f32,
+    /// Пам'ять, МіБ.
+    pub memory_mib: u64,
+}
+
+/// Запис автозапуску.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct StartupEntry {
+    /// Звідки запускається.
+    pub source: optimax_tweaks::startup::StartupSource,
+    /// Ім'я запису (як у Диспетчері задач — ім'я значення Run чи файлу).
+    pub name: String,
+    /// Командний рядок (для теки — шлях до файлу).
+    pub command: String,
+    /// Шлях до exe (або до ярлика).
+    pub exe: String,
+    /// Чи файл exe існує (`None` — не перевіряли: ярлик або змінні середовища в шляху).
+    pub exe_exists: Option<bool>,
+    /// Увімкнено.
+    pub enabled: bool,
+    /// Чому не можна перемкнути (`None` — можна).
+    pub lock: Option<StartupLock>,
+    /// Поточне навантаження (`None` — не запущено або не з'ясовано).
+    pub running: Option<StartupRunning>,
 }
 
 /// План із номером: застосувати можна лише план, який бекенд сам показав.

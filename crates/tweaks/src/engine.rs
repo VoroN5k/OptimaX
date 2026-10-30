@@ -7,6 +7,7 @@ use crate::change::{
 };
 use crate::journal::{EntryState, JournalEntry, JournalStore};
 use crate::restore::{RestorePointApi, RestorePointStatus};
+use crate::startup::{self, exe_from_command, is_plain_file_name, is_system_path, StartupSource};
 use crate::TweakError;
 use optimax_core::power::PowerApi;
 use optimax_core::process::{is_protected_process, PriorityClass, ProcessApi};
@@ -371,8 +372,88 @@ impl<'a> Engine<'a> {
                     }]
                 }
             }
+            Desired::StartupApp {
+                source,
+                name,
+                enabled,
+            } => self.plan_startup(*source, name, *enabled, tweak_id)?,
         };
         Ok(Plan { info, changes })
+    }
+
+    /// Автозапуск: лише прапорець у StartupApproved; запис у Run не змінюється.
+    fn plan_startup(
+        &self,
+        source: StartupSource,
+        name: &str,
+        enabled: bool,
+        tweak_id: String,
+    ) -> Result<Vec<PlannedChange>, TweakError> {
+        let hive = source.hive();
+        match source.run_key() {
+            Some(run) => {
+                // Запис має існувати, а системні (у теці Windows) не вимикаємо.
+                let command = match self.registry.read_value(hive, run, name)? {
+                    Some(RegValue::String(s) | RegValue::ExpandString(s)) => s,
+                    Some(other) => {
+                        return Err(TweakError::TypeMismatch {
+                            location: format!("{run}\\{name}"),
+                            expected: "REG_SZ",
+                            found: other.type_name(),
+                        })
+                    }
+                    None => {
+                        return Err(TweakError::Forbidden(format!(
+                            "{name}: такого запису автозапуску немає"
+                        )))
+                    }
+                };
+                let system_root = std::env::var("SystemRoot").unwrap_or_default();
+                if is_system_path(&exe_from_command(&command), &system_root) {
+                    return Err(TweakError::Forbidden(format!(
+                        "{name}: системний компонент Windows — не вимикаємо"
+                    )));
+                }
+            }
+            None if !is_plain_file_name(name) => {
+                return Err(TweakError::Forbidden(format!(
+                    "{name}: очікувалось ім'я файлу з теки автозавантаження"
+                )))
+            }
+            None => {}
+        }
+        let key = source.approved_key();
+        let target = SettingTarget::Registry {
+            hive,
+            path: key.clone(),
+            name: name.to_string(),
+        };
+        let current = self.registry.read_value(hive, &key, name)?;
+        let enabled_now =
+            startup::is_enabled(current.as_ref()).map_err(|found| TweakError::TypeMismatch {
+                location: target.location(),
+                expected: "REG_BINARY",
+                found,
+            })?;
+        if enabled_now == enabled {
+            return Ok(Vec::new());
+        }
+        let state = |on: bool| {
+            Text::new(if on {
+                "tweak.startup_app.enabled"
+            } else {
+                "tweak.startup_app.disabled"
+            })
+        };
+        let new = startup::approved_value(enabled, startup::filetime_now());
+        Ok(vec![PlannedChange {
+            tweak_id,
+            old_display: state(enabled_now),
+            new_display: state(enabled),
+            target,
+            old: SettingValue::Registry(current),
+            new: SettingValue::Registry(Some(new)),
+        }])
     }
 
     fn ensure_restore_point(

@@ -160,6 +160,9 @@ pub trait RegistryApi: Send + Sync {
         path: &str,
         name: &str,
     ) -> Result<Option<RegValue>, CoreError>;
+
+    /// Імена всіх значень ключа (порожньо, якщо ключа немає). Порядок — як віддає система.
+    fn value_names(&self, hive: RegHive, path: &str) -> Result<Vec<String>, CoreError>;
 }
 
 /// Запис у реєстр. Ключ має вже існувати — інакше помилка, ключі не створюються.
@@ -230,6 +233,19 @@ impl RegistryApi for MemRegistry {
             .values
             .get(&value_key(hive, path, name))
             .cloned())
+    }
+
+    fn value_names(&self, hive: RegHive, path: &str) -> Result<Vec<String>, CoreError> {
+        let path = path.to_ascii_lowercase();
+        let mut names: Vec<String> = self
+            .lock()
+            .values
+            .keys()
+            .filter(|(h, p, _)| *h == hive && *p == path)
+            .map(|(_, _, n)| n.clone())
+            .collect();
+        names.sort();
+        Ok(names)
     }
 }
 

@@ -19,6 +19,9 @@ pub fn power_schemes() -> CmdResult<PowerSchemes> {
 /// Будує план і запам'ятовує його. Застосувати можна лише план із цим номером.
 #[tauri::command]
 pub fn tweak_plan(state: State<'_, AppState>, desired: UiDesired) -> CmdResult<PlanHandle> {
+    if let UiDesired::StartupApp { source, name, .. } = &desired {
+        super::startup::validate(*source, name)?;
+    }
     let plan = lock(&state.engine).plan(&desired.into())?;
     let mut next = lock(&state.next_plan_id);
     let id = *next;

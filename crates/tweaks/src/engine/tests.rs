@@ -308,6 +308,9 @@ impl RegistryApi for IgnoringRegistry {
     fn read_value(&self, h: RegHive, p: &str, n: &str) -> Result<Option<RegValue>, CoreError> {
         self.0.read_value(h, p, n)
     }
+    fn value_names(&self, h: RegHive, p: &str) -> Result<Vec<String>, CoreError> {
+        self.0.value_names(h, p)
+    }
 }
 
 impl RegistryWriteApi for IgnoringRegistry {
@@ -563,4 +566,116 @@ mod gamemode_targets {
         assert!(s.rolled_back.is_empty());
         assert_eq!(power.active_scheme().unwrap(), guids::BALANCED);
     }
+}
+
+const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+
+fn startup_registry() -> MemRegistry {
+    let mut r = MemRegistry::new();
+    r.set(
+        RegHive::CurrentUser,
+        RUN,
+        "Discord",
+        RegValue::String(r#""C:\Users\u\Discord\Update.exe" --processStart Discord.exe"#.into()),
+    );
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\WINDOWS".into());
+    r.set(
+        RegHive::LocalMachine,
+        RUN,
+        "SecurityHealth",
+        RegValue::String(format!(r"{system_root}\system32\SecurityHealthSystray.exe")),
+    );
+    r.create_key(
+        RegHive::CurrentUser,
+        &crate::startup::StartupSource::UserRun.approved_key(),
+    );
+    r
+}
+
+fn startup(source: crate::startup::StartupSource, name: &str, enabled: bool) -> Desired {
+    Desired::StartupApp {
+        source,
+        name: name.into(),
+        enabled,
+    }
+}
+
+#[test]
+fn startup_disable_then_rollback_restores_absent_flag() {
+    use crate::startup::StartupSource;
+    let reg = startup_registry();
+    let power = MemPower::new(guids::BALANCED);
+    let restore = CountingRestore::ok();
+    let store = MemStore::new();
+    let mut e = Engine::new(&reg, &power, &restore, &store).unwrap();
+    let key = StartupSource::UserRun.approved_key();
+
+    let plan = e
+        .plan(&startup(StartupSource::UserRun, "Discord", false))
+        .unwrap();
+    assert_eq!(plan.changes.len(), 1);
+    assert_eq!(plan.changes[0].old, SettingValue::Registry(None));
+    assert_eq!(
+        plan.changes[0].new_display.key,
+        "tweak.startup_app.disabled"
+    );
+    let out = e.apply(&plan, &Answer(false)).unwrap();
+    let flag = reg
+        .read_value(RegHive::CurrentUser, &key, "Discord")
+        .unwrap();
+    assert_eq!(crate::startup::is_enabled(flag.as_ref()), Ok(false));
+    // Сам запис у Run не змінено.
+    assert!(matches!(
+        reg.read_value(RegHive::CurrentUser, RUN, "Discord")
+            .unwrap(),
+        Some(RegValue::String(_))
+    ));
+    // Уже вимкнено — нічого планувати.
+    assert!(e
+        .plan(&startup(StartupSource::UserRun, "Discord", false))
+        .unwrap()
+        .is_noop());
+
+    e.rollback(out.entry_ids[0]).unwrap();
+    assert_eq!(
+        reg.read_value(RegHive::CurrentUser, &key, "Discord")
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn startup_refuses_system_missing_and_odd_entries() {
+    use crate::startup::StartupSource;
+    let mut reg = startup_registry();
+    reg.set(
+        RegHive::CurrentUser,
+        &StartupSource::UserRun.approved_key(),
+        "Discord",
+        RegValue::Dword(3),
+    );
+    let power = MemPower::new(guids::BALANCED);
+    let restore = CountingRestore::ok();
+    let store = MemStore::new();
+    let e = Engine::new(&reg, &power, &restore, &store).unwrap();
+    let forbidden = |d: Desired| matches!(e.plan(&d), Err(TweakError::Forbidden(_)));
+    assert!(forbidden(startup(
+        StartupSource::MachineRun,
+        "SecurityHealth",
+        false
+    )));
+    assert!(forbidden(startup(StartupSource::UserRun, "Nope", false)));
+    assert!(forbidden(startup(
+        StartupSource::UserFolder,
+        r"..\evil.lnk",
+        false
+    )));
+    // Прапорець не REG_BINARY — не перезаписуємо.
+    assert!(matches!(
+        e.plan(&startup(StartupSource::UserRun, "Discord", false)),
+        Err(TweakError::TypeMismatch {
+            expected: "REG_BINARY",
+            ..
+        })
+    ));
 }

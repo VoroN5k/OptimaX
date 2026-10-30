@@ -35,6 +35,7 @@ import type { RecordProgress } from "./bindings/RecordProgress";
 import type { RollbackResult } from "./bindings/RollbackResult";
 import type { Settings } from "./bindings/Settings";
 import type { Snapshot } from "./bindings/Snapshot";
+import type { StartupEntry } from "./bindings/StartupEntry";
 import type { StartupReport } from "./bindings/StartupReport";
 import type { Text } from "./bindings/Text";
 import type { UiDesired } from "./bindings/UiDesired";
@@ -52,6 +53,8 @@ export const api = {
   startupReport: () => invoke<StartupReport>("startup_report"),
   /** Зберігає звіт для відгуку й повертає шлях до файлу. */
   feedbackReport: () => invoke<string>("feedback_report"),
+  /** Записи автозапуску з поточним станом і навантаженням. */
+  startupList: () => invoke<StartupEntry[]>("startup_list"),
   feedbackReveal: (path: string) => invoke<void>("feedback_reveal", { path }),
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),

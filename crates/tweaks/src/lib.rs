@@ -15,6 +15,7 @@ pub mod change;
 pub mod engine;
 pub mod journal;
 pub mod restore;
+pub mod startup;
 
 pub use catalog::{Desired, TweakId, TweakInfo};
 pub use change::{Plan, PlannedChange, SettingTarget, SettingValue};

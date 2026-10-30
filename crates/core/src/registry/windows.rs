@@ -4,12 +4,13 @@
 use super::{RegHive, RegValue, RegistryApi, RegistryWriteApi};
 use crate::error::CoreError;
 use windows::core::HSTRING;
+use windows::core::PWSTR;
 use windows::Win32::Foundation::{
-    ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS, WIN32_ERROR,
+    ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, WIN32_ERROR,
 };
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
-    HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_READ, KEY_SET_VALUE,
+    RegCloseKey, RegDeleteValueW, RegEnumValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_READ, KEY_SET_VALUE,
     KEY_WOW64_64KEY, REG_SAM_FLAGS, REG_VALUE_TYPE,
 };
 
@@ -38,7 +39,61 @@ fn check(status: WIN32_ERROR, api: &'static str) -> Result<(), CoreError> {
     }
 }
 
+/// Найдовше ім'я значення реєстру — 16 383 символи (+ нуль).
+const MAX_VALUE_NAME: usize = 16_384;
+
 impl RegistryApi for WinRegistry {
+    fn value_names(&self, hive: RegHive, path: &str) -> Result<Vec<String>, CoreError> {
+        let root = match hive {
+            RegHive::LocalMachine => HKEY_LOCAL_MACHINE,
+            RegHive::CurrentUser => HKEY_CURRENT_USER,
+        };
+        let path_w = HSTRING::from(path);
+        let mut raw_key = HKEY::default();
+        // SAFETY: HSTRING гарантує нуль-термінований рядок, `raw_key` — валідний вихідний вказівник.
+        let status = unsafe {
+            RegOpenKeyExW(
+                root,
+                &path_w,
+                Some(0),
+                KEY_READ | KEY_WOW64_64KEY,
+                &mut raw_key,
+            )
+        };
+        if status == ERROR_FILE_NOT_FOUND {
+            return Ok(Vec::new());
+        }
+        check(status, "RegOpenKeyExW")?;
+        let key = KeyGuard(raw_key);
+
+        let mut names = Vec::new();
+        let mut buf = vec![0u16; MAX_VALUE_NAME];
+        for index in 0u32.. {
+            let mut len = u32::try_from(buf.len())
+                .map_err(|_| CoreError::InvalidData("буфер завеликий".into()))?;
+            // SAFETY: `buf` має `len` u16-елементів; дані значення не запитуємо (None).
+            let status = unsafe {
+                RegEnumValueW(
+                    key.0,
+                    index,
+                    Some(PWSTR(buf.as_mut_ptr())),
+                    &mut len,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            };
+            if status == ERROR_NO_MORE_ITEMS {
+                break;
+            }
+            check(status, "RegEnumValueW")?;
+            let end = usize::try_from(len).unwrap_or(0).min(buf.len());
+            names.push(String::from_utf16_lossy(&buf[..end]));
+        }
+        Ok(names)
+    }
+
     fn read_value(
         &self,
         hive: RegHive,
@@ -158,5 +213,22 @@ impl RegistryWriteApi for WinRegistry {
             return Ok(());
         }
         check(status, "RegDeleteValueW")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Справжній реєстр, лише читання: ключ версії Windows є на кожній системі.
+    #[test]
+    fn value_names_lists_real_key() {
+        let key = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+        let names = WinRegistry.value_names(RegHive::LocalMachine, key).unwrap();
+        assert!(names.iter().any(|n| n == "ProductName"), "{names:?}");
+        assert!(WinRegistry
+            .value_names(RegHive::LocalMachine, r"SOFTWARE\OptimaX-no-such-key")
+            .unwrap()
+            .is_empty());
     }
 }

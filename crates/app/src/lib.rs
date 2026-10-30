@@ -30,8 +30,8 @@ pub fn run() -> anyhow::Result<()> {
 #[cfg(windows)]
 mod app {
     use crate::commands::{
-        ab, audit, cleanup, diagnosis, feedback, gamemode, laptop, metrics, network, system,
-        tweaks, upscale,
+        ab, audit, cleanup, diagnosis, feedback, gamemode, laptop, metrics, network, startup,
+        system, tweaks, upscale,
     };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
@@ -183,6 +183,7 @@ mod app {
             .invoke_handler(tauri::generate_handler![
                 system::app_info,
                 feedback::feedback_report,
+                startup::startup_list,
                 feedback::feedback_reveal,
                 system::get_catalog,
                 system::startup_report,

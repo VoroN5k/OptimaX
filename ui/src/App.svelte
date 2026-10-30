@@ -18,6 +18,7 @@
   import Optimization from "./screens/Optimization.svelte";
   import Placeholder from "./screens/Placeholder.svelte";
   import Settings from "./screens/Settings.svelte";
+  import Startup from "./screens/Startup.svelte";
   import Upscale from "./screens/Upscale.svelte";
 
   let dotsStats = $state<DotsStats | null>(null);
@@ -125,6 +126,8 @@
           <Network />
         {:else if ui.screen === "cleanup"}
           <Cleanup />
+        {:else if ui.screen === "startup"}
+          <Startup />
         {:else if ui.screen === "upscale"}
           <Upscale />
         {:else if ui.screen === "backups"}

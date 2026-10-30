@@ -3,4 +3,4 @@
 /**
  * Ідентифікатор твіку.
  */
-export type TweakId = "power_scheme" | "game_mode" | "process_priority" | "service" | "standby_purge" | "power_mode" | "gpu_preference";
+export type TweakId = "power_scheme" | "game_mode" | "process_priority" | "service" | "standby_purge" | "power_mode" | "gpu_preference" | "startup_app";

@@ -12,6 +12,8 @@ mod error;
 #[cfg(windows)]
 mod log_layer;
 #[cfg(windows)]
+mod report;
+#[cfg(windows)]
 mod settings;
 #[cfg(windows)]
 mod state;
@@ -28,11 +30,12 @@ pub fn run() -> anyhow::Result<()> {
 #[cfg(windows)]
 mod app {
     use crate::commands::{
-        ab, audit, cleanup, diagnosis, gamemode, laptop, metrics, network, system, tweaks, upscale,
+        ab, audit, cleanup, diagnosis, feedback, gamemode, laptop, metrics, network, system,
+        tweaks, upscale,
     };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
-    use crate::state::{lock, AppState};
+    use crate::state::{lock, AppState, LOG_TAIL};
     use optimax_gamemode::restore_leftovers;
     use tauri::{Emitter, Manager, RunEvent};
     use tracing_subscriber::layer::SubscriberExt;
@@ -153,6 +156,12 @@ mod app {
                     .spawn(move || {
                         for line in log_rx {
                             let _ = handle.emit("log", &line);
+                            let state = handle.state::<AppState>();
+                            let mut tail = lock(&state.log_tail);
+                            if tail.len() >= LOG_TAIL {
+                                tail.pop_front();
+                            }
+                            tail.push_back(line);
                         }
                     })?;
                 let state = app.state::<AppState>();
@@ -173,6 +182,8 @@ mod app {
             })
             .invoke_handler(tauri::generate_handler![
                 system::app_info,
+                feedback::feedback_report,
+                feedback::feedback_reveal,
                 system::get_catalog,
                 system::startup_report,
                 system::get_settings,

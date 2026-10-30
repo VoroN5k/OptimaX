@@ -10,7 +10,7 @@ use optimax_frametime::{BundledPresentMon, CancelToken};
 use optimax_metrics::Sampler;
 use optimax_tweaks::restore::WinRestorePoint;
 use optimax_tweaks::{Confirm, Engine, FileStore, Plan};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// Системні інтерфейси — порожні структури без стану, тому `static` безпечні й незмінні.
@@ -90,7 +90,14 @@ pub struct AppState {
     pub net_test: Mutex<Option<optimax_network::CancelToken>>,
     /// Очищення диска: скан, план, точка відновлення сесії.
     pub cleanup: Mutex<crate::commands::cleanup::CleanupState>,
+    /// Останній результат діагностики (для звіту для відгуку).
+    pub last_diagnosis: Mutex<Option<crate::dto::DiagnosisResult>>,
+    /// Останні рядки журналу дій (для звіту для відгуку), не більше [`LOG_TAIL`].
+    pub log_tail: Mutex<VecDeque<crate::log_layer::LogLine>>,
 }
+
+/// Скільки останніх рядків журналу дій пам'ятаємо для звіту.
+pub const LOG_TAIL: usize = 1000;
 
 impl AppState {
     /// Створює стан. Журнал змін — `%LOCALAPPDATA%\OptimaX\journal.json`.
@@ -117,6 +124,8 @@ impl AppState {
             upscale: Mutex::new(None),
             net_test: Mutex::new(None),
             cleanup: Mutex::new(Default::default()),
+            last_diagnosis: Mutex::new(None),
+            log_tail: Mutex::new(VecDeque::with_capacity(LOG_TAIL)),
         })
     }
 

@@ -51,6 +51,18 @@
   `Impact::Info`, `Category::Display`, впевненість 70 + 25 × частка, з порадою.
 - Не перевірено на реальній грі у вікні — потрібен запис користувачем.
 
+## 2c. Звіт для відгуку (не закомічено)
+
+- `crates/app/src/report.rs` — чисті функції з тестами: `redact` (заміна USERPROFILE /
+  USERNAME / COMPUTERNAME без урахування регістру ASCII, лише цілими словами, імена < 3
+  символів не чіпаються) і `summarize_cleanup_journal` (останні 20 сеансів, замість `lines`
+  — кількість і до 20 рядків не `deleted/quarantined/restored`).
+- `commands/feedback.rs`: `feedback_report` (пише `reports\optimax-report-<дата>-<unix>.json`),
+  `feedback_reveal` (лише файли з теки звітів). `AppState.log_tail` (1000 рядків, наповнює
+  потік `optimax-ui-log`) і `AppState.last_diagnosis` (пишеться перед `diag-done`).
+- Нових залежностей немає (zip свідомо не робили — один JSON).
+- Далі за планом користувача: WHEA/TDR із журналу подій, потім екран «Автозавантаження».
+
 ## 3. Поточна робота: гілка `feature/cleaning` (модуль «Очищення», CLAUDE.md розд. 11)
 
 Стан: реалізовано, **не закомічено** (комітить користувач). Перевірки зелені (fmt, clippy

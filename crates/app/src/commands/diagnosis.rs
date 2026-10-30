@@ -132,7 +132,10 @@ pub fn diag_start(
             })();
             *lock(&app.state::<AppState>().recording) = None;
             let _ = match result {
-                Ok(r) => app.emit("diag-done", r),
+                Ok(r) => {
+                    *lock(&app.state::<AppState>().last_diagnosis) = Some(r.clone());
+                    app.emit("diag-done", r)
+                }
                 Err(e) => app.emit("diag-error", e),
             };
         })?;

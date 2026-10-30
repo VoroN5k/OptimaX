@@ -260,7 +260,7 @@ fn failed(e: impl std::fmt::Display) -> CmdError {
 }
 
 /// `%LOCALAPPDATA%\OptimaX`.
-fn data_dir() -> CmdResult<String> {
+pub(crate) fn data_dir() -> CmdResult<String> {
     let base = std::env::var("LOCALAPPDATA").map_err(|_| failed("немає LOCALAPPDATA"))?;
     path::normalize(&base)
         .map(|b| path::join(&b, "OptimaX"))
@@ -293,7 +293,7 @@ fn quarantine_index() -> CmdResult<String> {
     Ok(path::join(&data_dir()?, "quarantine.json"))
 }
 
-fn journal_path() -> CmdResult<String> {
+pub(crate) fn journal_path() -> CmdResult<String> {
     Ok(path::join(&data_dir()?, "cleanup-journal.json"))
 }
 

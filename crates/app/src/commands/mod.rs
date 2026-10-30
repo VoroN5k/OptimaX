@@ -4,6 +4,7 @@ pub mod ab;
 pub mod audit;
 pub mod cleanup;
 pub mod diagnosis;
+pub mod feedback;
 pub mod gamemode;
 pub mod laptop;
 pub mod metrics;

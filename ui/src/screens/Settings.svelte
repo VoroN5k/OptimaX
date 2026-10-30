@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { api } from "../lib/api";
+  import { api, asCmdError } from "../lib/api";
   import type { AnimationLevel } from "../lib/bindings/AnimationLevel";
   import type { DotsStats } from "../lib/dots";
   import { tk } from "../lib/i18n";
   import { ui } from "../lib/state.svelte";
+  import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
   import Page from "../components/Page.svelte";
   import Segmented from "../components/Segmented.svelte";
@@ -13,6 +14,32 @@
 
   async function save() {
     await api.setSettings($state.snapshot(ui.settings));
+  }
+
+  // Звіт для відгуку: збирає бекенд, файл користувач переглядає й надсилає сам.
+  let reportBusy = $state(false);
+  let reportPath = $state<string | null>(null);
+  let reportError = $state<string | null>(null);
+
+  async function makeReport() {
+    reportBusy = true;
+    reportError = null;
+    try {
+      reportPath = await api.feedbackReport();
+    } catch (e) {
+      reportError = asCmdError(e).message;
+    } finally {
+      reportBusy = false;
+    }
+  }
+
+  async function revealReport() {
+    if (!reportPath) return;
+    try {
+      await api.feedbackReveal(reportPath);
+    } catch (e) {
+      reportError = asCmdError(e).message;
+    }
   }
 </script>
 
@@ -57,6 +84,33 @@
     </div>
   </Card>
 
+  <Card title={tk("ui.feedback.title")}>
+    <div class="rows">
+      <p class="muted">{tk("ui.feedback.intro")}</p>
+      <ul class="small muted list">
+        <li>{tk("ui.feedback.item.system")}</li>
+        <li>{tk("ui.feedback.item.diagnosis")}</li>
+        <li>{tk("ui.feedback.item.journals")}</li>
+        <li>{tk("ui.feedback.item.log")}</li>
+      </ul>
+      <p class="small muted">{tk("ui.feedback.privacy")}</p>
+      <div class="actions">
+        <Button variant="primary" icon="copy" loading={reportBusy} onclick={makeReport}>{tk("ui.feedback.create")}</Button>
+        {#if reportPath}
+          <Button variant="secondary" icon="folder" onclick={revealReport}>{tk("ui.clean.reveal")}</Button>
+        {/if}
+      </div>
+      <div aria-live="polite">
+        {#if reportPath}
+          <p class="small">{tk("ui.feedback.saved")} <span class="mono path" title={reportPath}>{reportPath}</span></p>
+        {/if}
+        {#if reportError}
+          <p class="small error">{tk("ui.feedback.error", { message: reportError })}</p>
+        {/if}
+      </div>
+    </div>
+  </Card>
+
   <Card title={tk("ui.settings.about")}>
     <dl class="kv">
       <dt>{tk("ui.settings.version")}</dt><dd>{ui.info?.version ?? "—"}</dd>
@@ -89,5 +143,24 @@
   }
   dd {
     margin: 0;
+  }
+  p {
+    margin: 0;
+  }
+  .list {
+    margin: 0;
+    padding-left: calc(var(--space) * 5);
+    display: grid;
+    gap: calc(var(--space) * 1);
+  }
+  .actions {
+    display: flex;
+    gap: calc(var(--space) * 2);
+  }
+  .path {
+    overflow-wrap: anywhere;
+  }
+  .error {
+    color: var(--danger);
   }
 </style>

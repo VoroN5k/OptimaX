@@ -50,6 +50,9 @@ export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
   catalog: () => invoke<Record<string, string>>("get_catalog"),
   startupReport: () => invoke<StartupReport>("startup_report"),
+  /** Зберігає звіт для відгуку й повертає шлях до файлу. */
+  feedbackReport: () => invoke<string>("feedback_report"),
+  feedbackReveal: (path: string) => invoke<void>("feedback_reveal", { path }),
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
 

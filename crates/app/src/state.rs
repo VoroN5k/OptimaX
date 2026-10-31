@@ -94,6 +94,9 @@ pub struct AppState {
     pub last_diagnosis: Mutex<Option<crate::dto::DiagnosisResult>>,
     /// Останні рядки журналу дій (для звіту для відгуку), не більше [`LOG_TAIL`].
     pub log_tail: Mutex<VecDeque<crate::log_layer::LogLine>>,
+    /// Знімок процесів для вибору гри: CPU рахується за час від попереднього запиту
+    /// (UI питає раз на кілька секунд), а не за коротке вікно — цифри стабільні.
+    pub processes: Mutex<Option<sysinfo::System>>,
 }
 
 /// Скільки останніх рядків журналу дій пам'ятаємо для звіту.
@@ -125,6 +128,7 @@ impl AppState {
             cleanup: Mutex::new(Default::default()),
             last_diagnosis: Mutex::new(None),
             log_tail: Mutex::new(VecDeque::with_capacity(LOG_TAIL)),
+            processes: Mutex::new(None),
         })
     }
 

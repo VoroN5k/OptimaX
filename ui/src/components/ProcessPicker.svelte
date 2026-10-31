@@ -3,25 +3,46 @@
   import { api } from "../lib/api";
   import type { ProcessEntry } from "../lib/bindings/ProcessEntry";
   import { tk } from "../lib/i18n";
+  import { ui } from "../lib/state.svelte";
   import Button from "./Button.svelte";
 
   // Вибір exe гри: зі списку запущених (найважчі зверху) або вручну.
   let { value = $bindable(""), label }: { value?: string; label: string } = $props();
 
+  /** Як часто оновлювати список, поки сторінка відкрита. */
+  const POLL_MS = 2000;
+
   let list = $state<ProcessEntry[]>([]);
   let loading = $state(false);
+  /** Курсор над кнопками процесів: не переставляємо їх під мишею. */
+  let hovering = $state(false);
+  let busy = false;
   const id = `pp-${Math.random().toString(36).slice(2, 8)}`;
 
-  async function refresh() {
-    loading = true;
+  async function refresh(manual = false) {
+    if (busy) return;
+    busy = true;
+    if (manual) loading = true;
     try {
       list = await api.listProcesses();
+    } catch {
+      // Тимчасова помилка — лишаємо попередній список, наступна спроба за POLL_MS.
     } finally {
+      busy = false;
       loading = false;
     }
   }
 
-  onMount(refresh);
+  onMount(() => {
+    void refresh(true);
+    // Автооновлення лише коли це має сенс: вікно видиме, не йде запис кадрів / A/B
+    // (програма не має навантажувати систему під час замірів), курсор не над кнопками.
+    const timer = setInterval(() => {
+      if (document.hidden || ui.measuring || hovering) return;
+      void refresh();
+    }, POLL_MS);
+    return () => clearInterval(timer);
+  });
 </script>
 
 <div class="picker">
@@ -40,10 +61,16 @@
         <option value={p.name}>{p.name} — {p.cpu_percent.toFixed(1)}% CPU, {p.memory_mib} МіБ</option>
       {/each}
     </datalist>
-    <Button small icon="undo" label={tk("ui.picker.refresh")} {loading} onclick={refresh} />
+    <Button small icon="refresh" label={tk("ui.picker.refresh")} {loading} onclick={() => refresh(true)} />
   </div>
   {#if list.length}
-    <div class="chips" role="group" aria-label={tk("ui.picker.top")}>
+    <div
+      class="chips"
+      role="group"
+      aria-label={tk("ui.picker.top")}
+      onpointerenter={() => (hovering = true)}
+      onpointerleave={() => (hovering = false)}
+    >
       {#each list.slice(0, 6) as p (p.name)}
         <button type="button" class="chip" class:selected={p.name === value} onclick={() => (value = p.name)}>
           {p.name} <span class="dim">{p.cpu_percent.toFixed(1)}%</span>

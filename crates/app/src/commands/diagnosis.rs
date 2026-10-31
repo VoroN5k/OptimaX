@@ -16,14 +16,29 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Процеси для вибору гри: унікальні імена, найважчі за CPU зверху.
 #[tauri::command]
-pub async fn list_processes() -> CmdResult<Vec<ProcessEntry>> {
-    blocking(|| {
+pub async fn list_processes(app: AppHandle) -> CmdResult<Vec<ProcessEntry>> {
+    blocking(move || {
         use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
-        let mut sys = System::new();
         let kind = ProcessRefreshKind::nothing().with_cpu().with_memory();
-        sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
-        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL.max(Duration::from_millis(300)));
-        sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+        let state = app.state::<AppState>();
+        let mut guard = lock(&state.processes);
+        // Перший запит — два заміри з короткою паузою; далі CPU рахується за час від
+        // попереднього запиту (UI оновлює список раз на кілька секунд), тож без очікування.
+        let sys = match guard.as_mut() {
+            Some(sys) => {
+                sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+                sys
+            }
+            None => {
+                let mut sys = System::new();
+                sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+                std::thread::sleep(
+                    sysinfo::MINIMUM_CPU_UPDATE_INTERVAL.max(Duration::from_millis(300)),
+                );
+                sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+                guard.insert(sys)
+            }
+        };
         let cores = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1) as f32;

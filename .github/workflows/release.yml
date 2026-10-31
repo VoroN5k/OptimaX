@@ -1,0 +1,163 @@
+# Реліз OptimaX: push тегу `v<версія>` → перевірки → підписана збірка → GitHub Release.
+#
+# Що робить (те саме, що docs/RELEASE.md, кроки 2, 4–6):
+#   1. тег має збігатися з версією в Cargo.toml, tauri.conf.json і ui/package.json, а в
+#      CHANGELOG.md має бути розділ `## [<версія>]`;
+#   2. fmt, clippy, тести, svelte-check, check:i18n;
+#   3. інсталятор NSIS з підписом оновлення + latest.json;
+#   4. портативний zip, SHA-256, опис релізу з CHANGELOG;
+#   5. звичайний (не pre-release) реліз із трьома файлами.
+#
+# Секрети — у середовищі `release` (Settings → Environments), доступ лише для тегів `v*`:
+#   TAURI_SIGNING_PRIVATE_KEY           — вміст %USERPROFILE%\.tauri\optimax.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  — пароль ключа
+#
+# Сторонніх actions немає, крім офіційних checkout і setup-node, закріплених за SHA коміту.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    environment: release
+    permissions:
+      contents: write
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Версія з тегу
+        id: ver
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+$') { throw "Тег має бути виду v1.2.3: $env:TAG" }
+          $v = $env:TAG.Substring(1)
+          $cargo = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          $tauri = (Get-Content crates/app/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $npm = (Get-Content ui/package.json -Raw | ConvertFrom-Json).version
+          if ($v -ne $cargo -or $v -ne $tauri -or $v -ne $npm) {
+            throw "Тег $v не збігається з версіями: Cargo.toml=$cargo, tauri.conf.json=$tauri, package.json=$npm"
+          }
+          if (-not (Select-String -Path CHANGELOG.md -SimpleMatch "## [$v]" -Quiet)) {
+            throw "У CHANGELOG.md немає розділу ## [$v]"
+          }
+          if ((Get-Content crates/app/tauri.conf.json -Raw) -match 'REPLACE_WITH_PUBLIC_KEY') {
+            throw "У tauri.conf.json немає публічного ключа оновлень"
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Rust
+        run: |
+          rustup toolchain install 1.95 --profile minimal --component rustfmt,clippy
+          rustup default 1.95
+          rustc --version
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: npm ci
+        working-directory: ui
+        run: npm ci
+
+      - name: Перевірки Rust
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+
+      - name: Перевірки UI
+        working-directory: ui
+        run: |
+          npm run check
+          npm run check:i18n
+
+      - name: Збірка інсталятора з підписом
+        working-directory: ui
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw "Немає секрету TAURI_SIGNING_PRIVATE_KEY у середовищі release" }
+          npm run app:bundle
+          npm run release:latest
+
+      - name: Файли релізу й опис
+        env:
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          $dir = "release/OptimaX-$env:V"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item target/release/optimax.exe "$dir/OptimaX.exe"
+          Copy-Item THIRD_PARTY_LICENSES "$dir/THIRD_PARTY_LICENSES.txt"
+          $zip = "release/OptimaX-$env:V-win-x64.zip"
+          $setup = "release/OptimaX-$env:V-win-x64-setup.exe"
+          Compress-Archive -Path "$dir/*" -DestinationPath $zip -Force
+          Copy-Item "target/release/bundle/nsis/OptimaX_$($env:V)_x64-setup.exe" $setup
+          $hSetup = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+          $hZip = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+
+          # «Що нового» — розділ CHANGELOG.md цієї версії (до наступного «## [»).
+          $log = Get-Content CHANGELOG.md -Raw
+          $start = $log.IndexOf("## [$env:V]")
+          $body = $log.Substring($log.IndexOf("`n", $start) + 1)
+          $end = $body.IndexOf("`n## [")
+          if ($end -ge 0) { $body = $body.Substring(0, $end) }
+
+          $notes = @"
+          Бета-версія: можливі помилки. Відгуки — в Issues або напряму автору.
+
+          ### Що потрібно
+          - Windows 10/11 x64
+          - WebView2 (на Win11 є; на Win10 програма підкаже, якщо немає)
+          - права адміністратора (Windows спитає при запуску)
+
+          ### Як встановити
+          - **Інсталятор:** завантаж ``OptimaX-$env:V-win-x64-setup.exe`` і запусти. Далі оновлення — з програми («Налаштування → Оновлення»).
+          - **Без встановлення:** завантаж ``OptimaX-$env:V-win-x64.zip``, розпакуй, запусти ``OptimaX.exe``.
+
+          Windows може показати «Windows захистив ваш ПК» — програма не підписана сертифікатом. Натисни «Докладніше» → «Однаково запустити».
+
+          ### Що нового
+          $($body.Trim())
+
+          ### SHA-256
+          - ``OptimaX-$env:V-win-x64-setup.exe``: ``$hSetup``
+          - ``OptimaX-$env:V-win-x64.zip``: ``$hZip``
+          "@
+          Set-Content -Path release/notes.md -Value $notes -Encoding utf8NoBOM
+          Get-Content release/notes.md
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          gh release create "v$env:V" `
+            "release/OptimaX-$env:V-win-x64-setup.exe" `
+            "release/OptimaX-$env:V-win-x64.zip" `
+            "release/latest.json" `
+            --title "OptimaX $env:V beta" `
+            --notes-file release/notes.md `
+            --verify-tag

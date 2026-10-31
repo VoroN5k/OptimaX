@@ -1,6 +1,6 @@
 //! Спільні типи OptimaX: помилки, рівні впливу, знахідки, i18n, дати та доступ до реєстру.
 //!
-//! `unsafe` дозволено лише в платформних модулях `*::windows`, `clock`, `dialog`, `input` і `toast` (FFI до WinAPI).
+//! `unsafe` дозволено лише в платформних модулях `*::windows`, `clock`, `dialog`, `input`, `taskbar` і `toast` (FFI до WinAPI).
 
 pub mod clock;
 pub mod datadir;
@@ -17,6 +17,7 @@ pub mod registry;
 pub mod safefs;
 pub mod service;
 pub mod sysdirs;
+pub mod taskbar;
 pub mod toast;
 
 pub use date::CivilDate;

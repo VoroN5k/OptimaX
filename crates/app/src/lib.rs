@@ -163,6 +163,10 @@ mod app {
             .manage(state)
             .plugin(tauri_plugin_updater::Builder::new().build())
             .setup(move |app| {
+                // Велика іконка для панелі завдань (Tauri ставить лише малу).
+                if let Some(Ok(hwnd)) = app.get_webview_window("main").map(|w| w.hwnd()) {
+                    optimax_core::taskbar::set_big_icon(hwnd.0 as isize);
+                }
                 let handle = app.handle().clone();
                 std::thread::Builder::new()
                     .name("optimax-ui-log".into())

@@ -21,6 +21,36 @@
 
 ---
 
+## Автоматичний реліз (GitHub Actions) — основний шлях
+
+`.github/workflows/release.yml` робить кроки 2, 4, 5 і 6 сам. Від тебе — лише версія,
+CHANGELOG і тег:
+
+1. Підняти версію (крок 1) і перейменувати `[Unreleased]` у CHANGELOG (крок 3), закомітити,
+   `git push`.
+2. `git tag -a v0.1.2 -m "OptimaX 0.1.2"` і `git push origin v0.1.2`.
+3. Вкладка **Actions** → «release» — ≈ 15–25 хв. Готовий реліз з'явиться в **Releases**.
+
+Workflow перевіряє, що тег збігається з версією у трьох файлах, що в CHANGELOG є розділ
+версії й у конфігу є публічний ключ; далі fmt, clippy, тести, svelte-check, i18n,
+підписаний інсталятор, zip, `latest.json`, SHA-256, опис і звичайний (не pre-release) реліз.
+Щось червоне — релізу не буде; виправ, видали тег (`git push --delete origin v0.1.2`,
+`git tag -d v0.1.2`) і постав знову.
+
+**Один раз налаштувати секрети** (Settings → Environments → **New environment** `release`):
+- **Deployment branches and tags** → «Selected branches and tags» → правило для тегів `v*`;
+- **Environment secrets**: `TAURI_SIGNING_PRIVATE_KEY` — **вміст** файлу
+  `%USERPROFILE%\.tauri\optimax.key` (весь текст), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` —
+  пароль ключа.
+
+Ключ у секретах GitHub доступний лише workflow, що працюють у середовищі `release`, і лише
+для тегів `v*`. Хто має право запису в репозиторій, теоретично може змінити workflow —
+тож права запису давай лише тим, кому довіряєш.
+
+Ручний шлях нижче лишається запасним (і для перевірки збірки на своєму ПК).
+
+---
+
 ## 0. Один раз: підготовка
 
 **Інструменти на твоєму ПК** (у тебе вже є): Rust ≥ 1.95 з MSVC (`rustc --version`),

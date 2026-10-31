@@ -71,11 +71,12 @@ fn main() -> anyhow::Result<()> {
         }
         for p in &s.top_processes {
             println!(
-                "          {:>6} {:<28} {:>5.1}% CPU {:>6} МіБ",
+                "          {:>6} {:<28} {:>5.1}% CPU {:>6} МіБ {:>6} КіБ/с I/O",
                 p.pid,
                 p.name,
                 p.cpu_percent,
-                p.memory_bytes / MIB
+                p.memory_bytes / MIB,
+                p.io_bytes_per_sec / 1024
             );
         }
     }

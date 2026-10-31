@@ -107,9 +107,10 @@
       {tk("ui.chart.spikes", { n: chart.spikes_total })}
       {#if chart.spikes.length < chart.spikes_total} · {tk("ui.chart.shown", { n: chart.spikes.length })}{/if}
     </span>
-    <span class="legend small muted" aria-hidden="true">
-      <span><i class="dot found"></i>{tk("ui.chart.legend_found")}</span>
-      <span><i class="dot unknown"></i>{tk("ui.chart.legend_unknown")}</span>
+    <span class="legend small muted">
+      <span><i class="dash" aria-hidden="true"></i>{tk("ui.chart.normal", { v: chart.median_ms.toFixed(1) })}</span>
+      <span aria-hidden="true"><i class="dot found"></i>{tk("ui.chart.legend_found")}</span>
+      <span aria-hidden="true"><i class="dot unknown"></i>{tk("ui.chart.legend_unknown")}</span>
     </span>
   </div>
 
@@ -134,9 +135,6 @@
         {tk("ui.chart.gap")}
       </span>
     {/each}
-    <span class="ylab mono small dim" style="top: {(y(chart.median_ms) / H) * 100}%">
-      {tk("ui.chart.normal", { v: chart.median_ms.toFixed(1) })}
-    </span>
 
     <div class="marks" role="listbox" tabindex="-1" aria-label={tk("ui.chart.list")} onkeydown={onKey}>
       {#each chart.spikes as s, i (s.t_ms)}
@@ -197,6 +195,7 @@
   }
   .legend {
     display: flex;
+    flex-wrap: wrap;
     gap: calc(var(--space) * 4);
   }
   .legend span {
@@ -215,6 +214,11 @@
   }
   .dot.unknown {
     background: var(--danger);
+  }
+  .dash {
+    width: 14px;
+    border-top: 1px dashed var(--text-dim);
+    display: inline-block;
   }
   .plot {
     position: relative;

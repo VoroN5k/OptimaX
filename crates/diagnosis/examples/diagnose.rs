@@ -38,6 +38,7 @@ fn context(hz_override: Option<u32>) -> Context {
     Context {
         display_hz,
         config_findings,
+        shader_cache_files: Vec::new(),
     }
 }
 

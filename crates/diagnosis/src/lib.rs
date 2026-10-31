@@ -6,10 +6,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod chart;
 pub mod rules;
 pub mod timeline;
 
-pub use timeline::{FramePoint, GpuPoint, SamplePoint, Timeline};
+pub use chart::{ChartPoint, FrametimeChart, SpikeMark};
+pub use timeline::{FramePoint, GpuPoint, IoProcess, SamplePoint, ShaderWrite, Timeline};
 
 use optimax_core::{Category, Finding, FindingBuilder, Impact, Text};
 use optimax_frametime::{FrameStats, Recording};
@@ -86,6 +88,18 @@ pub struct Diagnosis {
     pub bottleneck: Bottleneck,
     /// Вердикти: спершу підсумок, далі за впливом і впевненістю.
     pub verdicts: Vec<Verdict>,
+    /// Графік frametime із позначками ривків (немає, якщо кадрів немає).
+    #[serde(default)]
+    pub chart: Option<FrametimeChart>,
+}
+
+/// Файл кешу шейдерів, змінений під час запису (за годинником, бо так його бачить ФС).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheFile {
+    /// Час останньої зміни, Unix-мс.
+    pub modified_unix_ms: i64,
+    /// Розмір, байт.
+    pub bytes: u64,
 }
 
 /// Додатковий контекст.
@@ -95,6 +109,23 @@ pub struct Context {
     pub display_hz: Option<u32>,
     /// Знахідки аудиту конфігурації; у звіт потрапляють ті, що вище інформаційного рівня.
     pub config_findings: Vec<Finding>,
+    /// Файли кешу шейдерів драйвера, змінені під час запису.
+    pub shader_cache_files: Vec<CacheFile>,
+}
+
+/// Переносить файли кешу шейдерів на шкалу запису. Береться лише те, що змінилося від старту
+/// запису до кінця кадрів (плюс запас на відкладений запис драйвером).
+pub fn shader_writes(files: &[CacheFile], start_unix_ms: i64, end_ms: f64) -> Vec<ShaderWrite> {
+    let mut out: Vec<ShaderWrite> = files
+        .iter()
+        .map(|f| ShaderWrite {
+            t_ms: (f.modified_unix_ms - start_unix_ms) as f64,
+            bytes: f.bytes,
+        })
+        .filter(|w| w.t_ms >= 0.0 && w.t_ms <= end_ms + rules::SHADER_AFTER_MS)
+        .collect();
+    out.sort_by(|a, b| a.t_ms.total_cmp(&b.t_ms));
+    out
 }
 
 fn summary(
@@ -137,6 +168,7 @@ fn summary(
 pub fn diagnose_timeline(tl: &Timeline, ctx: &Context) -> Diagnosis {
     let analysis = Analysis::new(tl, ctx.display_hz);
     let stats = analysis.as_ref().map(|a| a.stats.clone());
+    let chart = analysis.as_ref().map(chart::frametime_chart);
     let seconds = tl.duration_ms() / 1000.0;
     let enough = analysis.is_some()
         && tl.frames.len() >= MIN_FRAMES
@@ -155,6 +187,7 @@ pub fn diagnose_timeline(tl: &Timeline, ctx: &Context) -> Diagnosis {
             )
             .into()],
             stats,
+            chart,
         };
     };
 
@@ -223,6 +256,7 @@ pub fn diagnose_timeline(tl: &Timeline, ctx: &Context) -> Diagnosis {
         stats: Some(a.stats),
         bottleneck,
         verdicts,
+        chart,
     }
 }
 
@@ -247,12 +281,19 @@ pub fn upscale_advice(bottleneck: Bottleneck, confidence: u8) -> Option<Finding>
 /// Діагностика запису. Якщо кадрів гри немає — «недостатньо даних».
 pub fn diagnose(rec: &Recording, ctx: &Context) -> Diagnosis {
     match Timeline::from_recording(rec) {
-        Some(tl) => diagnose_timeline(&tl, ctx),
+        Some(mut tl) => {
+            if let Some(start) = rec.start_unix_ms {
+                let end_ms = tl.frames.last().map_or(0.0, |f| f.t_ms);
+                tl.shader_writes = shader_writes(&ctx.shader_cache_files, start, end_ms);
+            }
+            diagnose_timeline(&tl, ctx)
+        }
         None => Diagnosis {
             game: String::new(),
             stats: None,
             bottleneck: Bottleneck::InsufficientData,
             verdicts: vec![summary("summary.insufficient", 100, None, "", 0.0).into()],
+            chart: None,
         },
     }
 }

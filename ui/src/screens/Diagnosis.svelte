@@ -9,6 +9,7 @@
   import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
   import FindingCard from "../components/FindingCard.svelte";
+  import FrametimeChart from "../components/FrametimeChart.svelte";
   import Page from "../components/Page.svelte";
   import ProcessPicker from "../components/ProcessPicker.svelte";
   import RecordStatus from "../components/RecordStatus.svelte";
@@ -122,6 +123,11 @@
         {#if result.end_reason !== "completed"} · {tk(`ui.rec.end.${result.end_reason}`)}{/if}
       </p>
     </Card>
+    {#if result.diagnosis.chart}
+      <Card title={tk("ui.chart.title")} subtitle={tk("ui.chart.subtitle")}>
+        <FrametimeChart chart={result.diagnosis.chart} />
+      </Card>
+    {/if}
     <div class="list">
       {#each rest as v, i (i)}
         <FindingCard finding={v.finding} action={v.finding.id === "upscale.helps" ? openUpscale : undefined} />

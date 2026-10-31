@@ -1,7 +1,7 @@
 //! Правила вердиктів. Кожне — чиста функція над [`Analysis`], повертає знахідку з
 //! впевненістю й доказами або `None`, якщо ознак недостатньо. Пороги — з CLAUDE.md, розд. 9.
 
-use crate::timeline::{SamplePoint, Timeline};
+use crate::timeline::{SamplePoint, ShaderWrite, Timeline};
 use optimax_core::{Category, Finding, FindingBuilder, Impact, Text};
 use optimax_frametime::{find_spikes, FrameStats, PresentMode};
 use optimax_metrics::ThrottleReason;
@@ -26,9 +26,20 @@ const GPU_CLOCK_MIN_FRACTION: f64 = 0.6;
 pub const BACKGROUND_CPU_PCT: f32 = 5.0;
 /// Мінімальна активність диска, яку варто пов'язувати з фризом.
 const DISK_BURST_MIN_BYTES: f64 = 20.0 * 1024.0 * 1024.0;
-
-/// Ознака, яку перевіряємо в кожному знімку.
-type SamplePredicate = Box<dyn Fn(&SamplePoint) -> bool>;
+/// Рушій сканування Microsoft Defender.
+pub const DEFENDER_PROCESS: &str = "MsMpEng.exe";
+/// Сканування Defender помітне від цієї частки всього CPU (навіть один потік на багатоядерному
+/// процесорі — це кілька відсотків).
+pub const DEFENDER_CPU_PCT: f32 = 2.0;
+/// Мінімальний сплеск жорстких page faults, сторінок/с (≈ 2 МБ/с при сторінці 4 КБ).
+pub const HARD_FAULT_MIN: f64 = 500.0;
+/// Пам'ять майже заповнена нижче цієї частки вільної RAM. Без цього сплеск page faults —
+/// це звичайне читання файлів гри (причина «диск»), а не нестача пам'яті.
+pub const LOW_RAM_FRACTION: f64 = 0.15;
+/// Вікно до ривка для записів у кеш шейдерів.
+pub const SHADER_BEFORE_MS: f64 = 200.0;
+/// Вікно після ривка: драйвер пише файл кешу під час компіляції або невдовзі після неї.
+pub const SHADER_AFTER_MS: f64 = 1500.0;
 
 fn draft(id: &'static str, category: Category, impact: Impact, confidence: u8) -> FindingBuilder {
     FindingBuilder::new("diag", id, category, impact, confidence)
@@ -58,6 +69,8 @@ pub struct Analysis<'a> {
     pub stats: FrameStats,
     /// Час піків frametime, мс.
     pub spike_times: Vec<f64>,
+    /// Піки: (час, мс; тривалість кадру, мс; локальна медіана, мс).
+    pub spikes: Vec<(f64, f64, f64)>,
     /// Частота монітора, Гц (якщо відома).
     pub display_hz: Option<u32>,
 }
@@ -67,14 +80,16 @@ impl<'a> Analysis<'a> {
     pub fn new(timeline: &'a Timeline, display_hz: Option<u32>) -> Option<Self> {
         let ft: Vec<f64> = timeline.frames.iter().map(|f| f.frametime_ms).collect();
         let stats = optimax_frametime::frame_stats(&ft)?;
-        let spike_times = find_spikes(&ft)
+        let spikes: Vec<(f64, f64, f64)> = find_spikes(&ft)
             .iter()
-            .map(|s| timeline.frames[s.index].t_ms)
+            .map(|s| (timeline.frames[s.index].t_ms, s.frametime_ms, s.baseline_ms))
             .collect();
+        let spike_times = spikes.iter().map(|s| s.0).collect();
         Some(Self {
             timeline,
             stats,
             spike_times,
+            spikes,
             display_hz,
         })
     }
@@ -436,10 +451,279 @@ pub fn throttling(a: &Analysis<'_>) -> Option<Finding> {
     Some(d.build())
 }
 
-/// Можлива причина фризів і перевірка, чи вона справді частіше трапляється біля піків.
+/// Можлива причина ривка frametime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CauseKind {
+    /// Сканування Microsoft Defender.
+    Defender,
+    /// Нестача RAM: підкачка при майже заповненій пам'яті.
+    Memory,
+    /// Компіляція шейдерів: драйвер записує кеш шейдерів.
+    Shader,
+    /// Сплеск активності диска.
+    Disk,
+    /// Сплеск стороннього процесу.
+    Background,
+    /// Заповнена VRAM.
+    Vram,
+    /// Тепловий тротлінг GPU.
+    Throttle,
+    /// Повне завантаження CPU.
+    CpuFull,
+}
+
+impl CauseKind {
+    /// Усі причини в порядку показу (конкретніші — раніше).
+    pub const ALL: [CauseKind; 8] = [
+        Self::Defender,
+        Self::Memory,
+        Self::Shader,
+        Self::Disk,
+        Self::Background,
+        Self::Vram,
+        Self::Throttle,
+        Self::CpuFull,
+    ];
+
+    /// Ключ тексту «збіг піків з …» (доказ у вердикті мікрофризів).
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Defender => "diag.cause.defender",
+            Self::Memory => "diag.cause.memory",
+            Self::Shader => "diag.cause.shader",
+            Self::Disk => "diag.cause.disk",
+            Self::Background => "diag.cause.background",
+            Self::Vram => "diag.cause.vram",
+            Self::Throttle => "diag.cause.throttle",
+            Self::CpuFull => "diag.cause.cpu_full",
+        }
+    }
+
+    /// Ключ короткого опису біля конкретного ривка на графіку.
+    fn spike_key(self) -> &'static str {
+        match self {
+            Self::Defender => "diag.spike.defender",
+            Self::Memory => "diag.spike.memory",
+            Self::Shader => "diag.spike.shader",
+            Self::Disk => "diag.spike.disk",
+            Self::Background => "diag.spike.background",
+            Self::Vram => "diag.spike.vram",
+            Self::Throttle => "diag.spike.throttle",
+            Self::CpuFull => "diag.spike.cpu_full",
+        }
+    }
+
+    /// Порада для причини (окремим рядком доказів у вердикті мікрофризів).
+    fn advice(self) -> Option<&'static str> {
+        match self {
+            Self::Defender => Some("diag.advice.defender"),
+            Self::Memory => Some("diag.advice.memory"),
+            Self::Shader => Some("diag.advice.shader"),
+            _ => None,
+        }
+    }
+}
+
+fn is_defender(name: &str) -> bool {
+    name.eq_ignore_ascii_case(DEFENDER_PROCESS)
+}
+
+/// Записи в кеш шейдерів у вікні навколо `t`.
+fn shader_writes_near(tl: &Timeline, t: f64) -> &[ShaderWrite] {
+    let w = &tl.shader_writes;
+    let lo = w.partition_point(|x| x.t_ms < t - SHADER_BEFORE_MS);
+    let hi = w.partition_point(|x| x.t_ms <= t + SHADER_AFTER_MS);
+    &w[lo..hi.max(lo)]
+}
+
+/// Пороги причин, обчислені за весь запис («сплеск» = помітно вище за звичайне).
+pub struct CauseContext {
+    disk_limit: f64,
+    fault_limit: f64,
+    medians: HashMap<String, f32>,
+}
+
+impl CauseContext {
+    /// Рахує пороги для запису.
+    pub fn new(a: &Analysis<'_>) -> Self {
+        let fault_median = median(
+            a.samples()
+                .iter()
+                .filter_map(|s| s.hard_faults_per_sec)
+                .collect(),
+        )
+        .unwrap_or(0.0);
+        Self {
+            disk_limit: disk_threshold(a),
+            fault_limit: (fault_median * 3.0).max(HARD_FAULT_MIN),
+            medians: background_medians(a),
+        }
+    }
+
+    fn burst(&self, name: &str, v: f32) -> bool {
+        v >= self.medians.get(name).copied().unwrap_or(0.0) * 3.0
+    }
+
+    /// Ознака в одному знімку. Кеш шейдерів знімками не описується — див. [`Self::hit_near`].
+    fn sample_hit(&self, kind: CauseKind, p: &SamplePoint) -> bool {
+        match kind {
+            CauseKind::Defender => p
+                .background
+                .iter()
+                .any(|(n, v)| is_defender(n) && *v >= DEFENDER_CPU_PCT && self.burst(n, *v)),
+            CauseKind::Memory => {
+                p.hard_faults_per_sec.is_some_and(|f| f >= self.fault_limit)
+                    && p.mem_available_fraction
+                        .is_some_and(|m| m < LOW_RAM_FRACTION)
+            }
+            CauseKind::Shader => false,
+            CauseKind::Disk => p.disk_bytes_per_sec as f64 >= self.disk_limit,
+            CauseKind::Background => p
+                .background
+                .iter()
+                .any(|(n, v)| !is_defender(n) && *v >= BACKGROUND_CPU_PCT && self.burst(n, *v)),
+            CauseKind::Vram => p
+                .gpu
+                .as_ref()
+                .and_then(|g| g.vram_fraction())
+                .is_some_and(|f| f >= VRAM_FULL_FRACTION),
+            CauseKind::Throttle => p
+                .gpu
+                .as_ref()
+                .is_some_and(|g| g.throttle.iter().any(|r| THERMAL.contains(r))),
+            CauseKind::CpuFull => p.avg_cpu_pct >= 90.0,
+        }
+    }
+
+    /// Чи була ознака поруч із моментом `t` (мс від старту запису).
+    pub fn hit_near(&self, a: &Analysis<'_>, kind: CauseKind, t: f64) -> bool {
+        match kind {
+            CauseKind::Shader => !shader_writes_near(a.timeline, t).is_empty(),
+            _ => a
+                .timeline
+                .samples_near(t, WINDOW_MS)
+                .iter()
+                .any(|p| self.sample_hit(kind, p)),
+        }
+    }
+
+    /// Частка піків з ознакою поруч і «фонова» частка (те саме навколо кожного знімка).
+    fn coincidence(&self, a: &Analysis<'_>, kind: CauseKind) -> (f64, f64) {
+        let share = |times: &mut dyn Iterator<Item = f64>| {
+            let (mut hit, mut all) = (0usize, 0usize);
+            for t in times {
+                all += 1;
+                if self.hit_near(a, kind, t) {
+                    hit += 1;
+                }
+            }
+            if all == 0 {
+                0.0
+            } else {
+                hit as f64 / all as f64
+            }
+        };
+        (
+            share(&mut a.spike_times.iter().copied()),
+            share(&mut a.samples().iter().map(|s| s.t_ms)),
+        )
+    }
+
+    /// Що саме було біля ривка в момент `t` — короткий текст для позначки на графіку.
+    pub fn detail(&self, a: &Analysis<'_>, kind: CauseKind, t: f64) -> Text {
+        let near = a.timeline.samples_near(t, WINDOW_MS);
+        let max_of = |f: &dyn Fn(&SamplePoint) -> Option<f64>| {
+            near.iter().filter_map(f).fold(0.0_f64, f64::max)
+        };
+        let text = Text::new(kind.spike_key());
+        match kind {
+            CauseKind::Defender => text.arg(
+                "cpu",
+                format!(
+                    "{:.0}",
+                    max_of(&|p| p
+                        .background
+                        .iter()
+                        .find(|(n, _)| is_defender(n))
+                        .map(|(_, v)| f64::from(*v)))
+                ),
+            ),
+            CauseKind::Memory => {
+                let free = near
+                    .iter()
+                    .filter_map(|p| p.mem_available_fraction)
+                    .fold(1.0_f64, f64::min);
+                text.arg(
+                    "faults",
+                    format!("{:.0}", max_of(&|p| p.hard_faults_per_sec)),
+                )
+                .arg("free", format!("{:.0}", free * 100.0))
+            }
+            CauseKind::Shader => text.arg("files", shader_writes_near(a.timeline, t).len()),
+            CauseKind::Disk => {
+                let mb = |b: f64| format!("{:.0}", b / (1024.0 * 1024.0));
+                let total = mb(max_of(&|p| Some(p.disk_bytes_per_sec as f64)));
+                // Хто найбільше читав/писав поруч — щоб «диск» не був знеособленим.
+                let who = near
+                    .iter()
+                    .filter_map(|p| p.io_top.as_ref())
+                    .max_by_key(|io| io.bytes_per_sec);
+                match who {
+                    Some(io) => Text::new("diag.spike.disk_by")
+                        .arg("mbps", total)
+                        .arg("name", io.name.as_str())
+                        .arg("pmbps", mb(io.bytes_per_sec as f64)),
+                    None => text.arg("mbps", total),
+                }
+            }
+            CauseKind::Background => {
+                let top = near
+                    .iter()
+                    .flat_map(|p| p.background.iter())
+                    .filter(|(n, v)| !is_defender(n) && self.burst(n, **v))
+                    .max_by(|x, y| x.1.total_cmp(y.1));
+                match top {
+                    Some((n, v)) => text.arg("name", n.as_str()).arg("cpu", format!("{v:.0}")),
+                    None => text.arg("name", "—").arg("cpu", "0"),
+                }
+            }
+            CauseKind::Vram => text.arg(
+                "pct",
+                format!(
+                    "{:.0}",
+                    max_of(&|p| p.gpu.as_ref().and_then(|g| g.vram_fraction())) * 100.0
+                ),
+            ),
+            CauseKind::Throttle => text,
+            CauseKind::CpuFull => text.arg(
+                "pct",
+                format!("{:.0}", max_of(&|p| Some(f64::from(p.avg_cpu_pct)))),
+            ),
+        }
+    }
+}
+
+/// Причина, що стабільно збігається з піками.
 struct Cause {
-    key: &'static str,
+    kind: CauseKind,
     at_spikes: f64,
+}
+
+/// Причини, що збігаються з піками щонайменше в половині випадків і вдвічі частіше, ніж
+/// у звичайні моменти, — від найчастішої.
+fn correlated_causes(a: &Analysis<'_>, ctx: &CauseContext) -> Vec<Cause> {
+    if a.spike_times.len() < 3 {
+        return Vec::new();
+    }
+    let mut causes: Vec<Cause> = CauseKind::ALL
+        .into_iter()
+        .filter_map(|kind| {
+            let (at_spikes, base) = ctx.coincidence(a, kind);
+            (at_spikes >= 0.5 && at_spikes >= base * 2.0).then_some(Cause { kind, at_spikes })
+        })
+        .collect();
+    causes.sort_by(|x, y| y.at_spikes.total_cmp(&x.at_spikes));
+    causes
 }
 
 fn disk_threshold(a: &Analysis<'_>) -> f64 {
@@ -487,54 +771,8 @@ pub fn stutter(a: &Analysis<'_>) -> Option<Finding> {
         return isolated_hitches(a);
     }
 
-    let disk_limit = disk_threshold(a);
-    let medians = background_medians(a);
-    let checks: [(&'static str, SamplePredicate); 5] = [
-        (
-            "diag.cause.disk",
-            Box::new(move |p: &SamplePoint| p.disk_bytes_per_sec as f64 >= disk_limit),
-        ),
-        (
-            "diag.cause.background",
-            Box::new(move |p: &SamplePoint| {
-                p.background.iter().any(|(n, v)| {
-                    let m = medians.get(n).copied().unwrap_or(0.0);
-                    *v >= BACKGROUND_CPU_PCT && *v >= m * 3.0
-                })
-            }),
-        ),
-        (
-            "diag.cause.vram",
-            Box::new(|p: &SamplePoint| {
-                p.gpu
-                    .as_ref()
-                    .and_then(|g| g.vram_fraction())
-                    .is_some_and(|f| f >= VRAM_FULL_FRACTION)
-            }),
-        ),
-        (
-            "diag.cause.throttle",
-            Box::new(|p: &SamplePoint| {
-                p.gpu
-                    .as_ref()
-                    .is_some_and(|g| g.throttle.iter().any(|r| THERMAL.contains(r)))
-            }),
-        ),
-        (
-            "diag.cause.cpu_full",
-            Box::new(|p: &SamplePoint| p.avg_cpu_pct >= 90.0),
-        ),
-    ];
-    let mut causes: Vec<Cause> = Vec::new();
-    if a.spike_times.len() >= 3 {
-        for (key, pred) in &checks {
-            let (at_spikes, base) = a.coincidence(pred.as_ref());
-            if at_spikes >= 0.5 && at_spikes >= base * 2.0 {
-                causes.push(Cause { key, at_spikes });
-            }
-        }
-    }
-    causes.sort_by(|x, y| y.at_spikes.total_cmp(&x.at_spikes));
+    let ctx = CauseContext::new(a);
+    let causes = correlated_causes(a, &ctx);
 
     let impact = if ratio < 0.35 {
         Impact::High
@@ -562,11 +800,30 @@ pub fn stutter(a: &Analysis<'_>) -> Option<Finding> {
             Text::new("value.ms").arg("v", format!("{:.1}", s.max_frametime_ms)),
         );
     // Сам факт фризів виміряний (90 %); впевненість у причині — за частотою збігів.
+    // Кеш шейдерів — непряма ознака (час зміни файлу), тож для неї стеля нижча.
     if let Some(top) = causes.first() {
-        d = d.confidence(conf((40.0 + 40.0 * top.at_spikes).min(85.0)));
+        let ceiling = if top.kind == CauseKind::Shader {
+            65.0
+        } else {
+            85.0
+        };
+        d = d.confidence(conf((40.0 + 40.0 * top.at_spikes).min(ceiling)));
     }
     for c in &causes {
-        d = d.evidence(Text::new(c.key), pct(c.at_spikes));
+        d = d.evidence(Text::new(c.kind.key()), pct(c.at_spikes));
+    }
+    if causes.iter().any(|c| c.kind == CauseKind::Shader) {
+        let w = &a.timeline.shader_writes;
+        let bytes: u64 = w.iter().map(|x| x.bytes).sum();
+        d = d.evidence(
+            Text::new("diag.ev.shader_cache"),
+            Text::new("diag.ev.shader_cache_value")
+                .arg("files", w.len())
+                .arg("mb", format!("{:.1}", bytes as f64 / (1024.0 * 1024.0))),
+        );
+    }
+    for advice in causes.iter().filter_map(|c| c.kind.advice()) {
+        d = d.evidence(Text::new("diag.ev.what_to_do"), Text::new(advice));
     }
     Some(d.build())
 }
@@ -618,7 +875,13 @@ pub fn background(a: &Analysis<'_>) -> Vec<Finding> {
         .into_iter()
         .take(3)
         .map(|(name, avg)| {
-            draft("background", Category::Background, Impact::Moderate, 75)
+            // Defender не «закривають»: порада інша — перенести сканування, а не вимикати захист.
+            let id = if is_defender(name) {
+                "background.defender"
+            } else {
+                "background"
+            };
+            draft(id, Category::Background, Impact::Moderate, 75)
                 .arg("name", name)
                 .arg("cpu", format!("{avg:.1}"))
                 .advice()

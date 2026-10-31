@@ -7,7 +7,7 @@ use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
 use optimax_audit::{run_audit, SystemProbe, WindowsProbe};
 use optimax_core::{Catalog, CivilDate, Impact};
-use optimax_diagnosis::{diagnose, Context};
+use optimax_diagnosis::{diagnose, CacheFile, Context};
 use optimax_frametime::{record_with, CancelToken, RecordNotices, RecordOptions, Target};
 use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
 use std::collections::HashMap;
@@ -69,6 +69,67 @@ pub async fn list_processes(app: AppHandle) -> CmdResult<Vec<ProcessEntry>> {
     .await
 }
 
+/// Скільки рівнів тек кешу шейдерів переглядати.
+const SHADER_SCAN_DEPTH: usize = 4;
+/// Найбільше записів у теках кешу шейдерів за один перегляд.
+const SHADER_SCAN_LIMIT: usize = 100_000;
+
+/// Файли кешу шейдерів драйвера, змінені після `since_unix_ms`. Теки — з перевірених правил
+/// очищення (категорія «Шейдер-кеші»), тож шляхи не вигадуються. Лише метадані (без вмісту),
+/// посилання не розкриваються, обсяг перегляду обмежено.
+fn shader_cache_files(since_unix_ms: i64) -> Vec<CacheFile> {
+    use optimax_cleanup::rules::Category as CleanupCategory;
+    use optimax_cleanup::scan::expand_roots;
+    use optimax_cleanup::{Env, RuleSet, StdFs};
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+
+    let (rules, _) = RuleSet::embedded(Env::from_system());
+    let mut stack: Vec<(std::path::PathBuf, usize)> = rules
+        .rules()
+        .iter()
+        .filter(|r| r.rule.category == CleanupCategory::ShaderCaches)
+        .flat_map(|r| r.patterns.iter().flat_map(|p| expand_roots(&StdFs, p)))
+        .map(|(root, _)| (std::path::PathBuf::from(root), 0))
+        .collect();
+    let mut out = Vec::new();
+    let mut seen = 0usize;
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            seen += 1;
+            if seen > SHADER_SCAN_LIMIT {
+                return out;
+            }
+            // Метадані з даних FindNextFile — без відкриття файлу й без розкриття посилань.
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                continue;
+            }
+            if meta.is_dir() {
+                if depth < SHADER_SCAN_DEPTH {
+                    stack.push((entry.path(), depth + 1));
+                }
+                continue;
+            }
+            let modified_unix_ms = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|d| i64::try_from(d.as_millis()).ok());
+            if let Some(ms) = modified_unix_ms.filter(|ms| *ms >= since_unix_ms) {
+                out.push(CacheFile {
+                    modified_unix_ms: ms,
+                    bytes: meta.len(),
+                });
+            }
+        }
+    }
+    out
+}
+
 fn context() -> (Context, Option<u32>) {
     let probe = WindowsProbe::new();
     let display_hz = probe
@@ -84,6 +145,7 @@ fn context() -> (Context, Option<u32>) {
         Context {
             display_hz,
             config_findings,
+            shader_cache_files: Vec::new(),
         },
         display_hz,
     )
@@ -135,7 +197,10 @@ pub fn diag_start(
                         let _ = app.emit("diag-progress", p);
                     },
                 )?;
-                let (ctx, display_hz) = context();
+                let (mut ctx, display_hz) = context();
+                if let Some(start) = rec.start_unix_ms {
+                    ctx.shader_cache_files = shader_cache_files(start);
+                }
                 Ok(DiagnosisResult {
                     diagnosis: diagnose(&rec, &ctx),
                     display_hz,

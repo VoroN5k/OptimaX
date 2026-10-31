@@ -68,6 +68,33 @@ pub struct SamplePoint {
     pub disk_bytes_per_sec: u64,
     /// CPU сторонніх процесів за іменем (сума по всіх процесах з однаковим ім'ям), % усього CPU.
     pub background: HashMap<String, f32>,
+    /// Частка вільної RAM (0–1).
+    #[serde(default)]
+    pub mem_available_fraction: Option<f64>,
+    /// Сторінки, прочитані з диска через жорсткі page faults, за секунду.
+    #[serde(default)]
+    pub hard_faults_per_sec: Option<f64>,
+    /// Процес із найбільшим вводом-виводом (зокрема сама гра).
+    #[serde(default)]
+    pub io_top: Option<IoProcess>,
+}
+
+/// Процес, що найбільше читав і писав у момент знімка.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IoProcess {
+    /// Ім'я exe.
+    pub name: String,
+    /// Читання + запис, байт/с.
+    pub bytes_per_sec: u64,
+}
+
+/// Файл, записаний у кеш шейдерів під час запису (час останньої зміни на шкалі запису).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ShaderWrite {
+    /// Час зміни файлу, мс від старту запису.
+    pub t_ms: f64,
+    /// Розмір файлу, байт.
+    pub bytes: u64,
 }
 
 /// Дані для діагностики.
@@ -81,6 +108,9 @@ pub struct Timeline {
     pub frames: Vec<FramePoint>,
     /// Знімки метрик, відсортовані за часом.
     pub samples: Vec<SamplePoint>,
+    /// Записи в кеш шейдерів драйвера під час запису, відсортовані за часом.
+    #[serde(default)]
+    pub shader_writes: Vec<ShaderWrite>,
 }
 
 /// Процеси, які не вважаються фоновими навантаженнями (наш власний інструмент запису).
@@ -172,6 +202,18 @@ impl Timeline {
                         .read_bytes_per_sec
                         .saturating_add(s.disk.write_bytes_per_sec),
                     background,
+                    mem_available_fraction: (s.memory.total_bytes > 0)
+                        .then(|| s.memory.available_bytes as f64 / s.memory.total_bytes as f64),
+                    hard_faults_per_sec: s.memory.hard_fault_pages_per_sec,
+                    io_top: s
+                        .top_processes
+                        .iter()
+                        .filter(|p| p.io_bytes_per_sec > 0 && !is_own_tool(&p.name))
+                        .max_by_key(|p| p.io_bytes_per_sec)
+                        .map(|p| IoProcess {
+                            name: p.name.clone(),
+                            bytes_per_sec: p.io_bytes_per_sec,
+                        }),
                 }
             })
             .collect();
@@ -181,6 +223,7 @@ impl Timeline {
             game_name,
             frames,
             samples,
+            shader_writes: Vec::new(),
         })
     }
 

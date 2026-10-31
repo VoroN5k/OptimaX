@@ -48,7 +48,7 @@ impl CpuSnapshot {
 }
 
 /// Стан RAM.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct MemorySnapshot {
     /// Усього, байт.
@@ -57,6 +57,10 @@ pub struct MemorySnapshot {
     pub used_bytes: u64,
     /// Доступно, байт.
     pub available_bytes: u64,
+    /// Сторінки, прочитані з диска через жорсткі page faults, за секунду (PDH
+    /// `\Memory\Pages Input/sec`). `None` — лічильник недоступний або це перший замір.
+    #[serde(default)]
+    pub hard_fault_pages_per_sec: Option<f64>,
 }
 
 /// Активність дисків.
@@ -136,6 +140,10 @@ pub struct ProcessSample {
     pub cpu_percent: f32,
     /// Робочий набір, байт.
     pub memory_bytes: u64,
+    /// Читання + запис за секунду, байт (лічильники вводу-виводу процесу: файли, а також
+    /// інші пристрої, зокрема мережа). 0 — ще не виміряно.
+    #[serde(default)]
+    pub io_bytes_per_sec: u64,
 }
 
 /// Переводить «% одного ядра» (як віддає `sysinfo`, до N×100) у частку від усього CPU.
@@ -151,6 +159,23 @@ pub fn top_by_cpu(mut processes: Vec<ProcessSample>, n: usize) -> Vec<ProcessSam
     processes.sort_by(|a, b| b.cpu_percent.total_cmp(&a.cpu_percent));
     processes.truncate(n);
     processes
+}
+
+/// Топ `n` за CPU, плюс процес із найбільшим вводом-виводом, якщо його там немає: щоб біля
+/// ривка можна було назвати, хто навантажував диск, навіть коли за CPU він непомітний.
+pub fn top_with_io(processes: Vec<ProcessSample>, n: usize) -> Vec<ProcessSample> {
+    let busiest_io = processes
+        .iter()
+        .filter(|p| p.io_bytes_per_sec > 0)
+        .max_by_key(|p| p.io_bytes_per_sec)
+        .cloned();
+    let mut top = top_by_cpu(processes, n);
+    if let Some(io) = busiest_io {
+        if !top.iter().any(|p| p.pid == io.pid) {
+            top.push(io);
+        }
+    }
+    top
 }
 
 /// Байти за інтервал → байти за секунду.
@@ -172,7 +197,25 @@ mod tests {
             name: format!("p{pid}"),
             cpu_percent: cpu,
             memory_bytes: 0,
+            io_bytes_per_sec: 0,
         }
+    }
+
+    #[test]
+    fn busiest_io_process_is_kept_even_with_low_cpu() {
+        let mut quiet_reader = proc(9, 0.1);
+        quiet_reader.io_bytes_per_sec = 80 << 20;
+        let list = vec![proc(1, 30.0), proc(2, 20.0), proc(3, 10.0), quiet_reader];
+        let top = top_with_io(list, 2);
+        let pids: Vec<u32> = top.iter().map(|p| p.pid).collect();
+        assert_eq!(pids, vec![1, 2, 9]);
+        // Якщо він і так у топі за CPU — не дублюється.
+        let mut busy = proc(1, 30.0);
+        busy.io_bytes_per_sec = 1 << 20;
+        let top = top_with_io(vec![busy, proc(2, 20.0)], 2);
+        assert_eq!(top.len(), 2);
+        // Без вводу-виводу — просто топ за CPU.
+        assert_eq!(top_with_io(vec![proc(1, 1.0), proc(2, 2.0)], 1).len(), 1);
     }
 
     #[test]

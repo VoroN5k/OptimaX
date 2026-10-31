@@ -180,6 +180,10 @@ pub struct Recording {
     /// Чому запис завершився.
     #[serde(default = "default_end")]
     pub end_reason: EndReason,
+    /// Unix-час (мс) у момент `start_qpc` — щоб зіставити зі шкалою події, відомі лише за
+    /// годинником (напр. час зміни файлів кешу шейдерів). `None` у старих записах.
+    #[serde(default)]
+    pub start_unix_ms: Option<i64>,
 }
 
 impl Recording {
@@ -276,6 +280,10 @@ pub fn record_with(
 
     let freq = qpc_frequency();
     let start_qpc = qpc_now();
+    let start_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_millis()).ok());
     let (sampler, snapshots_rx) = Sampler::spawn(options.sampler, system, gpu)?;
     let mut child = presentmon.spawn_capture(&options.target, pm_duration, immediate)?;
 
@@ -459,6 +467,7 @@ pub fn record_with(
         cancelled: end_reason == EndReason::Cancelled,
         segments,
         end_reason,
+        start_unix_ms,
     };
     if !rec.frames.iter().any(|f| rec.frame_counted(f)) {
         return Err(FrametimeError::NoFrames(
@@ -510,6 +519,7 @@ mod tests {
             cancelled: false,
             segments: vec![(1000, 3000), (4000, 5000)],
             end_reason: EndReason::Completed,
+            start_unix_ms: None,
         };
         let counted: Vec<bool> = rec.frames.iter().map(|f| rec.frame_counted(f)).collect();
         assert_eq!(counted, vec![false, true, true, true]);

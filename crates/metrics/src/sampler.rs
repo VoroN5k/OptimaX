@@ -173,6 +173,7 @@ mod tests {
                 total_bytes: 32,
                 used_bytes: 16,
                 available_bytes: 16,
+                hard_fault_pages_per_sec: None,
             }
         }
         fn disk(&mut self, _elapsed: Duration) -> DiskSnapshot {

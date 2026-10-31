@@ -1,7 +1,7 @@
 //! Сценарні тести діагностики на синтетичних записах.
 
 use super::*;
-use crate::timeline::{FramePoint, GpuPoint, SamplePoint, Timeline};
+use crate::timeline::{FramePoint, GpuPoint, SamplePoint, ShaderWrite, Timeline};
 use optimax_core::{Catalog, Confidence};
 use optimax_frametime::{FrameRecord, FrameTimestamp, PresentMode, Target};
 use optimax_metrics::{
@@ -35,6 +35,9 @@ fn base_sample() -> SamplePoint {
         }),
         disk_bytes_per_sec: 1 << 20,
         background: HashMap::new(),
+        mem_available_fraction: Some(0.5),
+        hard_faults_per_sec: Some(10.0),
+        io_top: None,
     }
 }
 
@@ -69,6 +72,7 @@ fn timeline(frametimes: &[f64], sample: impl Fn(f64, usize) -> SamplePoint) -> T
         game_name: "game.exe".into(),
         frames,
         samples,
+        shader_writes: Vec::new(),
     }
 }
 
@@ -246,6 +250,202 @@ fn stutter_without_cause_is_honest() {
         .all(|e| !e.label.key.starts_with("diag.cause.")));
 }
 
+fn near_spike(spikes: &[f64], t: f64) -> bool {
+    spikes.iter().any(|st| (st - t).abs() <= 150.0)
+}
+
+fn cause_keys(f: &Finding) -> Vec<&str> {
+    f.evidence
+        .iter()
+        .map(|e| e.label.key.as_str())
+        .filter(|k| k.starts_with("diag.cause."))
+        .collect()
+}
+
+#[test]
+fn defender_scan_is_its_own_cause_not_generic_background() {
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    let tl = timeline(&ft, |t, _| {
+        let mut s = base_sample();
+        if near_spike(&spikes, t) {
+            s.background.insert("MsMpEng.exe".into(), 6.0);
+        }
+        s
+    });
+    let d = diagnose_timeline(&tl, &Context::default());
+    let f = find(&d, "stutter.found").expect("фризи з причиною");
+    assert_eq!(cause_keys(f), vec!["diag.cause.defender"]);
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.value.key == "diag.advice.defender"));
+}
+
+#[test]
+fn defender_with_constant_load_gets_own_background_verdict() {
+    let tl = timeline(&jittery(8.0, 3000), |_, _| {
+        let mut s = base_sample();
+        s.background.insert("MsMpEng.exe".into(), 7.0);
+        s
+    });
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert!(find(&d, "background.defender").is_some());
+    assert!(find(&d, "background").is_none());
+}
+
+#[test]
+fn memory_cause_needs_paging_and_nearly_full_ram() {
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    let run = |free: f64| {
+        let tl = timeline(&ft, |t, _| {
+            let mut s = base_sample();
+            s.mem_available_fraction = Some(free);
+            if near_spike(&spikes, t) {
+                s.hard_faults_per_sec = Some(4000.0);
+            }
+            s
+        });
+        diagnose_timeline(&tl, &Context::default())
+    };
+    let low = run(0.06);
+    let f = find(&low, "stutter.found").expect("нестача RAM");
+    assert_eq!(cause_keys(f), vec!["diag.cause.memory"]);
+    // Ті самі page faults при вільній пам'яті — це читання файлів, а не нестача RAM.
+    let plenty = run(0.5);
+    assert!(find(&plenty, "stutter.found").is_none());
+    assert!(find(&plenty, "stutter.unknown").is_some());
+}
+
+#[test]
+fn shader_cache_writes_near_spikes_point_to_shader_compilation() {
+    // Ривки від компіляції шейдерів ідуть згустками (нова сцена), між згустками тихо. Тож
+    // вікно запису кешу (−200…+1500 мс) не накриває весь запис і «біля ривків частіше, ніж
+    // зазвичай» має сенс. Якби драйвер писав кеш постійно, приписувати ривки шейдерам не
+    // можна — це перевіряє правило вдвічі частішого збігу.
+    let mut ft = jittery(8.0, 5000);
+    for cluster in (400..5000).step_by(1200) {
+        for k in 0..15 {
+            ft[cluster + k * 6] = 40.0;
+        }
+    }
+    let spikes = spike_times(&ft);
+    let mut tl = timeline(&ft, |_, _| base_sample());
+    tl.shader_writes = spikes
+        .iter()
+        .map(|t| ShaderWrite {
+            t_ms: t + 300.0,
+            bytes: 64 << 10,
+        })
+        .collect();
+    let d = diagnose_timeline(&tl, &Context::default());
+    let f = find(&d, "stutter.found").expect("компіляція шейдерів");
+    assert_eq!(cause_keys(f), vec!["diag.cause.shader"]);
+    assert!(
+        f.confidence.percent() <= 65,
+        "непряма ознака — помірна впевненість"
+    );
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.label.key == "diag.ev.shader_cache"));
+}
+
+#[test]
+fn shader_cache_files_are_placed_on_the_recording_timeline() {
+    let start = 1_700_000_000_000;
+    let files = [
+        CacheFile {
+            modified_unix_ms: start + 5_000,
+            bytes: 10,
+        },
+        CacheFile {
+            modified_unix_ms: start - 10,
+            bytes: 20,
+        },
+        CacheFile {
+            modified_unix_ms: start + 1_000,
+            bytes: 30,
+        },
+        CacheFile {
+            modified_unix_ms: start + 90_000,
+            bytes: 40,
+        },
+    ];
+    let w = shader_writes(&files, start, 30_000.0);
+    let got: Vec<(f64, u64)> = w.iter().map(|x| (x.t_ms, x.bytes)).collect();
+    assert_eq!(got, vec![(1_000.0, 30), (5_000.0, 10)]);
+}
+
+#[test]
+fn chart_keeps_every_spike_visible_and_explains_it() {
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    let tl = timeline(&ft, |t, _| {
+        let mut s = base_sample();
+        if near_spike(&spikes, t) {
+            s.disk_bytes_per_sec = 150 << 20;
+        }
+        s
+    });
+    let chart = diagnose_timeline(&tl, &Context::default())
+        .chart
+        .expect("графік");
+    assert!(chart.points.len() <= chart::CHART_POINTS);
+    // Стиснення не губить піків: найвища точка графіка — 40 мс.
+    let top = chart.points.iter().map(|p| p.max_ms).fold(0.0, f32::max);
+    assert!((top - 40.0).abs() < 1e-3);
+    assert_eq!(chart.spikes.len(), spikes.len());
+    assert_eq!(chart.spikes_total as usize, spikes.len());
+    assert!(chart.spikes.windows(2).all(|w| w[0].t_ms <= w[1].t_ms));
+    for s in &chart.spikes {
+        assert!((s.frametime_ms - 40.0).abs() < 1e-9);
+        assert_eq!(s.causes.len(), 1);
+        assert_eq!(s.causes[0].key, "diag.spike.disk");
+        assert_eq!(s.causes[0].args["mbps"], "150");
+    }
+}
+
+#[test]
+fn disk_spike_names_the_busiest_process() {
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    let tl = timeline(&ft, |t, _| {
+        let mut s = base_sample();
+        if near_spike(&spikes, t) {
+            s.disk_bytes_per_sec = 90 << 20;
+            s.io_top = Some(crate::timeline::IoProcess {
+                name: "ForzaHorizon4.exe".into(),
+                bytes_per_sec: 80 << 20,
+            });
+        }
+        s
+    });
+    let chart = diagnose_timeline(&tl, &Context::default())
+        .chart
+        .expect("графік");
+    let c = &chart.spikes[0].causes[0];
+    assert_eq!(c.key, "diag.spike.disk_by");
+    assert_eq!(c.args["name"], "ForzaHorizon4.exe");
+    assert_eq!(c.args["mbps"], "90");
+    assert_eq!(c.args["pmbps"], "80");
+}
+
+#[test]
+fn downsample_keeps_max_and_average() {
+    let frames = [(10.0, 10.0), (20.0, 30.0), (110.0, 10.0), (120.0, 20.0)];
+    let p = chart::downsample(&frames, 2);
+    assert_eq!(p.len(), 2);
+    // Шкала від першого кадру, а не від нуля (до нього — очікування гри й прогрів).
+    assert_eq!(p[0].t_ms, 10.0);
+    assert_eq!(p[0].max_ms, 30.0);
+    assert_eq!(p[0].avg_ms, 20.0);
+    assert_eq!(p[1].max_ms, 20.0);
+    assert_eq!(p[1].avg_ms, 15.0);
+    assert!(chart::downsample(&[], 10).is_empty());
+}
+
 /// Як у записі Geometry Dash: кілька ривків на старті, далі рівно.
 fn hitches_at_start() -> Vec<f64> {
     let mut ft = jittery(8.0, 3000);
@@ -380,6 +580,7 @@ fn actionable_config_findings_are_included() {
             mk("gpu.rebar_off", Impact::Moderate),
             mk("gpu.pcie_ok", Impact::Info),
         ],
+        shader_cache_files: Vec::new(),
     };
     let d = diagnose_timeline(&timeline(&jittery(8.0, 3000), |_, _| base_sample()), &ctx);
     assert!(find(&d, "gpu.rebar_off").is_some());
@@ -492,6 +693,10 @@ fn every_verdict_text_is_localized() {
                 let mut s = base_sample();
                 if spikes.iter().any(|st| (st - t).abs() <= 150.0) {
                     s.disk_bytes_per_sec = 150 << 20;
+                    s.io_top = Some(crate::timeline::IoProcess {
+                        name: "game.exe".into(),
+                        bytes_per_sec: 100 << 20,
+                    });
                     s.avg_cpu_pct = 95.0;
                     s.background.insert("updater.exe".into(), 30.0);
                     if let Some(g) = s.gpu.as_mut() {
@@ -528,7 +733,55 @@ fn every_verdict_text_is_localized() {
             ),
             Context::default(),
         ),
+        (
+            // Нові причини разом: Defender, нестача RAM, кеш шейдерів (див. нижче).
+            timeline(&ft, |t, _| {
+                let mut s = base_sample();
+                s.mem_available_fraction = Some(0.05);
+                if spikes.iter().any(|st| (st - t).abs() <= 150.0) {
+                    s.background.insert("MsMpEng.exe".into(), 6.0);
+                    s.hard_faults_per_sec = Some(5000.0);
+                }
+                s
+            }),
+            Context::default(),
+        ),
+        (
+            timeline(&jittery(8.0, 3000), |_, _| {
+                let mut s = base_sample();
+                s.background.insert("MsMpEng.exe".into(), 7.0);
+                s
+            }),
+            Context::default(),
+        ),
     ];
+    let scenarios: Vec<(Timeline, Context)> = scenarios
+        .into_iter()
+        .enumerate()
+        .map(|(i, (mut tl, ctx))| {
+            // Сценарій з усіма новими причинами отримує й записи в кеш шейдерів.
+            if i == 10 {
+                tl.shader_writes = spikes
+                    .iter()
+                    .map(|t| ShaderWrite {
+                        t_ms: t + 300.0,
+                        bytes: 1 << 20,
+                    })
+                    .collect();
+            }
+            (tl, ctx)
+        })
+        .collect();
+    // Тексти біля ривків на графіку теж мають бути перекладені.
+    for (tl, ctx) in &scenarios {
+        if let Some(chart) = diagnose_timeline(tl, ctx).chart {
+            for t in chart.spikes.iter().flat_map(|s| &s.causes) {
+                assert!(catalog.contains(&t.key), "немає ключа в uk.json: {}", t.key);
+                let r = catalog.render(t);
+                assert!(!r.contains('{'), "незаповнений аргумент у {}: {r}", t.key);
+            }
+        }
+    }
     let mut seen = std::collections::BTreeSet::new();
     for (tl, ctx) in &scenarios {
         for v in diagnose_timeline(tl, ctx).verdicts {
@@ -562,6 +815,7 @@ fn every_verdict_text_is_localized() {
         "stutter.unknown",
         "stutter.isolated",
         "background",
+        "background.defender",
         "present.composed",
     ] {
         assert!(seen.contains(id), "сценарії не покривають {id}: {seen:?}");
@@ -627,6 +881,7 @@ fn snapshot(qpc: i64, procs: Vec<(u32, &str, f32)>) -> Snapshot {
                 name: name.into(),
                 cpu_percent: cpu,
                 memory_bytes: 0,
+                io_bytes_per_sec: 0,
             })
             .collect(),
     }
@@ -666,6 +921,7 @@ fn timeline_from_recording_sorts_filters_and_aligns() {
         cancelled: false,
         segments: vec![],
         end_reason: optimax_frametime::EndReason::Completed,
+        start_unix_ms: None,
     };
     let tl = Timeline::from_recording(&rec).unwrap();
     assert_eq!(tl.game_pid, 100);
@@ -699,6 +955,7 @@ fn empty_recording_is_insufficient() {
         cancelled: false,
         segments: vec![],
         end_reason: optimax_frametime::EndReason::Completed,
+        start_unix_ms: None,
     };
     assert_eq!(
         diagnose(&rec, &Context::default()).bottleneck,
@@ -733,6 +990,7 @@ fn frames_outside_counted_segments_are_ignored() {
         cancelled: false,
         segments: vec![(game_start + 1, t + 1)],
         end_reason: optimax_frametime::EndReason::Completed,
+        start_unix_ms: None,
     };
     let tl = Timeline::from_recording(&rec).unwrap();
     assert_eq!(tl.frames.len(), 2500);

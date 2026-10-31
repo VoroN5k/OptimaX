@@ -11,6 +11,11 @@ use std::time::Duration;
 pub const FIRST_WARMUP: Duration = Duration::from_secs(3);
 /// Прогрів після повернення в гру (Alt+Tab сам дає кілька довгих кадрів).
 pub const RESUME_WARMUP: Duration = Duration::from_secs(2);
+/// Хвіст відрізка, що закінчився паузою (Alt+Tab, згортання) або виходом з гри, не
+/// рахується: перемикач вікон з'являється ще до втрати фокусу, і гра в цей час уже гальмує
+/// (кадри в 5–10 разів довші). Без цього ці кадри потрапляли в 1% low і «мікрофризи».
+/// Кінець за таймером і за гарячою клавішею не обрізається — там гра на екрані до кінця.
+pub const PAUSE_TRIM: Duration = Duration::from_secs(1);
 /// Гра «малює», якщо кадри *надходили* від PresentMon не давніше за це. Порівнюємо час
 /// надходження, а не час показу: PresentMon 2.x віддає кадр із затримкою ~1–2 с
 /// (відстежує його до показу на екрані, ETW скидає буфери приблизно раз на секунду).
@@ -176,6 +181,16 @@ impl Gate {
         }
     }
 
+    /// Закриває відрізок без останніх [`PAUSE_TRIM`] (гра вже йшла з екрана).
+    /// Відрізок, коротший за обрізку, не зараховується зовсім.
+    fn close_trimmed(&mut self, now: i64) {
+        let end = now - ticks(PAUSE_TRIM, self.freq);
+        match self.open_since {
+            Some(s) if end > s => self.close(end),
+            _ => self.open_since = None,
+        }
+    }
+
     fn finish(&mut self, now: i64, reason: EndReason) {
         self.close(now);
         self.phase = Phase::Done;
@@ -205,6 +220,7 @@ impl Gate {
             return self.phase;
         }
         if self.seen_game && !obs.game_running {
+            self.close_trimmed(now);
             self.finish(now, EndReason::GameExited);
             return self.phase;
         }
@@ -233,7 +249,7 @@ impl Gate {
                 }
             }
             (_, Phase::Recording) if !in_game => {
-                self.close(now);
+                self.close_trimmed(now);
                 self.phase = Phase::Paused;
             }
             _ => {}
@@ -357,8 +373,68 @@ mod tests {
         let t = run(&mut g, 0, 10_000, obs(true, true, true));
         g.tick(t + 100, &obs(false, false, false));
         assert_eq!(g.end_reason(), Some(EndReason::GameExited));
-        assert!(g.counted_ms(t) > 6_000.0);
+        // Прогрів 3 с, далі гра до 10,1 с; остання секунда перед вильотом не рахується.
+        assert_eq!(g.counted_ms(t), 6_000.0);
         assert_eq!(g.segments().len(), 1);
+    }
+
+    #[test]
+    fn alt_tab_drops_the_last_second_before_leaving_the_game() {
+        let mut g = Gate::new(
+            StartMode::Auto,
+            Duration::from_secs(10),
+            Duration::from_secs(600),
+            F,
+            0,
+        );
+        let t = run(&mut g, 0, 3_100, obs(true, true, true)); // прогрів
+        let t = run(&mut g, t, t + 4_000, obs(true, true, true)); // 4 с гри
+        let t = run(&mut g, t, t + 500, obs(true, false, true)); // Alt+Tab
+        assert_eq!(g.phase(), Phase::Paused);
+        let (s, e) = g.segments()[0];
+        // Перемикач вікон з'являється ще до втрати фокусу — хвіст у 1 с відкинуто.
+        assert_eq!(e - s, 4_100 - 1_000);
+        assert_eq!(g.counted_ms(t), 3_100.0);
+        // Запис триває довше, щоб набрати повні 10 с чистої гри.
+        run(&mut g, t, t + 30_000, obs(true, true, true));
+        assert_eq!(g.end_reason(), Some(EndReason::Completed));
+        let total: i64 = g.segments().iter().map(|(a, b)| b - a).sum();
+        assert_eq!(total, 10_000);
+    }
+
+    #[test]
+    fn segment_shorter_than_trim_is_not_counted() {
+        let mut g = Gate::new(
+            StartMode::Auto,
+            Duration::from_secs(10),
+            Duration::from_secs(600),
+            F,
+            0,
+        );
+        let t = run(&mut g, 0, 3_100, obs(true, true, true)); // прогрів
+        let t = run(&mut g, t, t + 600, obs(true, true, true)); // лише 0,6 с гри
+        let t = run(&mut g, t, t + 500, obs(true, false, true)); // Alt+Tab
+        assert_eq!(g.phase(), Phase::Paused);
+        assert!(g.segments().is_empty());
+        assert_eq!(g.counted_ms(t), 0.0);
+    }
+
+    #[test]
+    fn completed_recording_keeps_its_end() {
+        let mut g = Gate::new(
+            StartMode::Auto,
+            Duration::from_secs(5),
+            Duration::from_secs(600),
+            F,
+            0,
+        );
+        run(&mut g, 0, 20_000, obs(true, true, true));
+        assert_eq!(g.end_reason(), Some(EndReason::Completed));
+        let total: i64 = g.segments().iter().map(|(a, b)| b - a).sum();
+        assert_eq!(
+            total, 5_000,
+            "за таймером гра на екрані до кінця — без обрізки"
+        );
     }
 
     #[test]

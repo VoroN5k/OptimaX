@@ -15,4 +15,9 @@ used_bytes: number,
 /**
  * Доступно, байт.
  */
-available_bytes: number, };
+available_bytes: number, 
+/**
+ * Сторінки, прочитані з диска через жорсткі page faults, за секунду (PDH
+ * `\Memory\Pages Input/sec`). `None` — лічильник недоступний або це перший замір.
+ */
+hard_fault_pages_per_sec: number | null, };

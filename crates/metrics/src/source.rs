@@ -1,10 +1,10 @@
 //! Джерело CPU/RAM/диск/процеси на базі `sysinfo`.
 
 use crate::snapshot::{
-    normalize_process_cpu, per_second, top_by_cpu, CpuSnapshot, DiskSnapshot, MemorySnapshot,
+    normalize_process_cpu, per_second, top_with_io, CpuSnapshot, DiskSnapshot, MemorySnapshot,
     ProcessSample,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use sysinfo::{
     CpuRefreshKind, DiskRefreshKind, Disks, MemoryRefreshKind, ProcessRefreshKind,
     ProcessesToUpdate, RefreshKind, System,
@@ -27,6 +27,9 @@ pub struct SysinfoSource {
     system: System,
     disks: Disks,
     own_pid: Option<u32>,
+    hard_faults: Option<optimax_core::perf::HardFaultCounter>,
+    /// Коли востаннє оновлювали процеси (для вводу-виводу за секунду).
+    processes_at: Option<Instant>,
 }
 
 impl SysinfoSource {
@@ -43,6 +46,8 @@ impl SysinfoSource {
             system,
             disks,
             own_pid: sysinfo::get_current_pid().ok().map(|p| p.as_u32()),
+            hard_faults: optimax_core::perf::HardFaultCounter::open(),
+            processes_at: None,
         }
     }
 }
@@ -72,6 +77,7 @@ impl SystemSource for SysinfoSource {
             total_bytes: self.system.total_memory(),
             used_bytes: self.system.used_memory(),
             available_bytes: self.system.available_memory(),
+            hard_fault_pages_per_sec: self.hard_faults.as_mut().and_then(|c| c.sample()),
         }
     }
 
@@ -95,8 +101,15 @@ impl SystemSource for SysinfoSource {
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
-            ProcessRefreshKind::nothing().with_cpu().with_memory(),
+            ProcessRefreshKind::nothing()
+                .with_cpu()
+                .with_memory()
+                .with_disk_usage(),
         );
+        let now = Instant::now();
+        // Перше оновлення дає ввід-вивід від старту процесу, а не за інтервал — його не беремо.
+        let elapsed = self.processes_at.map(|t| now.duration_since(t));
+        self.processes_at = Some(now);
         let logical = self.system.cpus().len();
         let samples = self
             .system
@@ -109,8 +122,12 @@ impl SystemSource for SysinfoSource {
                 name: p.name().to_string_lossy().into_owned(),
                 cpu_percent: normalize_process_cpu(p.cpu_usage(), logical),
                 memory_bytes: p.memory(),
+                io_bytes_per_sec: elapsed.map_or(0, |e| {
+                    let u = p.disk_usage();
+                    per_second(u.read_bytes.saturating_add(u.written_bytes), e)
+                }),
             })
             .collect();
-        top_by_cpu(samples, n)
+        top_with_io(samples, n)
     }
 }

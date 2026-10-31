@@ -104,8 +104,7 @@ pub mod app {
     pub fn run(args: &[String]) -> anyhow::Result<()> {
         let c = Catalog::ukrainian()?;
         let (reg, power, restore) = (WinRegistry, WinPower, WinRestorePoint);
-        let store =
-            FileStore::default_location().ok_or_else(|| anyhow::anyhow!("немає LOCALAPPDATA"))?;
+        let store = FileStore::default_location()?;
         let mut engine = Engine::new(&reg, &power, &restore, &store)?;
         let recovered = engine.recover_pending()?;
         if recovered > 0 {

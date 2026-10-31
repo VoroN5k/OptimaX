@@ -3,6 +3,7 @@
 //! `unsafe` дозволено лише в платформних модулях `*::windows`, `clock`, `dialog`, `input` і `toast` (FFI до WinAPI).
 
 pub mod clock;
+pub mod datadir;
 pub mod date;
 pub mod dialog;
 pub mod error;

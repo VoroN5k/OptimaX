@@ -100,10 +100,9 @@ pub struct AppState {
 pub const LOG_TAIL: usize = 1000;
 
 impl AppState {
-    /// Створює стан. Журнал змін — `%LOCALAPPDATA%\OptimaX\journal.json`.
+    /// Створює стан. Журнал змін — `journal.json` у захищеній теці даних.
     pub fn new() -> anyhow::Result<Self> {
-        let store =
-            FileStore::default_location().ok_or_else(|| anyhow::anyhow!("немає LOCALAPPDATA"))?;
+        let store = FileStore::default_location()?;
         // Сховище журналу живе весь час роботи програми — свідомо «відпускаємо» один раз.
         let store: &'static FileStore = Box::leak(Box::new(store));
         let engine = Engine::new(&REGISTRY, &POWER, &RESTORE, store)?

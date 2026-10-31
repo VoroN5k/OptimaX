@@ -34,7 +34,7 @@ impl Watcher {
 }
 
 fn store() -> CmdResult<ProfileStore> {
-    ProfileStore::default_location().ok_or_else(|| CmdError::Failed("немає LOCALAPPDATA".into()))
+    ProfileStore::default_location().map_err(|e| CmdError::Failed(e.to_string()))
 }
 
 /// Профілі ігор.

@@ -75,10 +75,11 @@ impl FileStore {
         Self { path: path.into() }
     }
 
-    /// `%LOCALAPPDATA%\OptimaX\journal.json`.
-    pub fn default_location() -> Option<Self> {
-        std::env::var_os("LOCALAPPDATA")
-            .map(|d| Self::new(PathBuf::from(d).join("OptimaX").join("journal.json")))
+    /// `journal.json` у захищеній теці даних ([`optimax_core::datadir::data_dir`]).
+    pub fn default_location() -> Result<Self, optimax_core::CoreError> {
+        Ok(Self::new(
+            optimax_core::datadir::data_dir()?.join("journal.json"),
+        ))
     }
 
     /// Шлях до файлу.

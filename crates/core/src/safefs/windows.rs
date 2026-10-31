@@ -25,6 +25,7 @@ use windows::Win32::System::IO::IO_STATUS_BLOCK;
 
 const DELETE: u32 = 0x0001_0000;
 const SYNCHRONIZE: u32 = 0x0010_0000;
+const READ_CONTROL: u32 = 0x0002_0000;
 const GENERIC_READ: u32 = 0x8000_0000;
 const GENERIC_WRITE: u32 = 0x4000_0000;
 const FILE_READ_ATTRIBUTES: u32 = 0x0080;
@@ -183,6 +184,34 @@ pub(super) fn move_file(from: &Path, to: &Path) -> Result<(), SafeFsError> {
         let code = unsafe { RtlNtStatusToDosErrorNoTeb(status) };
         Err(SafeFsError::Io(io::Error::from_raw_os_error(code as i32)))
     }
+}
+
+pub(super) fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, SafeFsError> {
+    use std::io::Read;
+    let f = open_checked(
+        path,
+        false,
+        GENERIC_READ | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    )?;
+    let mut out = Vec::new();
+    f.take(limit + 1).read_to_end(&mut out)?;
+    if out.len() as u64 > limit {
+        return Err(SafeFsError::WrongKind(format!(
+            "{}: більший за {limit} байтів",
+            path.display()
+        )));
+    }
+    Ok(out)
+}
+
+pub(super) fn open_dir_for_security(path: &Path) -> Result<File, SafeFsError> {
+    open_checked(
+        path,
+        true,
+        READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    )
 }
 
 pub(super) fn copy_file(from: &Path, to: &Path) -> Result<u64, SafeFsError> {

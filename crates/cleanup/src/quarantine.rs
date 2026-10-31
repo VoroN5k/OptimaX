@@ -4,7 +4,7 @@
 //! перейменовується). Тоді місце звільниться після закінчення карантину; на іншому диску —
 //! одразу (файл копіюється, оригінал видаляється).
 //!
-//! Метадані — JSON-індекс поза текою файлів (`%LOCALAPPDATA%\OptimaX\quarantine.json`).
+//! Метадані — JSON-індекс поза текою файлів (`quarantine.json` у захищеній теці даних програми).
 
 use crate::fs::{FsApi, FsError, FsErrorKind, Kind};
 use crate::journal::{JournalLine, Outcome};

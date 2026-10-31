@@ -120,8 +120,7 @@ mod app {
 
     pub fn run(args: &[String]) -> anyhow::Result<()> {
         let c = Catalog::ukrainian()?;
-        let profiles = ProfileStore::default_location()
-            .ok_or_else(|| anyhow::anyhow!("немає LOCALAPPDATA"))?;
+        let profiles = ProfileStore::default_location()?;
         let (procs, svc, mem) = (WinProcesses, WinServices, WinMemory);
 
         match (
@@ -211,8 +210,7 @@ mod app {
             }
             (Some("restore"), _) => {
                 let (reg, power, restore) = (WinRegistry, WinPower, WinRestorePoint);
-                let store = FileStore::default_location()
-                    .ok_or_else(|| anyhow::anyhow!("немає LOCALAPPDATA"))?;
+                let store = FileStore::default_location()?;
                 let mut engine = Engine::new(&reg, &power, &restore, &store)?
                     .with_processes(&procs)
                     .with_services(&svc);
@@ -226,8 +224,7 @@ mod app {
                     anyhow::bail!("немає профілів — спершу `profile add`");
                 }
                 let (reg, power, restore) = (WinRegistry, WinPower, WinRestorePoint);
-                let store = FileStore::default_location()
-                    .ok_or_else(|| anyhow::anyhow!("немає LOCALAPPDATA"))?;
+                let store = FileStore::default_location()?;
                 let mut engine = Engine::new(&reg, &power, &restore, &store)?
                     .with_processes(&procs)
                     .with_services(&svc);

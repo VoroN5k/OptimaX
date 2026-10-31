@@ -160,10 +160,11 @@ impl ProfileStore {
         Self { path: path.into() }
     }
 
-    /// `%LOCALAPPDATA%\OptimaX\profiles.json`.
-    pub fn default_location() -> Option<Self> {
-        std::env::var_os("LOCALAPPDATA")
-            .map(|d| Self::new(PathBuf::from(d).join("OptimaX").join("profiles.json")))
+    /// `profiles.json` у захищеній теці даних ([`optimax_core::datadir::data_dir`]).
+    pub fn default_location() -> Result<Self, optimax_core::CoreError> {
+        Ok(Self::new(
+            optimax_core::datadir::data_dir()?.join("profiles.json"),
+        ))
     }
 
     /// Шлях.

@@ -1,4 +1,4 @@
-//! Налаштування інтерфейсу (`%LOCALAPPDATA%\OptimaX\settings.json`).
+//! Налаштування інтерфейсу (`settings.json` у захищеній теці даних).
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -54,7 +54,7 @@ pub struct CleanupSettings {
     /// Скільки днів файли 🟡 лежать у карантині.
     #[serde(default = "quarantine_days")]
     pub quarantine_days: u32,
-    /// Диск для карантину (`D:\`); `None` — системний (`%LOCALAPPDATA%\OptimaX\Quarantine`).
+    /// Диск для карантину (`D:\`, файли в `D:\OptimaX\<SID>\Quarantine`); `None` — тека даних.
     #[serde(default)]
     pub quarantine_drive: Option<String>,
     /// Автоматично видаляти карантин після терміну (при старті програми, із записом у журналі).
@@ -96,7 +96,9 @@ impl Default for Settings {
 }
 
 fn path() -> Option<PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("OptimaX").join("settings.json"))
+    optimax_core::datadir::data_dir()
+        .ok()
+        .map(|d| d.join("settings.json"))
 }
 
 impl Settings {

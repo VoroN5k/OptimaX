@@ -12,6 +12,8 @@ mod error;
 #[cfg(windows)]
 mod log_layer;
 #[cfg(windows)]
+mod migrate;
+#[cfg(windows)]
 mod report;
 #[cfg(windows)]
 mod settings;
@@ -146,6 +148,14 @@ mod app {
             .with(UiLogLayer::new(log_tx))
             .try_init();
 
+        // Без захищеної теки даних працювати не можна: журнал змін і карантин мають лежати там,
+        // куди не пише звичайний процес. Помилку показуємо, а не мовчки падаємо.
+        if let Err(e) = optimax_core::datadir::data_dir() {
+            tracing::error!("тека даних недоступна: {e}");
+            optimax_core::dialog::show_error("OptimaX", &format!("Тека даних недоступна: {e}"));
+            return Err(e.into());
+        }
+        crate::migrate::migrate_legacy();
         let state = AppState::new()?;
         let app = tauri::Builder::default()
             .manage(state)

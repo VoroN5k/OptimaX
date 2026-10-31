@@ -129,7 +129,8 @@ fn profile_settings(window: &WindowInfo) -> Option<UpscaleSettings> {
     if window.exe.is_empty() {
         return None;
     }
-    ProfileStore::default_location()?
+    ProfileStore::default_location()
+        .ok()?
         .load()
         .ok()?
         .into_iter()

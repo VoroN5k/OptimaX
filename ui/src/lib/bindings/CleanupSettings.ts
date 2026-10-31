@@ -9,7 +9,7 @@ export type CleanupSettings = {
  */
 quarantine_days: number, 
 /**
- * Диск для карантину (`D:\`); `None` — системний (`%LOCALAPPDATA%\OptimaX\Quarantine`).
+ * Диск для карантину (`D:\`, файли в `D:\OptimaX\<SID>\Quarantine`); `None` — тека даних.
  */
 quarantine_drive: string | null, 
 /**

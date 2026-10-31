@@ -259,12 +259,10 @@ fn failed(e: impl std::fmt::Display) -> CmdError {
     CmdError::Failed(e.to_string())
 }
 
-/// `%LOCALAPPDATA%\OptimaX`.
+/// Захищена тека даних (`%ProgramData%\OptimaX\<SID>`).
 pub(crate) fn data_dir() -> CmdResult<String> {
-    let base = std::env::var("LOCALAPPDATA").map_err(|_| failed("немає LOCALAPPDATA"))?;
-    path::normalize(&base)
-        .map(|b| path::join(&b, "OptimaX"))
-        .map_err(failed)
+    let dir = optimax_core::datadir::data_dir().map_err(failed)?;
+    path::normalize(&dir.to_string_lossy()).map_err(failed)
 }
 
 fn system_drive() -> String {
@@ -281,10 +279,13 @@ fn quarantine_root(settings: &CleanupSettings) -> CmdResult<String> {
         .and_then(|d| path::normalize(d).ok())
         .filter(|d| path::is_drive_root(d))
     {
-        Some(drive) => Ok(path::join(
-            &path::join(&drive, "OptimaX"),
-            QUARANTINE_DIR_NAME,
-        )),
+        // На іншому диску — така сама захищена тека: `D:\OptimaX\<SID>\Quarantine`.
+        Some(drive) => {
+            let dir = optimax_core::datadir::secure_dir_on(std::path::Path::new(&drive))
+                .map_err(failed)?;
+            let dir = path::normalize(&dir.to_string_lossy()).map_err(failed)?;
+            Ok(path::join(&dir, QUARANTINE_DIR_NAME))
+        }
         None => Ok(path::join(&data_dir()?, QUARANTINE_DIR_NAME)),
     }
 }

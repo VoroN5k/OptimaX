@@ -57,8 +57,7 @@ mod app {
             .unwrap_or(60);
 
         let (reg, power, restore) = (WinRegistry, WinPower, WinRestorePoint);
-        let store =
-            FileStore::default_location().ok_or_else(|| anyhow::anyhow!("немає LOCALAPPDATA"))?;
+        let store = FileStore::default_location()?;
         let mut engine = Engine::new(&reg, &power, &restore, &store)?;
         engine.recover_pending()?;
 

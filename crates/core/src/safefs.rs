@@ -88,6 +88,21 @@ pub fn copy_file(from: &Path, to: &Path) -> Result<u64, SafeFsError> {
     imp::copy_file(from, to)
 }
 
+/// Читає файл цілком (не більше `limit` байтів), лише якщо він лежить саме за цим шляхом і сам
+/// не є посиланням. `Ok(None)` — файлу немає.
+pub fn read_limited(path: &Path, limit: u64) -> Result<Option<Vec<u8>>, SafeFsError> {
+    match imp::read_limited(path, limit) {
+        Err(SafeFsError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        other => other.map(Some),
+    }
+}
+
+/// Відкриває каталог для читання дескриптора безпеки з тими самими перевірками шляху.
+#[cfg(windows)]
+pub(crate) fn open_dir_for_security(path: &Path) -> Result<std::fs::File, SafeFsError> {
+    imp::open_dir_for_security(path)
+}
+
 #[cfg(windows)]
 use self::windows as imp;
 
@@ -133,6 +148,19 @@ mod imp {
         }
         std::fs::rename(from, to)?;
         Ok(())
+    }
+
+    pub(super) fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, SafeFsError> {
+        use std::io::Read;
+        check(path, false)?;
+        let mut out = Vec::new();
+        std::fs::File::open(path)?
+            .take(limit + 1)
+            .read_to_end(&mut out)?;
+        if out.len() as u64 > limit {
+            return Err(SafeFsError::WrongKind(path.display().to_string()));
+        }
+        Ok(out)
     }
 
     pub(super) fn copy_file(from: &Path, to: &Path) -> Result<u64, SafeFsError> {

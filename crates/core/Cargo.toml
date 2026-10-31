@@ -16,6 +16,7 @@ ts-rs = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [
@@ -36,6 +37,9 @@ windows = { workspace = true, features = [
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
     "Wdk_Storage_FileSystem",
+    "Win32_Security_Authorization",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
 ] }
 
 [dev-dependencies]

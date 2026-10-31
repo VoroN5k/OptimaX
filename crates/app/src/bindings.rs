@@ -64,6 +64,7 @@ fn export_typescript_bindings() {
         CmdError,
         LogLine,
         optimax_audit::AuditReport,
+        optimax_audit::crashes::CrashReport,
         HardwareInfo,
         optimax_metrics::Snapshot,
         ProcessEntry,

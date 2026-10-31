@@ -82,4 +82,10 @@ impl SystemProbe for WindowsProbe {
     fn hardware_events(&self, days: u32) -> Result<Option<Vec<SystemEvent>>, CoreError> {
         events::hardware(days).map(Some)
     }
+
+    fn crash_events(&self, days: u32) -> Result<Option<Vec<SystemEvent>>, CoreError> {
+        let mut all = events::crashes(days)?;
+        all.extend(events::hardware(days)?);
+        Ok(Some(all))
+    }
 }

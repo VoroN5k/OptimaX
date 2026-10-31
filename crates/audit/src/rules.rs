@@ -378,6 +378,19 @@ pub const DISPLAY_PROVIDER: &str = "Display";
 pub const TDR_EVENT_ID: u16 = 4101;
 /// Провайдер апаратних помилок Windows (WHEA).
 pub const WHEA_PROVIDER: &str = "Microsoft-Windows-WHEA-Logger";
+/// Джерело подій про раптове вимкнення (журнал System).
+pub const KERNEL_POWER_PROVIDER: &str = "Microsoft-Windows-Kernel-Power";
+/// «Систему перезавантажено без коректного завершення роботи». Поля (перевірено
+/// 2026-10-31, Windows 11 Pro 26300): `%1` BugcheckCode, `%2`–`%5` параметри, `%6`
+/// SleepInProgress, `%7` PowerButtonTimestamp, далі — службові.
+pub const UNEXPECTED_OFF_EVENT_ID: u16 = 41;
+/// Джерело подій про вильоти програм (журнал Application).
+pub const APP_ERROR_PROVIDER: &str = "Application Error";
+/// «Збій програми». Поля (перевірено там само): `%1` AppName, `%2` AppVersion, `%3`
+/// AppTimeStamp, `%4` ModuleName, `%5` ModuleVersion, `%6` ModuleTimeStamp, `%7`
+/// ExceptionCode (hex без `0x`), `%8` FaultingOffset, `%9` ProcessId, `%10`
+/// ProcessCreationTime, `%11` AppPath, `%12` ModulePath.
+pub const APP_ERROR_EVENT_ID: u16 = 1000;
 /// Від стількох TDR за період проблема вважається регулярною, а не випадковою.
 const TDR_FREQUENT: usize = 3;
 
@@ -812,6 +825,7 @@ mod tests {
             id,
             level: 3,
             date: CivilDate::new(2026, 10, day).unwrap(),
+            unix_s: 0,
             data: data.iter().map(|s| s.to_string()).collect(),
         }
     }

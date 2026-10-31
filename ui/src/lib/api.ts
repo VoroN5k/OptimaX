@@ -34,6 +34,7 @@ import type { ProfilePreview } from "./bindings/ProfilePreview";
 import type { RecordProgress } from "./bindings/RecordProgress";
 import type { RollbackResult } from "./bindings/RollbackResult";
 import type { Settings } from "./bindings/Settings";
+import type { CrashReport } from "./bindings/CrashReport";
 import type { Snapshot } from "./bindings/Snapshot";
 import type { StartupEntry } from "./bindings/StartupEntry";
 import type { StartupReport } from "./bindings/StartupReport";
@@ -67,6 +68,7 @@ export const api = {
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
 
   runAudit: () => invoke<AuditReport>("run_audit"),
+  crashReport: () => invoke<CrashReport>("crash_report"),
   hardwareInfo: () => invoke<HardwareInfo>("hardware_info"),
   metricsStart: (intervalMs: number) => invoke<void>("metrics_start", { intervalMs }),
   metricsStop: () => invoke<void>("metrics_stop"),

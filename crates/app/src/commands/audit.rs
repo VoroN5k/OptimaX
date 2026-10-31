@@ -2,14 +2,45 @@
 
 use super::blocking;
 use crate::dto::HardwareInfo;
-use crate::error::CmdResult;
+use crate::error::{CmdError, CmdResult};
+use crate::state::{lock, AppState};
+use optimax_audit::crashes::{analyze, CrashContext, CrashReport, CRASH_DAYS};
 use optimax_audit::{run_audit as audit, AuditReport, SystemProbe, WindowsProbe};
 use optimax_core::CivilDate;
+use tauri::State;
 
 /// Запускає аудит.
 #[tauri::command]
 pub async fn run_audit() -> CmdResult<AuditReport> {
     blocking(|| Ok(audit(&WindowsProbe::new(), CivilDate::today()))).await
+}
+
+/// «Чому вилітає?»: раптові вимкнення, сині екрани й вильоти програм за [`CRASH_DAYS`] днів
+/// із журналів System і Application (лише читання).
+#[tauri::command]
+pub async fn crash_report(state: State<'_, AppState>) -> CmdResult<CrashReport> {
+    let hard_off_by_button = lock(&state.settings).power_off_by_button;
+    blocking(move || {
+        let events = WindowsProbe::new()
+            .crash_events(CRASH_DAYS)
+            .map_err(|e| CmdError::Failed(e.to_string()))?
+            .unwrap_or_default();
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+            .unwrap_or(0);
+        Ok(analyze(
+            &events,
+            &CrashContext {
+                hard_off_by_button,
+                now_unix,
+                windows_dir: optimax_core::sysdirs::windows_dir()
+                    .map(|w| w.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            },
+        ))
+    })
+    .await
 }
 
 /// Відомості про залізо.

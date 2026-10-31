@@ -10,6 +10,7 @@
   import Card from "../components/Card.svelte";
   import FindingCard from "../components/FindingCard.svelte";
   import FrametimeChart from "../components/FrametimeChart.svelte";
+  import CrashView from "../components/CrashView.svelte";
   import Page from "../components/Page.svelte";
   import ProcessPicker from "../components/ProcessPicker.svelte";
   import RecordStatus from "../components/RecordStatus.svelte";
@@ -17,6 +18,8 @@
   import Segmented from "../components/Segmented.svelte";
   import StateView from "../components/StateView.svelte";
 
+  /** Вкладка: «Чому лагає?» (запис гри) чи «Чому вилітає?» (журнал подій). */
+  let tab = $state<"lag" | "crash">("lag");
   let exe = $state("");
   let seconds = $state(60);
   let recording = $state(false);
@@ -67,7 +70,23 @@
   <Button small variant="secondary" icon="upscale" onclick={() => (ui.screen = "upscale")}>{tk("ui.up.open")}</Button>
 {/snippet}
 
-<Page title={tk("ui.diag.title")} subtitle={tk("ui.diag.subtitle")}>
+<Page
+  title={tab === "lag" ? tk("ui.diag.title") : tk("ui.crash.title")}
+  subtitle={tab === "lag" ? tk("ui.diag.subtitle") : tk("ui.crash.subtitle")}
+>
+  <div class="tabs">
+    <Segmented
+      label={tk("ui.crash.tabs")}
+      bind:value={tab}
+      options={[
+        { value: "lag", label: tk("ui.crash.tab_lag") },
+        { value: "crash", label: tk("ui.crash.tab_crash") },
+      ]}
+    />
+  </div>
+  {#if tab === "crash"}
+    <CrashView />
+  {:else}
   <Card title={tk("ui.diag.setup")} subtitle={tk("ui.diag.setup_hint")}>
     <div class="setup">
       <ProcessPicker bind:value={exe} label={tk("ui.diag.game")} />
@@ -140,20 +159,26 @@
       </details>
     {/if}
   {/if}
+  {/if}
 
   {#snippet secondary()}
-    {#if recording}
+    {#if recording && tab === "lag"}
       <Button variant="secondary" icon="stop" onclick={() => api.diagCancel()}>{tk("ui.diag.stop")}</Button>
     {/if}
   {/snippet}
   {#snippet primary()}
-    <Button variant="primary" icon="play" disabled={!exe.trim() || recording} loading={recording} onclick={start}>
-      {tk("ui.diag.start")}
-    </Button>
+    {#if tab === "lag"}
+      <Button variant="primary" icon="play" disabled={!exe.trim() || recording} loading={recording} onclick={start}>
+        {tk("ui.diag.start")}
+      </Button>
+    {/if}
   {/snippet}
 </Page>
 
 <style>
+  .tabs {
+    margin-bottom: calc(var(--space) * 4);
+  }
   .setup {
     display: grid;
     grid-template-columns: 1fr auto;

@@ -77,6 +77,11 @@ async fn find(app: &AppHandle) -> CmdResult<Option<tauri_plugin_updater::Update>
 pub async fn update_check(app: AppHandle) -> CmdResult<UpdateStatus> {
     let available = find(&app).await?.map(|u| AvailableUpdate {
         version: u.version.clone(),
+        sections: u
+            .body
+            .as_deref()
+            .map(crate::release_notes::parse)
+            .unwrap_or_default(),
         notes: u.body.clone(),
         date: u.date.map(|d| d.date().to_string()),
     });

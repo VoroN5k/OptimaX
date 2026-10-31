@@ -328,6 +328,9 @@ pub struct SystemEvent {
     pub level: u8,
     /// Дата події (UTC).
     pub date: CivilDate,
+    /// Час події, Unix-секунди (UTC).
+    #[serde(default)]
+    pub unix_s: i64,
     /// Рядкові дані події (EventData) у порядку вставки: `%1` — перший.
     pub data: Vec<String>,
 }

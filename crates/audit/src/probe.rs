@@ -39,6 +39,11 @@ pub trait SystemProbe {
     fn hardware_events(&self, _days: u32) -> Result<Option<Vec<SystemEvent>>, CoreError> {
         Ok(None)
     }
+    /// Раптові вимкнення, сині екрани, вильоти програм, TDR і WHEA за `days` днів
+    /// (для «Чому вилітає?»). `Ok(None)` — джерело недоступне.
+    fn crash_events(&self, _days: u32) -> Result<Option<Vec<SystemEvent>>, CoreError> {
+        Ok(None)
+    }
 }
 
 fn expect_dword(value: Option<RegValue>, name: &str) -> Result<Option<u32>, CoreError> {

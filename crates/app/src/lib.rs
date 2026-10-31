@@ -14,6 +14,8 @@ mod log_layer;
 #[cfg(windows)]
 mod migrate;
 #[cfg(windows)]
+mod release_notes;
+#[cfg(windows)]
 mod report;
 #[cfg(windows)]
 mod settings;
@@ -210,6 +212,7 @@ mod app {
                 system::get_settings,
                 system::set_settings,
                 audit::run_audit,
+                audit::crash_report,
                 audit::hardware_info,
                 metrics::metrics_start,
                 metrics::metrics_stop,

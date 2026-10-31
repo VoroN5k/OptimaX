@@ -413,6 +413,7 @@ mod tests {
             id,
             level: 2,
             date: today(),
+            unix_s: 0,
             data: vec!["nvlddmkm".into()],
         };
         for events in [

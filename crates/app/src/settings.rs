@@ -45,6 +45,10 @@ pub struct Settings {
     /// Перевіряти оновлення при запуску (мережевий запит до GitHub; за замовчуванням вимкнено).
     #[serde(default)]
     pub update_check_on_start: bool,
+    /// Користувач вимикає ПК утриманням кнопки живлення: раптові вимкнення без синього екрана
+    /// в «Чому вилітає?» для нього звичайні (Windows не відрізняє їх від зникнення живлення).
+    #[serde(default)]
+    pub power_off_by_button: bool,
 }
 
 /// Налаштування очищення.
@@ -91,6 +95,7 @@ impl Default for Settings {
             upscale_hotkey: true,
             cleanup: CleanupSettings::default(),
             update_check_on_start: false,
+            power_off_by_button: false,
         }
     }
 }

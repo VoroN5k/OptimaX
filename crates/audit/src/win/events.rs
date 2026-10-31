@@ -1,9 +1,14 @@
-//! Журнал подій System через wevtapi (лише читання): TDR (`Display`, 4101) і `WHEA-Logger`.
+//! Журнали подій через wevtapi (лише читання): System — TDR (`Display`, 4101), `WHEA-Logger`,
+//! раптові вимкнення (`Kernel-Power`, 41); Application — вильоти програм (`Application Error`,
+//! 1000).
 //!
 //! Перевірено на Windows 11 Pro 26300 (2026-10-30): XPath із `timediff` приймається журналом,
 //! класичні події (як `Display`) віддають рядки вставки через `EvtRenderContextUser`.
 
 use crate::model::SystemEvent;
+use crate::rules::{
+    APP_ERROR_EVENT_ID, APP_ERROR_PROVIDER, KERNEL_POWER_PROVIDER, UNEXPECTED_OFF_EVENT_ID,
+};
 use crate::rules::{DISPLAY_PROVIDER, TDR_EVENT_ID, WHEA_PROVIDER};
 use optimax_core::{CivilDate, CoreError};
 use windows::core::{HRESULT, HSTRING};
@@ -12,8 +17,10 @@ use windows::Win32::System::EventLog::{
     EvtClose, EvtCreateRenderContext, EvtNext, EvtQuery, EvtQueryChannelPath,
     EvtQueryReverseDirection, EvtRender, EvtRenderContextSystem, EvtRenderContextUser,
     EvtRenderEventValues, EvtSystemEventID, EvtSystemLevel, EvtSystemProviderName,
-    EvtSystemTimeCreated, EvtVarTypeByte, EvtVarTypeFileTime, EvtVarTypeString, EvtVarTypeUInt16,
-    EVT_HANDLE, EVT_VARIANT, EVT_VARIANT_TYPE_ARRAY, EVT_VARIANT_TYPE_MASK,
+    EvtSystemTimeCreated, EvtVarTypeBoolean, EvtVarTypeByte, EvtVarTypeFileTime,
+    EvtVarTypeHexInt32, EvtVarTypeHexInt64, EvtVarTypeInt32, EvtVarTypeInt64, EvtVarTypeString,
+    EvtVarTypeUInt16, EvtVarTypeUInt32, EvtVarTypeUInt64, EVT_HANDLE, EVT_VARIANT,
+    EVT_VARIANT_TYPE_ARRAY, EVT_VARIANT_TYPE_MASK,
 };
 
 /// Скільки подій просимо за один виклик `EvtNext`.
@@ -43,15 +50,41 @@ fn os(api: &'static str, e: &windows::core::Error) -> CoreError {
 /// Події TDR і WHEA за останні `days` днів, від нових до старих.
 pub(super) fn hardware(days: u32) -> Result<Vec<SystemEvent>, CoreError> {
     let ms = u64::from(days) * 86_400_000;
-    query(&format!(
-        "*[System[(Provider[@Name='{WHEA_PROVIDER}'] or (Provider[@Name='{DISPLAY_PROVIDER}'] \
-         and EventID={TDR_EVENT_ID})) and TimeCreated[timediff(@SystemTime) <= {ms}]]]"
-    ))
+    query(
+        "System",
+        &format!(
+            "*[System[(Provider[@Name='{WHEA_PROVIDER}'] or (Provider[@Name='{DISPLAY_PROVIDER}'] \
+             and EventID={TDR_EVENT_ID})) and TimeCreated[timediff(@SystemTime) <= {ms}]]]"
+        ),
+    )
 }
 
-/// Виконує XPath-запит до журналу System.
-fn query(xpath: &str) -> Result<Vec<SystemEvent>, CoreError> {
-    let path = HSTRING::from("System");
+/// Раптові вимкнення й сині екрани (System, `Kernel-Power` 41) і вильоти програм
+/// (Application, `Application Error` 1000) за останні `days` днів, від нових до старих.
+pub(super) fn crashes(days: u32) -> Result<Vec<SystemEvent>, CoreError> {
+    let ms = u64::from(days) * 86_400_000;
+    let recent = format!("TimeCreated[timediff(@SystemTime) <= {ms}]");
+    let mut out = query(
+        "System",
+        &format!(
+            "*[System[Provider[@Name='{KERNEL_POWER_PROVIDER}'] and \
+             EventID={UNEXPECTED_OFF_EVENT_ID} and {recent}]]"
+        ),
+    )?;
+    out.extend(query(
+        "Application",
+        &format!(
+            "*[System[Provider[@Name='{APP_ERROR_PROVIDER}'] and \
+             EventID={APP_ERROR_EVENT_ID} and {recent}]]"
+        ),
+    )?);
+    out.sort_by_key(|e| std::cmp::Reverse(e.unix_s));
+    Ok(out)
+}
+
+/// Виконує XPath-запит до журналу `channel`.
+fn query(channel: &str, xpath: &str) -> Result<Vec<SystemEvent>, CoreError> {
+    let path = HSTRING::from(channel);
     let xpath = HSTRING::from(xpath);
     let flags = EvtQueryChannelPath.0 | EvtQueryReverseDirection.0;
     // SAFETY: рядки живуть до кінця виклику; сесія — локальна (None).
@@ -110,13 +143,16 @@ fn event(sys: &Handle, user: &Handle, ev: &Handle) -> Result<Option<SystemEvent>
     let user_buf = render(user, ev)?;
     let data = variants(&user_buf)
         .iter()
-        .map(|v| string(v).unwrap_or_default())
+        .map(|v| text(v).unwrap_or_default())
         .collect();
+    // FILETIME (100 нс від 1601-01-01) → Unix-секунди.
+    let unix_s = i64::try_from(time / 10_000_000).unwrap_or(i64::MAX) - 11_644_473_600;
     Ok(Some(SystemEvent {
         provider,
         id,
         level,
         date: CivilDate::from_filetime(time),
+        unix_s,
         data,
     }))
 }
@@ -205,6 +241,32 @@ fn string(v: &EVT_VARIANT) -> Option<String> {
     unsafe { p.to_string() }.ok()
 }
 
+/// Значення поля події як текст: рядки — як є, числа — десятково, `HexInt*` — `0x…`,
+/// логічні — `true`/`false` (так їх показує XML події). Інші типи — `None`.
+fn text(v: &EVT_VARIANT) -> Option<String> {
+    let k = kind(v)?;
+    if k == EvtVarTypeString.0 {
+        return string(v);
+    }
+    let a = &v.Anonymous;
+    // SAFETY: у кожній гілці читається поле, що відповідає перевіреному типу варіанта.
+    let s = unsafe {
+        match k {
+            x if x == EvtVarTypeUInt16.0 => a.UInt16Val.to_string(),
+            x if x == EvtVarTypeUInt32.0 => a.UInt32Val.to_string(),
+            x if x == EvtVarTypeUInt64.0 => a.UInt64Val.to_string(),
+            x if x == EvtVarTypeInt32.0 => a.Int32Val.to_string(),
+            x if x == EvtVarTypeInt64.0 => a.Int64Val.to_string(),
+            x if x == EvtVarTypeByte.0 => a.ByteVal.to_string(),
+            x if x == EvtVarTypeHexInt32.0 => format!("0x{:x}", a.UInt32Val),
+            x if x == EvtVarTypeHexInt64.0 => format!("0x{:x}", a.UInt64Val),
+            x if x == EvtVarTypeBoolean.0 => a.BooleanVal.as_bool().to_string(),
+            _ => return None,
+        }
+    };
+    Some(s)
+}
+
 fn uint16(v: &EVT_VARIANT) -> Option<u16> {
     if kind(v)? != EvtVarTypeUInt16.0 {
         return None;
@@ -238,6 +300,7 @@ mod tests {
     #[test]
     fn reads_real_system_log() {
         let events = query(
+            "System",
             "*[System[Provider[@Name='Display'] and TimeCreated[timediff(@SystemTime) <= 31536000000]]]",
         )
         .unwrap();
@@ -247,10 +310,31 @@ mod tests {
             assert!(e.date.year >= 2020);
         }
         // Події з даними: Service Control Manager пише рядки вставки (ім'я служби, стан).
-        let scm = query("*[System[Provider[@Name='Service Control Manager']]]").unwrap();
+        let scm = query(
+            "System",
+            "*[System[Provider[@Name='Service Control Manager']]]",
+        )
+        .unwrap();
         if let Some(e) = scm.first() {
             assert!(!e.data.is_empty(), "{e:?}");
         }
         hardware(30).unwrap();
+    }
+
+    /// Реальні вимкнення й вильоти (лише читання): числові поля Kernel-Power 41 мають
+    /// приходити текстом, а не порожніми рядками.
+    #[test]
+    fn reads_real_crash_events() {
+        let events = crashes(365).unwrap();
+        assert!(events.windows(2).all(|w| w[0].unix_s >= w[1].unix_s));
+        for e in &events {
+            assert!(e.unix_s > 1_500_000_000, "{e:?}");
+            if e.provider == KERNEL_POWER_PROVIDER {
+                assert!(!e.data[0].is_empty(), "BugcheckCode: {e:?}");
+            } else {
+                assert_eq!(e.provider, APP_ERROR_PROVIDER);
+                assert!(!e.data[0].is_empty(), "AppName: {e:?}");
+            }
+        }
     }
 }

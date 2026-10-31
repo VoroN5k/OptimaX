@@ -7,6 +7,7 @@
 //!
 //! `unsafe` дозволено лише в модулі `win` (FFI до WinAPI).
 
+pub mod crashes;
 pub mod devprop;
 pub mod gpu_info;
 pub mod model;

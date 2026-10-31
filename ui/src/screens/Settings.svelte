@@ -10,6 +10,7 @@
   import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
   import Page from "../components/Page.svelte";
+  import ReleaseNotes from "../components/ReleaseNotes.svelte";
   import Segmented from "../components/Segmented.svelte";
   import Toggle from "../components/Toggle.svelte";
 
@@ -141,7 +142,7 @@
         <Toggle label={tk("ui.update.auto")} bind:checked={ui.settings.update_check_on_start} onchange={() => save()} />
       </div>
       <div class="actions">
-        <Button variant="secondary" icon="undo" loading={checking} disabled={installing} onclick={checkUpdate}>{tk("ui.update.check")}</Button>
+        <Button variant="secondary" icon="refresh" loading={checking} disabled={installing} onclick={checkUpdate}>{tk("ui.update.check")}</Button>
         {#if ui.update?.available}
           {#if ui.update.installed}
             <Button variant="primary" icon="play" loading={installing} onclick={() => (confirmUpdate = true)}>
@@ -158,7 +159,10 @@
         {:else if ui.update?.available}
           <p>{tk("ui.update.available", { v: ui.update.available.version, current: ui.update.current })}</p>
           {#if !ui.update.installed}<p class="muted">{tk("ui.update.portable")}</p>{/if}
-          {#if ui.update.available.notes}<pre class="notes">{ui.update.available.notes}</pre>{/if}
+          {#if ui.update.available.sections.length}
+            <ReleaseNotes sections={ui.update.available.sections} />
+            <button type="button" class="link small" onclick={() => api.updateOpenPage()}>{tk("ui.notes.github")}</button>
+          {/if}
         {/if}
         {#if progress}
           <p>{progress.total ? tk("ui.update.progress", { done: mb(progress.downloaded), total: mb(progress.total) }) : tk("ui.update.progress_unknown", { done: mb(progress.downloaded) })}</p>
@@ -259,16 +263,20 @@
   .error {
     color: var(--danger);
   }
-  .notes {
-    margin: calc(var(--space) * 2) 0 0;
-    padding: calc(var(--space) * 3);
-    max-height: 200px;
-    overflow: auto;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-input);
-    font-family: "JetBrains Mono", monospace;
-    font-size: 12px;
-    white-space: pre-wrap;
+  .link {
+    margin-top: calc(var(--space) * 2);
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-from);
+    cursor: pointer;
+  }
+  .link:hover {
+    text-decoration: underline;
+  }
+  .link:focus-visible {
+    outline: 2px solid var(--accent-from);
+    outline-offset: 2px;
+    border-radius: 4px;
   }
 </style>

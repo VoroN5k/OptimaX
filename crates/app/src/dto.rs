@@ -127,6 +127,8 @@ pub struct AvailableUpdate {
     pub version: String,
     /// Що нового (текст із latest.json).
     pub notes: Option<String>,
+    /// Те саме, розібране на розділи й пункти (показ без вставки HTML).
+    pub sections: Vec<crate::release_notes::NoteSection>,
     /// Дата публікації (РРРР-ММ-ДД).
     pub date: Option<String>,
 }

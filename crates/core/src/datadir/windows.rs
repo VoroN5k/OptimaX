@@ -221,6 +221,14 @@ fn ensure(path: &Path, sddl: &str) -> Result<(), CoreError> {
     }
 }
 
+pub(super) fn shared_dir(base: &Path, name: &str) -> Result<PathBuf, CoreError> {
+    let app = base.join(APP_DIR);
+    ensure(&app, SDDL_APP)?;
+    let dir = app.join(name);
+    ensure(&dir, SDDL_APP)?;
+    Ok(dir)
+}
+
 pub(super) fn secure_dir_on(base: &Path) -> Result<PathBuf, CoreError> {
     let app = base.join(APP_DIR);
     ensure(&app, SDDL_APP)?;

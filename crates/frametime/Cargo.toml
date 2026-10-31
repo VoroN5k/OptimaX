@@ -21,13 +21,6 @@ thiserror.workspace = true
 tracing.workspace = true
 sha2.workspace = true
 
-[target.'cfg(windows)'.dependencies]
-windows = { workspace = true, features = [
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_Security_Authorization",
-] }
-
 [build-dependencies]
 sha2.workspace = true
 

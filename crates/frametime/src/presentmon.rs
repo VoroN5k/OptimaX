@@ -6,7 +6,9 @@
 //!   запуском**; не збігся — запуску немає;
 //! - під час перевірки й запуску файл відкрито без дозволу на запис/видалення іншим процесам,
 //!   щоб його не можна було підмінити між перевіркою та стартом;
-//! - каталог `%LOCALAPPDATA%\OptimaX\bin` отримує права «запис лише для адміністраторів».
+//! - каталог — `%ProgramData%\OptimaX\bin` ([`optimax_core::datadir::shared_dir`]): створюється
+//!   з правами «лише SYSTEM і Адміністратори» (й батьківська тека теж), тож поруч з exe не можна
+//!   підкласти DLL; не вдалося захистити каталог — PresentMon не розпаковується й не запускається.
 
 use crate::FrametimeError;
 use sha2::{Digest, Sha256};
@@ -123,9 +125,9 @@ pub fn stop_args() -> Vec<String> {
     ]
 }
 
-/// Каталог за замовчуванням: `%LOCALAPPDATA%\OptimaX\bin`.
-pub fn default_install_dir() -> Option<PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("OptimaX").join("bin"))
+/// Каталог за замовчуванням: `%ProgramData%\OptimaX\bin`, захищений (див. опис модуля).
+pub fn default_install_dir() -> Result<PathBuf, FrametimeError> {
+    Ok(optimax_core::datadir::shared_dir("bin")?)
 }
 
 /// Відкриває файл так, щоб інші процеси не могли його змінити, перейменувати чи видалити,
@@ -146,16 +148,15 @@ fn open_locked(path: &Path) -> std::io::Result<File> {
 #[derive(Debug, Clone)]
 pub struct BundledPresentMon {
     path: PathBuf,
-    hardened: bool,
 }
 
 impl BundledPresentMon {
     /// Розпаковує вбудований PresentMon у `dir` (якщо там ще немає правильної копії).
+    /// Захист каталогу — на викликачі: у програмі це [`Self::install_default`].
     pub fn install(dir: &Path) -> Result<Self, FrametimeError> {
         // Вшита копія теж перевіряється: build.rs міг бути обійдений.
         verify_bytes(EMBEDDED)?;
         fs::create_dir_all(dir)?;
-        let hardened = harden_dir(dir);
         let path = dir.join(PRESENTMON_FILE_NAME);
 
         let up_to_date = match fs::read(&path) {
@@ -180,24 +181,17 @@ impl BundledPresentMon {
                 path.display()
             );
         }
-        Ok(Self { path, hardened })
+        Ok(Self { path })
     }
 
-    /// Розпаковує в каталог за замовчуванням.
+    /// Розпаковує в захищений каталог за замовчуванням. Не вдалося його захистити — помилка.
     pub fn install_default() -> Result<Self, FrametimeError> {
-        let dir = default_install_dir()
-            .ok_or_else(|| FrametimeError::InvalidTarget("немає змінної LOCALAPPDATA".into()))?;
-        Self::install(&dir)
+        Self::install(&default_install_dir()?)
     }
 
     /// Шлях до exe.
     pub fn path(&self) -> &Path {
         &self.path
-    }
-
-    /// Чи вдалося обмежити права на каталог (потрібні права адміністратора).
-    pub fn is_dir_hardened(&self) -> bool {
-        self.hardened
     }
 
     /// Перевіряє хеш файлу на диску й повертає заблокований дескриптор.
@@ -252,25 +246,6 @@ impl BundledPresentMon {
         child.wait()?;
         Ok(())
     }
-}
-
-#[cfg(windows)]
-fn harden_dir(dir: &Path) -> bool {
-    match crate::acl::restrict_to_admins(dir) {
-        Ok(()) => true,
-        Err(e) => {
-            tracing::warn!(
-                "не вдалося обмежити права на {} ({e}); захист тримається на перевірці SHA-256",
-                dir.display()
-            );
-            false
-        }
-    }
-}
-
-#[cfg(not(windows))]
-fn harden_dir(_dir: &Path) -> bool {
-    false
 }
 
 #[cfg(test)]
@@ -341,16 +316,13 @@ mod tests {
         assert!(pm.verified_handle().is_ok());
 
         // Підміна файлу: запуск має бути заборонений, а повторне встановлення — відновити копію.
-        let hardened = pm.is_dir_hardened();
-        if !hardened {
-            fs::write(pm.path(), b"not presentmon").unwrap();
-            assert!(matches!(
-                pm.verified_handle(),
-                Err(FrametimeError::HashMismatch { .. })
-            ));
-            let pm = BundledPresentMon::install(&dir).unwrap();
-            assert!(pm.verified_handle().is_ok());
-        }
+        fs::write(pm.path(), b"not presentmon").unwrap();
+        assert!(matches!(
+            pm.verified_handle(),
+            Err(FrametimeError::HashMismatch { .. })
+        ));
+        let pm = BundledPresentMon::install(&dir).unwrap();
+        assert!(pm.verified_handle().is_ok());
         let _ = fs::remove_dir_all(&dir);
     }
 }

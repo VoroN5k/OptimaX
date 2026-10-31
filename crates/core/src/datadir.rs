@@ -9,6 +9,9 @@
 //! Адміністратори й не SYSTEM (або яка є посиланням), вважається підкинутою: її вміст не
 //! читається, вона перейменовується в `OptimaX.untrusted-<час>`, а замість неї створюється чиста.
 //!
+//! Спільні для всіх користувачів файли програми (вбудований PresentMon) — у
+//! [`shared_dir`] (`%ProgramData%\OptimaX\bin`), без доступу для звичайних користувачів.
+//!
 //! Раніше дані лежали в `%LOCALAPPDATA%\OptimaX` ([`legacy_dir`]) — звідти їх переносить `app`.
 
 use crate::CoreError;
@@ -41,6 +44,18 @@ pub fn secure_dir_on(base: &Path) -> Result<PathBuf, CoreError> {
     imp::secure_dir_on(base)
 }
 
+/// Спільна для всіх користувачів підтека `%ProgramData%\OptimaX\<name>` (напр. `bin` для
+/// вбудованого PresentMon): лише SYSTEM і Адміністратори, без читання для користувачів.
+/// `name` — одне ім'я без роздільників.
+pub fn shared_dir(name: &str) -> Result<PathBuf, CoreError> {
+    if name.is_empty() || name.contains(['\\', '/', ':']) || name == "." || name == ".." {
+        return Err(CoreError::InvalidData(format!(
+            "недопустиме ім'я теки: {name}"
+        )));
+    }
+    imp::shared_dir(&imp::program_data()?, name)
+}
+
 /// Колишня тека даних `%LOCALAPPDATA%\OptimaX` (для одноразового перенесення).
 pub fn legacy_dir() -> Option<PathBuf> {
     imp::local_app_data().map(|d| d.join(APP_DIR))
@@ -64,6 +79,10 @@ mod imp {
     }
 
     pub(super) fn secure_dir_on(_base: &Path) -> Result<PathBuf, CoreError> {
+        Err(CoreError::Unsupported("тека даних OptimaX"))
+    }
+
+    pub(super) fn shared_dir(_base: &Path, _name: &str) -> Result<PathBuf, CoreError> {
         Err(CoreError::Unsupported("тека даних OptimaX"))
     }
 

@@ -59,13 +59,8 @@ fn capture(args: &[String]) -> anyhow::Result<Recording> {
 
     let pm = BundledPresentMon::install_default()?;
     println!(
-        "PresentMon: {} (SHA-256 перевірено; права на каталог обмежено: {})",
-        pm.path().display(),
-        if pm.is_dir_hardened() {
-            "так"
-        } else {
-            "ні — запустіть від адміністратора"
-        }
+        "PresentMon: {} (SHA-256 перевірено; каталог лише для адміністраторів)",
+        pm.path().display()
     );
     let gpu =
         optimax_metrics::NvmlGpu::open().map(|g| Box::new(g) as Box<dyn optimax_metrics::GpuApi>);

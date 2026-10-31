@@ -6,7 +6,7 @@
 //! - [`presentmon`]: вбудований бінарник із перевіркою SHA-256 перед **кожним** запуском.
 //! - [`recording`]: одночасний запис кадрів і системних метрик на спільній шкалі QPC.
 //!
-//! `unsafe` дозволено лише в модулі `acl` (FFI до WinAPI для прав доступу до каталогу).
+//! Без `unsafe`: права на каталог PresentMon встановлює `optimax_core::datadir`.
 
 pub mod csv;
 pub mod frame;
@@ -14,9 +14,6 @@ pub mod gate;
 pub mod presentmon;
 pub mod recording;
 pub mod stats;
-
-#[cfg(windows)]
-mod acl;
 
 pub use frame::{FrameRecord, FrameTimestamp, PresentMode};
 pub use gate::{EndReason, Gate, Observation, Phase, StartMode};

@@ -2389,7 +2389,7 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
 name = "optimax-app"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "optimax-audit",
@@ -2415,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-audit"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "nvml-wrapper",
@@ -2429,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-cleanup"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "optimax-core",
@@ -2443,7 +2443,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "serde",
@@ -2456,7 +2456,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-diagnosis"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "optimax-audit",
@@ -2470,7 +2470,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-frametime"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "optimax-core",
@@ -2485,7 +2485,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-gamemode"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "optimax-core",
@@ -2500,7 +2500,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-metrics"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "nvml-wrapper",
@@ -2514,7 +2514,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-network"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "optimax-core",
@@ -2528,7 +2528,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-tweaks"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "optimax-core",
@@ -2545,7 +2545,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-upscale"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "optimax-core",

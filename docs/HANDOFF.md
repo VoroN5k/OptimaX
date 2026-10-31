@@ -3,7 +3,7 @@
 Файл для нового агента (іншої сесії Claude Code), щоб продовжити роботу без попереднього
 контексту. Оновлюй його наприкінці кожної сесії. Обов'язкові правила — у `CLAUDE.md`.
 
-Останнє оновлення: 2026-10-24.
+Останнє оновлення: 2026-10-31.
 
 ---
 
@@ -96,8 +96,9 @@
 - `tauri-plugin-updater` ~2.13.3 (2.14.1 свідомо не взято — 2 дні від виходу). Ініціалізація в
   `lib.rs`, конфіг — `plugins.updater` у `tauri.conf.json` (endpoint
   `releases/latest/download/latest.json`, `installMode: passive`), `createUpdaterArtifacts: true`.
-- **`pubkey` поки `REPLACE_WITH_PUBLIC_KEY`** — користувач має згенерувати ключ
-  (`docs/RELEASE.md`, крок 0) і вставити публічний. До того перевірка оновлень не працює.
+- `pubkey` — з `%USERPROFILE%\.tauri\optimax.key.pub` (ключ згенеровано 2026-10-31 для 0.1.2;
+  приватний ключ і пароль — лише в користувача). Копії 0.1.1 мають заглушку замість ключа й
+  оновитися з програми не можуть — 0.1.2 ставиться вручну один раз.
 - `commands/update.rs`: `update_check`, `update_install(version)` (повторно перевіряє версію й
   адресу, лише для встановленої копії), `update_open_page`. «Встановлено» = тека exe збігається
   з `InstallLocation` у ключі `Uninstall\OptimaX` (HKLM або HKCU); портативний exe Tauri теж
@@ -105,6 +106,36 @@
 - `require_signed_version` (захист від даунгрейду) не ввімкнено: невідомо, чи CLI 2.12.4 пише
   версію в підпис — перевірити `.sig` після першої підписаної збірки.
 - Налаштування `update_check_on_start` (за замовчуванням false).
+
+## 2g. Аудит безпеки й виправлення (0.1.2, закомічено п'ятьма комітами `fix(security): …`)
+
+Модель загрози: код без прав адміністратора в сесії того самого користувача → процес OptimaX
+з правами адміністратора (межа, яку проєкт сам задекларував: `requireAdministrator`, CLAUDE.md
+11.3). Аудит — скілом `security-audit` у режимі поради (`~/.claude/skills/security-audit` —
+посилання на `~/.agents/skills`).
+
+- **Журнал змін:** `engine::is_known_target` — відкат і `recover_pending` виконують лише цілі
+  й типи значень, які рушій сам пише для `tweak_id`. Новий твік = додати його ціль сюди
+  (інакше його записи не відкочуватимуться; тест `genuine_targets_of_every_tweak_are_accepted`).
+- **Файлові операції очищення/карантину:** `optimax_core::safefs` — відкриття з
+  `FILE_FLAG_OPEN_REPARSE_POINT`, звірка `GetFinalPathNameByHandleW`, видалення через
+  дескриптор, перейменування — `NtSetInformationFile` відносно дескриптора теки (Win32
+  `SetFileInformationByHandle` з `RootDirectory` дає `ERROR_INVALID_PARAMETER`). Тести на
+  справжньому NTFS із `mklink /J`. Мок `MemFs` розкриває посилання в проміжних теках, як ОС.
+- **Тека даних:** `optimax_core::datadir` — `%ProgramData%\OptimaX\<SID>` (SY/BA повний,
+  користувач — читання), спільна `%ProgramData%\OptimaX\bin` для PresentMon (лише SY/BA). Тека
+  не з власником BA/SY або junction → відсувається в `*.untrusted-<час>` непрочитаною.
+  Одноразове перенесення з `%LOCALAPPDATA%\OptimaX` — `app/src/migrate.rs` (типізовано, до
+  32 МБ, без посилань; мітка `migrated-from-localappdata.json`). Карантин на іншому диску —
+  `X:\OptimaX\<SID>\Quarantine`. `frametime::acl` прибрано.
+- **Системні шляхи:** `optimax_core::sysdirs` (ядро + `SHGetKnownFolderPath`) замість змінних
+  середовища для чорного списку, правил, Dism/powercfg/explorer, `nvml.dll`, тек
+  автозавантаження. `LOCALAPPDATA`/`APPDATA` для правил — лише всередині профілю.
+- **Не перевірено з правами адміністратора:** тест `datadir::…planted_dir_and_junction_are_moved_aside`
+  (без прав пропускається); реальне очищення/карантин/відновлення; перенесення даних.
+- **Лишилось:** `require_signed_version` (захист від даунгрейду, див. 2f) — перевірити `.sig`
+  першої підписаної збірки 0.1.2. Звіт для відгуку містить командні рядки автозапуску —
+  попереджати користувача переглянути перед відправкою.
 
 ## 3. Поточна робота: гілка `feature/cleaning` (модуль «Очищення», CLAUDE.md розд. 11)
 

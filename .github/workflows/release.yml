@@ -63,6 +63,9 @@ jobs:
           if ((Get-Content crates/app/tauri.conf.json -Raw) -match 'REPLACE_WITH_PUBLIC_KEY') {
             throw "У tauri.conf.json немає публічного ключа оновлень"
           }
+          if (-not (Get-Content crates/app/tauri.conf.json -Raw | ConvertFrom-Json).plugins.updater.requireSignedVersion) {
+            throw "У tauri.conf.json вимкнено requireSignedVersion (захист від даунгрейду)"
+          }
           "version=$v" >> $env:GITHUB_OUTPUT
 
       - name: Rust

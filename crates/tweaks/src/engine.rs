@@ -450,7 +450,9 @@ impl<'a> Engine<'a> {
                         )))
                     }
                 };
-                let system_root = std::env::var("SystemRoot").unwrap_or_default();
+                let system_root = optimax_core::sysdirs::windows_dir()
+                    .map(|w| w.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 if is_system_path(&exe_from_command(&command), &system_root) {
                     return Err(TweakError::Forbidden(format!(
                         "{name}: системний компонент Windows — не вимикаємо"

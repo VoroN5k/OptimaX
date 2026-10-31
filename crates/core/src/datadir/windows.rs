@@ -1,9 +1,10 @@
-//! Реалізація [`super`] на Windows: відомі теки (`SHGetKnownFolderPath`), SID поточного
+//! Реалізація [`super`] на Windows: відомі теки ([`crate::sysdirs`]), SID поточного
 //! користувача, створення тек із дескриптором безпеки й перевірка власника за дескриптором файлу.
 #![allow(unsafe_code)]
 
 use super::{untrusted_name, APP_DIR};
 use crate::safefs::{self, SafeFsError};
+use crate::sysdirs::{self, Folder};
 use crate::CoreError;
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
@@ -19,11 +20,7 @@ use windows::Win32::Security::{
     TOKEN_USER,
 };
 use windows::Win32::Storage::FileSystem::CreateDirectoryW;
-use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-use windows::Win32::UI::Shell::{
-    FOLDERID_LocalAppData, FOLDERID_ProgramData, SHGetKnownFolderPath, KNOWN_FOLDER_FLAG,
-};
 
 /// Спільна тека програми: SYSTEM і Адміністратори — повний доступ, більше нікого.
 const SDDL_APP: &str = "O:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
@@ -52,22 +49,12 @@ impl Drop for Local {
     }
 }
 
-fn known_folder(id: &windows::core::GUID) -> Option<PathBuf> {
-    // SAFETY: `id` — валідний GUID; рядок звільняється CoTaskMemFree нижче.
-    let p = unsafe { SHGetKnownFolderPath(id, KNOWN_FOLDER_FLAG(0), None) }.ok()?;
-    // SAFETY: система повернула нуль-термінований рядок.
-    let s = unsafe { p.to_string() }.ok();
-    // SAFETY: рядок виділено SHGetKnownFolderPath через CoTaskMemAlloc.
-    unsafe { CoTaskMemFree(Some(p.0 as *const _)) };
-    s.map(PathBuf::from)
-}
-
 pub(super) fn program_data() -> Result<PathBuf, CoreError> {
-    known_folder(&FOLDERID_ProgramData).ok_or(CoreError::NotFound("ProgramData".into()))
+    sysdirs::known(Folder::ProgramData).ok_or(CoreError::NotFound("ProgramData".into()))
 }
 
 pub(super) fn local_app_data() -> Option<PathBuf> {
-    known_folder(&FOLDERID_LocalAppData)
+    sysdirs::known(Folder::LocalAppData)
 }
 
 /// SID користувача процесу у вигляді `S-1-5-21-…`.

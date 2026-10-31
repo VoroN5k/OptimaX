@@ -60,15 +60,20 @@ mod windows {
     #[derive(Debug, Default, Clone, Copy)]
     pub struct WinTools;
 
+    /// Тека Windows від ядра, а не зі змінної середовища `SystemRoot` (її може перевизначити
+    /// користувач, і тоді з правами адміністратора запустився б чужий «Dism.exe»).
     fn system_root() -> Result<String, CleanupError> {
-        let root = std::env::var("SystemRoot")
-            .map_err(|_| CleanupError::Tool("немає змінної SystemRoot".into()))?;
-        path::normalize(&root).map_err(|e| CleanupError::Tool(e.to_string()))
+        let root = optimax_core::sysdirs::windows_dir()
+            .ok_or_else(|| CleanupError::Tool("не вдалося визначити теку Windows".into()))?;
+        path::normalize(&root.to_string_lossy()).map_err(|e| CleanupError::Tool(e.to_string()))
     }
 
-    /// Шлях до бінарника в `%SystemRoot%\System32`, перевірений на справжність розташування.
+    /// Шлях до бінарника в `System32`, перевірений на справжність розташування.
     fn system32_exe(name: &str) -> Result<String, CleanupError> {
-        let dir = path::join(&system_root()?, "System32");
+        let dir = optimax_core::sysdirs::system32()
+            .ok_or_else(|| CleanupError::Tool("не вдалося визначити System32".into()))?;
+        let dir = path::normalize(&dir.to_string_lossy())
+            .map_err(|e| CleanupError::Tool(e.to_string()))?;
         let exe = path::join(&dir, name);
         let canonical =
             std::fs::canonicalize(&exe).map_err(|e| CleanupError::Tool(format!("{exe}: {e}")))?;

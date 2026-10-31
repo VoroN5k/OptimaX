@@ -25,7 +25,7 @@ pub mod system;
 pub use fs::{FsApi, FsError, MemFs, StdFs};
 pub use guard::{Guard, Zone};
 pub use journal::{CleanupJournal, JournalLine, JournalRecord, Outcome, RunKind};
-pub use pattern::Env;
+pub use pattern::{Env, SystemFolders};
 pub use plan::{build_plan, execute, Action, CleanPlan, ExecContext, ExecProgress, ExecResult};
 pub use quarantine::{Quarantine, QuarantineBatch};
 pub use rules::{Category, Method, RuleIssue, RuleSet, Verdict};

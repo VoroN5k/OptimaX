@@ -19,10 +19,8 @@ pub trait GpuApi: Send {
 pub fn open_nvml() -> Option<Nvml> {
     #[cfg(windows)]
     {
-        let root = std::env::var_os("SystemRoot")?;
-        let path = std::path::Path::new(&root)
-            .join("System32")
-            .join("nvml.dll");
+        // System32 — від ядра, а не з `%SystemRoot%`: змінну може перевизначити користувач.
+        let path = optimax_core::sysdirs::system32()?.join("nvml.dll");
         if !path.is_file() {
             tracing::debug!("nvml.dll не знайдено: {}", path.display());
             return None;

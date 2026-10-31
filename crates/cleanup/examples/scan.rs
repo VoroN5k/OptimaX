@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let drive = args.next().unwrap_or_else(|| r"C:\".into());
     let full = args.next().as_deref() == Some("full");
-    let (rules, issues) = RuleSet::embedded(Env::from_process());
+    let (rules, issues) = RuleSet::embedded(Env::from_system());
     for i in &issues {
         println!("ПРОБЛЕМА ПРАВИЛА {} ({}): {}", i.rule_id, i.file, i.problem);
     }

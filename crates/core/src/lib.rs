@@ -16,6 +16,7 @@ pub mod process;
 pub mod registry;
 pub mod safefs;
 pub mod service;
+pub mod sysdirs;
 pub mod toast;
 
 pub use date::CivilDate;

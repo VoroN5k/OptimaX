@@ -130,9 +130,11 @@ mod app {
         };
         if optimax_core::dialog::ask_yes_no(&text("app.webview2.title"), &text("app.webview2.text"))
         {
-            let _ = std::process::Command::new("explorer")
-                .arg(WEBVIEW2_URL)
-                .spawn();
+            if let Some(explorer) = optimax_core::sysdirs::explorer() {
+                let _ = std::process::Command::new(explorer)
+                    .arg(WEBVIEW2_URL)
+                    .spawn();
+            }
         }
         false
     }

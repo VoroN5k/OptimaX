@@ -126,7 +126,9 @@ pub async fn update_install(app: AppHandle, version: String) -> CmdResult<()> {
 /// Відкриває сторінку релізів у браузері (адреса фіксована, довільні посилання не відкриваємо).
 #[tauri::command]
 pub fn update_open_page() -> CmdResult<()> {
-    std::process::Command::new("explorer")
+    let explorer = optimax_core::sysdirs::explorer()
+        .ok_or_else(|| failed("не вдалося визначити теку Windows"))?;
+    std::process::Command::new(explorer)
         .arg(RELEASES_PAGE)
         .spawn()
         .map(|_| ())

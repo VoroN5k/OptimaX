@@ -16,17 +16,12 @@ use std::time::Duration;
 
 /// Тека «Автозавантаження» для джерела-теки.
 fn folder(source: StartupSource) -> Option<PathBuf> {
-    let (var, sub) = match source {
-        StartupSource::UserFolder => ("APPDATA", r"Microsoft\Windows\Start Menu\Programs\Startup"),
-        StartupSource::CommonFolder => (
-            "ProgramData",
-            r"Microsoft\Windows\Start Menu\Programs\StartUp",
-        ),
-        StartupSource::UserRun | StartupSource::MachineRun | StartupSource::MachineRun32 => {
-            return None
-        }
-    };
-    std::env::var_os(var).map(|base| PathBuf::from(base).join(sub))
+    use optimax_core::sysdirs::{known, Folder};
+    match source {
+        StartupSource::UserFolder => known(Folder::Startup),
+        StartupSource::CommonFolder => known(Folder::CommonStartup),
+        StartupSource::UserRun | StartupSource::MachineRun | StartupSource::MachineRun32 => None,
+    }
 }
 
 /// Записи одного джерела: (ім'я, командний рядок або шлях до файлу).
@@ -99,7 +94,9 @@ fn running_by_exe() -> HashMap<String, StartupRunning> {
 #[tauri::command]
 pub async fn startup_list() -> CmdResult<Vec<StartupEntry>> {
     blocking(|| {
-        let system_root = std::env::var("SystemRoot").unwrap_or_default();
+        let system_root = optimax_core::sysdirs::windows_dir()
+            .map(|w| w.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let running = running_by_exe();
         let mut list = Vec::new();
         for source in StartupSource::ALL {

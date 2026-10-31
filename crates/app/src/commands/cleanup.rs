@@ -51,7 +51,7 @@ impl CleanupState {
         if let Some(r) = &self.rules {
             return r.clone();
         }
-        let (rules, issues) = RuleSet::embedded(Env::from_process());
+        let (rules, issues) = RuleSet::embedded(Env::from_system());
         for i in &issues {
             tracing::warn!("правило очищення {} ({}): {}", i.rule_id, i.file, i.problem);
         }
@@ -266,8 +266,7 @@ pub(crate) fn data_dir() -> CmdResult<String> {
 }
 
 fn system_drive() -> String {
-    std::env::var("SystemDrive")
-        .ok()
+    optimax_core::sysdirs::system_drive()
         .and_then(|d| path::normalize(&format!("{d}\\")).ok())
         .unwrap_or_else(|| r"C:\".to_string())
 }

@@ -10,29 +10,88 @@ pub struct Env {
     vars: HashMap<String, String>,
 }
 
-/// Змінні, які можуть використовувати правила й чорний список.
-const KNOWN_VARS: &[&str] = &[
-    "SystemRoot",
-    "SystemDrive",
-    "LOCALAPPDATA",
-    "APPDATA",
-    "USERPROFILE",
-    "ProgramData",
-    "ProgramFiles",
-    "ProgramFiles(x86)",
-    "ProgramW6432",
-    "OneDrive",
-    "PUBLIC",
-];
+/// Теки системи, з яких будуються змінні правил і чорного списку (див. [`Env::from_folders`]).
+#[derive(Debug, Clone, Default)]
+pub struct SystemFolders {
+    /// `C:\Windows`.
+    pub windows: Option<String>,
+    /// `C:\ProgramData`.
+    pub program_data: Option<String>,
+    /// `C:\Program Files`.
+    pub program_files: Option<String>,
+    /// `C:\Program Files (x86)`.
+    pub program_files_x86: Option<String>,
+    /// `C:\Program Files` (64-бітна).
+    pub program_files_x64: Option<String>,
+    /// Профіль користувача.
+    pub profile: Option<String>,
+    /// `C:\Users\Public`.
+    pub public: Option<String>,
+    /// `%LOCALAPPDATA%`.
+    pub local_app_data: Option<String>,
+    /// `%APPDATA%`.
+    pub roaming_app_data: Option<String>,
+    /// Тека OneDrive.
+    pub one_drive: Option<String>,
+}
 
 impl Env {
-    /// Змінні поточного процесу.
-    pub fn from_process() -> Self {
+    /// Теки цієї системи — з API ([`optimax_core::sysdirs`]), а не зі змінних середовища процесу:
+    /// їх користувач може перевизначити, і тоді чорний список вказував би не туди.
+    pub fn from_system() -> Self {
+        use optimax_core::sysdirs::{self, Folder};
+        let s =
+            |p: Option<std::path::PathBuf>| p.and_then(|p| p.into_os_string().into_string().ok());
+        Self::from_folders(&SystemFolders {
+            windows: s(sysdirs::windows_dir()),
+            program_data: s(sysdirs::known(Folder::ProgramData)),
+            program_files: s(sysdirs::known(Folder::ProgramFiles)),
+            program_files_x86: s(sysdirs::known(Folder::ProgramFilesX86)),
+            program_files_x64: s(sysdirs::known(Folder::ProgramFilesX64)),
+            profile: s(sysdirs::known(Folder::Profile)),
+            public: s(sysdirs::known(Folder::Public)),
+            local_app_data: s(sysdirs::known(Folder::LocalAppData)),
+            roaming_app_data: s(sysdirs::known(Folder::RoamingAppData)),
+            one_drive: s(sysdirs::known(Folder::OneDrive)),
+        })
+    }
+
+    /// Розкладає теки по змінних. `LOCALAPPDATA` і `APPDATA` задає сам користувач
+    /// (`HKCU\…\User Shell Folders`), тож вони приймаються лише всередині профілю — інакше
+    /// правила очищення можна було б спрямувати в чужі теки; поза профілем змінна не задається,
+    /// і правила з нею на цій системі не діють. OneDrive лише розширює чорний список, тому
+    /// береться як є.
+    pub fn from_folders(f: &SystemFolders) -> Self {
         let mut env = Self::default();
-        for name in KNOWN_VARS {
-            if let Some(v) = std::env::var_os(name).and_then(|v| v.into_string().ok()) {
+        let norm = |v: &Option<String>| v.as_deref().and_then(|v| path::normalize(v).ok());
+        if let Some(w) = norm(&f.windows) {
+            if let Some(d) = path::drive_letter(&w) {
+                env.set("SystemDrive", &format!("{d}:"));
+            }
+            env.set("SystemRoot", &w);
+        }
+        for (name, v) in [
+            ("ProgramData", &f.program_data),
+            ("ProgramFiles", &f.program_files),
+            ("ProgramFiles(x86)", &f.program_files_x86),
+            ("ProgramW6432", &f.program_files_x64),
+            ("PUBLIC", &f.public),
+            ("OneDrive", &f.one_drive),
+        ] {
+            if let Some(v) = norm(v) {
                 env.set(name, &v);
             }
+        }
+        if let Some(profile) = norm(&f.profile) {
+            for (name, v) in [
+                ("LOCALAPPDATA", &f.local_app_data),
+                ("APPDATA", &f.roaming_app_data),
+            ] {
+                if let Some(v) = norm(v).filter(|v| path::is_strictly_within(v, &profile)) {
+                    env.set(name, &v);
+                }
+            }
+            env.set("USERPROFILE", &profile);
         }
         env
     }
@@ -202,6 +261,62 @@ impl Pattern {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn folders() -> SystemFolders {
+        let s = |v: &str| Some(v.to_string());
+        SystemFolders {
+            windows: s(r"C:\Windows"),
+            program_data: s(r"C:\ProgramData"),
+            program_files: s(r"C:\Program Files"),
+            program_files_x86: s(r"C:\Program Files (x86)"),
+            program_files_x64: s(r"C:\Program Files"),
+            profile: s(r"C:\Users\Test"),
+            public: s(r"C:\Users\Public"),
+            local_app_data: s(r"C:\Users\Test\AppData\Local"),
+            roaming_app_data: s(r"C:\Users\Test\AppData\Roaming"),
+            one_drive: s(r"D:\OneDrive"),
+        }
+    }
+
+    #[test]
+    fn system_folders_map_to_variables() {
+        let env = Env::from_folders(&folders());
+        assert_eq!(env.get("SystemRoot"), Some(r"C:\Windows"));
+        assert_eq!(env.get("SystemDrive"), Some("C:"));
+        assert_eq!(
+            env.get("LOCALAPPDATA"),
+            Some(r"C:\Users\Test\AppData\Local")
+        );
+        assert_eq!(env.get("ProgramW6432"), Some(r"C:\Program Files"));
+        assert_eq!(env.get("OneDrive"), Some(r"D:\OneDrive"));
+    }
+
+    #[test]
+    fn user_folders_outside_profile_are_dropped() {
+        // Підміна в HKCU\…\User Shell Folders: «LocalAppData» → тека Windows.
+        let mut f = folders();
+        f.local_app_data = Some(r"C:\Windows".into());
+        f.roaming_app_data = Some(r"C:\Users\Test".into());
+        let env = Env::from_folders(&f);
+        assert_eq!(env.get("LOCALAPPDATA"), None);
+        assert_eq!(
+            env.get("APPDATA"),
+            None,
+            "сам профіль — не тека всередині нього"
+        );
+        assert!(env.expand(r"%LOCALAPPDATA%\Temp").is_none());
+        // Чорний список від цього не зсувається.
+        assert_eq!(env.get("SystemRoot"), Some(r"C:\Windows"));
+    }
+
+    #[test]
+    fn real_system_folders_resolve() {
+        if cfg!(windows) {
+            let env = Env::from_system();
+            assert!(env.get("SystemRoot").is_some());
+            assert!(env.get("LOCALAPPDATA").is_some());
+        }
+    }
 
     #[test]
     fn expands_env_and_wildcards() {

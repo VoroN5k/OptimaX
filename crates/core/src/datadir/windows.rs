@@ -235,6 +235,12 @@ mod tests {
         assert!(sid.starts_with("S-1-"), "{sid}");
     }
 
+    /// Довгий шлях без префікса `\\?\` (для `mklink` і порівнянь).
+    fn long_path(p: &Path) -> PathBuf {
+        let c = std::fs::canonicalize(p).unwrap();
+        PathBuf::from(c.to_string_lossy().trim_start_matches(r"\\?\"))
+    }
+
     /// Потребує прав адміністратора (власник «Адміністратори» при створенні); без них —
     /// пропускається з повідомленням. Працює в окремій тимчасовій теці.
     #[test]
@@ -242,6 +248,9 @@ mod tests {
         let base = std::env::temp_dir().join(format!("optimax-datadir-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
+        // Тимчасова тека може мати коротке ім'я 8.3 (`C:\Users\RUNNER~1\…` на GitHub Actions),
+        // а перевірки шляху свідомо відхиляють його як перенаправлення — беремо довгий шлях.
+        let base = long_path(&base);
         let app = base.join(APP_DIR);
         // Підкинута тека: власник — сам користувач, повний доступ — усім.
         let sid = user_sid().unwrap();

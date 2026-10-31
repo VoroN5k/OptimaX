@@ -127,8 +127,12 @@ mod tests {
     #[test]
     fn only_well_formed_files_move_and_nothing_is_overwritten() {
         let base = std::env::temp_dir().join(format!("optimax-migrate-{}", std::process::id()));
-        let (old, new) = (base.join("old"), base.join("new"));
         let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        // Тимчасова тека може мати коротке ім'я 8.3 (`C:\Users\RUNNER~1\…` на GitHub Actions);
+        // `safefs` свідомо відхиляє такий шлях як перенаправлення — беремо довгий.
+        let base = std::fs::canonicalize(&base).unwrap();
+        let (old, new) = (base.join("old"), base.join("new"));
         std::fs::create_dir_all(&old).unwrap();
         std::fs::create_dir_all(&new).unwrap();
         std::fs::write(old.join("journal.json"), "[]").unwrap();

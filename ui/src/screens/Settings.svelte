@@ -43,9 +43,12 @@
   let confirmUpdate = $state(false);
   let installing = $state(false);
   let progress = $state<{ downloaded: number; total: number | null } | null>(null);
+  // Початок завантаження — для швидкості в діалозі.
+  let downloadStart = 0;
 
   onMount(() => {
     const unlisten = on("update-progress", (p) => {
+      if (!progress) downloadStart = performance.now();
       progress = { downloaded: Number(p.downloaded), total: p.total == null ? null : Number(p.total) };
     });
     return () => void unlisten.then((u) => u());
@@ -68,6 +71,7 @@
     if (!v) return;
     installing = true;
     updateError = null;
+    progress = null;
     try {
       // Після успішного запуску інсталятора Windows закриє програму — далі код може не дійти.
       await api.updateInstall(v);
@@ -80,6 +84,16 @@
   }
 
   const mb = (b: number) => (b / (1024 * 1024)).toFixed(1);
+
+  // Частка завантаженого (null — розмір невідомий) і швидкість, МБ/с.
+  const share = $derived(
+    progress?.total ? Math.min(1, progress.downloaded / progress.total) : null,
+  );
+  const speed = $derived.by(() => {
+    if (!progress) return null;
+    const s = (performance.now() - downloadStart) / 1000;
+    return s > 0.5 ? progress.downloaded / (1024 * 1024) / s : null;
+  });
 
   async function revealReport() {
     if (!reportPath) return;
@@ -218,10 +232,79 @@
     oncancel={() => (confirmUpdate = false)}
   >
     <p>{tk("ui.update.confirm_text")}</p>
+    {#if installing}
+      <div class="download" aria-live="polite">
+        <div
+          class="track"
+          role="progressbar"
+          aria-label={tk("ui.update.download_label")}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={share == null ? undefined : Math.round(share * 100)}
+        >
+          <div class="fill" class:indeterminate={share == null} style:transform={share == null ? undefined : `scaleX(${share})`}></div>
+        </div>
+        <p class="small muted">
+          {#if !progress}
+            {tk("ui.update.stage_connect")}
+          {:else if share != null && share >= 1}
+            {tk("ui.update.stage_verify")}
+          {:else}
+            {progress.total
+              ? tk("ui.update.progress_pct", {
+                  done: mb(progress.downloaded),
+                  total: mb(progress.total),
+                  pct: Math.round((share ?? 0) * 100),
+                })
+              : tk("ui.update.progress_unknown", { done: mb(progress.downloaded) })}
+            {#if speed != null}· {tk("ui.update.speed", { v: speed.toFixed(1) })}{/if}
+          {/if}
+        </p>
+      </div>
+    {/if}
   </Modal>
 {/if}
 
 <style>
+  .download {
+    margin-top: calc(var(--space) * 4);
+  }
+  .track {
+    height: 6px;
+    margin-bottom: calc(var(--space) * 2);
+    border-radius: 999px;
+    background: var(--bg-input);
+    overflow: hidden;
+  }
+  .fill {
+    height: 100%;
+    transform-origin: left;
+    background: var(--accent-gradient);
+    transition: transform var(--dur) var(--ease);
+  }
+  /* Розмір невідомий (або ще з'єднуємось) — смужка, що біжить. */
+  .fill.indeterminate {
+    width: 30%;
+    animation: run 1.2s var(--ease) infinite;
+  }
+  @keyframes run {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(340%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .fill {
+      transition: none;
+    }
+    .fill.indeterminate {
+      animation: none;
+      width: 100%;
+      opacity: 0.4;
+    }
+  }
   .rows {
     display: grid;
     gap: calc(var(--space) * 5);

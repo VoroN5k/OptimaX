@@ -28,6 +28,7 @@ pub struct SysinfoSource {
     disks: Disks,
     own_pid: Option<u32>,
     hard_faults: Option<optimax_core::perf::HardFaultCounter>,
+    dpc: Option<optimax_core::perf::DpcCounter>,
     /// Коли востаннє оновлювали процеси (для вводу-виводу за секунду).
     processes_at: Option<Instant>,
 }
@@ -47,6 +48,7 @@ impl SysinfoSource {
             disks,
             own_pid: sysinfo::get_current_pid().ok().map(|p| p.as_u32()),
             hard_faults: optimax_core::perf::HardFaultCounter::open(),
+            dpc: optimax_core::perf::DpcCounter::open(),
             processes_at: None,
         }
     }
@@ -67,6 +69,7 @@ impl SystemSource for SysinfoSource {
             total_percent: self.system.global_cpu_usage(),
             per_core_percent: cpus.iter().map(|c| c.cpu_usage()).collect(),
             per_core_mhz: cpus.iter().map(|c| c.frequency()).collect(),
+            dpc_percent: self.dpc.as_mut().and_then(|c| c.sample()).map(|v| v as f32),
         }
     }
 

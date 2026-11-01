@@ -20,4 +20,8 @@ baseline_ms: number,
 /**
  * Що було поруч (порожньо — причину не знайдено).
  */
-causes: Array<Text>, };
+causes: Array<Text>, 
+/**
+ * Коди ознак поруч (як [`CauseCount::code`]).
+ */
+codes: Array<string>, };

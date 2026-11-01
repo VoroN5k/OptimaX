@@ -78,6 +78,9 @@ pub struct SamplePoint {
     /// Сторінки, прочитані з диска через жорсткі page faults, за секунду.
     #[serde(default)]
     pub hard_faults_per_sec: Option<f64>,
+    /// Час на DPC і переривання драйверів на найзайнятішому ядрі, %.
+    #[serde(default)]
+    pub dpc_pct: Option<f64>,
     /// Процес із найбільшим вводом-виводом (зокрема сама гра).
     #[serde(default)]
     pub io_top: Option<IoProcess>,
@@ -210,6 +213,7 @@ impl Timeline {
                     mem_available_fraction: (s.memory.total_bytes > 0)
                         .then(|| s.memory.available_bytes as f64 / s.memory.total_bytes as f64),
                     hard_faults_per_sec: s.memory.hard_fault_pages_per_sec,
+                    dpc_pct: s.cpu.dpc_percent.map(f64::from),
                     io_top: s
                         .top_processes
                         .iter()

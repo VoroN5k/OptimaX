@@ -166,6 +166,7 @@ mod tests {
                 total_percent: 10.0,
                 per_core_percent: vec![10.0, 96.0],
                 per_core_mhz: vec![4000, 4000],
+                dpc_percent: None,
             }
         }
         fn memory(&mut self) -> MemorySnapshot {

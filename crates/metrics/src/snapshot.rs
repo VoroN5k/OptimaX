@@ -34,6 +34,10 @@ pub struct CpuSnapshot {
     pub per_core_percent: Vec<f32>,
     /// Частота кожного ядра, МГц (на Windows часто показує базову, а не реальну частоту).
     pub per_core_mhz: Vec<u64>,
+    /// Час на DPC і переривання драйверів на найзайнятішому ядрі, % (PDH). `None` —
+    /// лічильник недоступний або це перший замір.
+    #[serde(default)]
+    pub dpc_percent: Option<f32>,
 }
 
 impl CpuSnapshot {
@@ -238,6 +242,7 @@ mod tests {
             total_percent: 20.0,
             per_core_percent: vec![10.0, 98.0, 5.0],
             per_core_mhz: vec![],
+            dpc_percent: None,
         };
         assert_eq!(cpu.busiest_core(), Some((1, 98.0)));
         assert_eq!(CpuSnapshot::default().busiest_core(), None);

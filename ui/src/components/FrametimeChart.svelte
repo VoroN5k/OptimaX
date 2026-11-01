@@ -97,6 +97,19 @@
     }
   }
 
+  /** Найдовший ривок, що відповідає умові (для переходу зі зведення). */
+  function showWorst(pred: (s: (typeof chart.spikes)[number]) => boolean) {
+    let best = -1;
+    let longest = -1;
+    chart.spikes.forEach((s, i) => {
+      if (pred(s) && s.frametime_ms > longest) {
+        longest = s.frametime_ms;
+        best = i;
+      }
+    });
+    if (best >= 0) move(best);
+  }
+
   /** Секунди від початку шкали. */
   const sec = (ms: number) => (Math.max(0, ms - start) / 1000).toFixed(1);
 </script>
@@ -160,6 +173,30 @@
     <span>{sec(start + span)} {tk("ui.chart.s")}</span>
   </div>
 
+  {#if chart.spikes.length && (chart.summary.length || chart.unexplained)}
+    <div class="summary">
+      <span class="small muted">{tk("ui.chart.summary")}:</span>
+      {#each chart.summary as c (c.code)}
+        {@const usual = (c.usual * 100).toFixed(0)}
+        <button
+          type="button"
+          class="chip"
+          class:found={c.above_usual}
+          title={tk(c.above_usual ? "ui.chart.above_usual" : "ui.chart.as_usual", { usual })}
+          onclick={() => showWorst((s) => s.codes.includes(c.code))}
+        >
+          {t(c.name)} <span class="mono">{tk("ui.chart.count", { n: c.spikes, total: chart.spikes.length })}</span>
+          {#if !c.above_usual}<span class="bg">· {tk("ui.chart.background")}</span>{/if}
+        </button>
+      {/each}
+      {#if chart.unexplained}
+        <button type="button" class="chip none" onclick={() => showWorst((s) => s.causes.length === 0)}>
+          {tk("ui.chart.unexplained")} <span class="mono">{tk("ui.chart.count", { n: chart.unexplained, total: chart.spikes.length })}</span>
+        </button>
+      {/if}
+    </div>
+  {/if}
+
   {#if current}
     <div class="detail" aria-live="polite">
       <p>
@@ -192,6 +229,55 @@
     justify-content: space-between;
     gap: calc(var(--space) * 3);
     flex-wrap: wrap;
+  }
+  .summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(var(--space) * 2);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--space) * 1.5);
+    padding: calc(var(--space) * 1) calc(var(--space) * 2.5);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-input);
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color var(--dur-fast) var(--ease);
+  }
+  .chip::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-dim);
+  }
+  .chip.found {
+    color: var(--text);
+  }
+  .chip.found::before {
+    background: var(--warn);
+  }
+  .chip.none::before {
+    background: var(--danger);
+  }
+  .chip .bg {
+    color: var(--text-dim);
+  }
+  .chip:hover {
+    border-color: var(--border-strong);
+  }
+  .chip:focus-visible {
+    outline: 2px solid var(--accent-from);
+    outline-offset: 2px;
+  }
+  .chip .mono {
+    color: var(--text-dim);
   }
   .legend {
     display: flex;

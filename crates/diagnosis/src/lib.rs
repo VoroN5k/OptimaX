@@ -257,6 +257,8 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
         rules::vram_pressure(&a),
         rules::throttling(&a),
         rules::stutter(&a),
+        rules::periodic_spikes(&a),
+        rules::vsync_judder(&a),
         rules::composed_present(&a),
     ]
     .into_iter()

@@ -39,6 +39,11 @@ pub const LOW_RAM_FRACTION: f64 = 0.15;
 /// Процес називаємо винуватцем диска біля ривка, лише якщо на нього припадає щонайменше
 /// така частка загальної активності диска.
 pub const IO_NAME_MIN_SHARE: f64 = 0.25;
+/// Мінімальний сплеск часу на DPC і переривання на одному ядрі, %. Навіть без навантаження
+/// він коливається в межах кількох відсотків, тож нижче цього збіг із ривком — шум.
+pub const DPC_MIN_PCT: f64 = 5.0;
+/// Ознака пояснює частину ривків, якщо трапляється біля такої частки з них.
+pub const PARTIAL_MIN_SHARE: f64 = 0.2;
 /// Вікно до ривка для записів у кеш шейдерів.
 pub const SHADER_BEFORE_MS: f64 = 200.0;
 /// Вікно після ривка: драйвер пише файл кешу під час компіляції або невдовзі після неї.
@@ -465,6 +470,8 @@ pub enum CauseKind {
     Shader,
     /// Сплеск активності диска.
     Disk,
+    /// Драйвери надовго займають ядро CPU (DPC і переривання).
+    Dpc,
     /// Сплеск стороннього процесу.
     Background,
     /// Заповнена VRAM.
@@ -477,11 +484,12 @@ pub enum CauseKind {
 
 impl CauseKind {
     /// Усі причини в порядку показу (конкретніші — раніше).
-    pub const ALL: [CauseKind; 8] = [
+    pub const ALL: [CauseKind; 9] = [
         Self::Defender,
         Self::Memory,
         Self::Shader,
         Self::Disk,
+        Self::Dpc,
         Self::Background,
         Self::Vram,
         Self::Throttle,
@@ -495,10 +503,31 @@ impl CauseKind {
             Self::Memory => "diag.cause.memory",
             Self::Shader => "diag.cause.shader",
             Self::Disk => "diag.cause.disk",
+            Self::Dpc => "diag.cause.dpc",
             Self::Background => "diag.cause.background",
             Self::Vram => "diag.cause.vram",
             Self::Throttle => "diag.cause.throttle",
             Self::CpuFull => "diag.cause.cpu_full",
+        }
+    }
+
+    /// Код ознаки (зв'язує зведення на радарі з ривками).
+    pub fn code(self) -> &'static str {
+        self.name_key().rsplit('.').next().unwrap_or_default()
+    }
+
+    /// Ключ короткої назви (зведення ривків на радарі).
+    pub fn name_key(self) -> &'static str {
+        match self {
+            Self::Defender => "diag.cause_name.defender",
+            Self::Memory => "diag.cause_name.memory",
+            Self::Shader => "diag.cause_name.shader",
+            Self::Disk => "diag.cause_name.disk",
+            Self::Dpc => "diag.cause_name.dpc",
+            Self::Background => "diag.cause_name.background",
+            Self::Vram => "diag.cause_name.vram",
+            Self::Throttle => "diag.cause_name.throttle",
+            Self::CpuFull => "diag.cause_name.cpu_full",
         }
     }
 
@@ -509,6 +538,7 @@ impl CauseKind {
             Self::Memory => "diag.spike.memory",
             Self::Shader => "diag.spike.shader",
             Self::Disk => "diag.spike.disk",
+            Self::Dpc => "diag.spike.dpc",
             Self::Background => "diag.spike.background",
             Self::Vram => "diag.spike.vram",
             Self::Throttle => "diag.spike.throttle",
@@ -522,6 +552,7 @@ impl CauseKind {
             Self::Defender => Some("diag.advice.defender"),
             Self::Memory => Some("diag.advice.memory"),
             Self::Shader => Some("diag.advice.shader"),
+            Self::Dpc => Some("diag.advice.dpc"),
             _ => None,
         }
     }
@@ -543,6 +574,7 @@ fn shader_writes_near(tl: &Timeline, t: f64) -> &[ShaderWrite] {
 pub struct CauseContext {
     disk_limit: f64,
     fault_limit: f64,
+    dpc_limit: f64,
     medians: HashMap<String, f32>,
 }
 
@@ -556,9 +588,12 @@ impl CauseContext {
                 .collect(),
         )
         .unwrap_or(0.0);
+        let dpc_median =
+            median(a.samples().iter().filter_map(|s| s.dpc_pct).collect()).unwrap_or(0.0);
         Self {
             disk_limit: disk_threshold(a),
             fault_limit: (fault_median * 3.0).max(HARD_FAULT_MIN),
+            dpc_limit: (dpc_median * 3.0).max(DPC_MIN_PCT),
             medians: background_medians(a),
         }
     }
@@ -581,6 +616,7 @@ impl CauseContext {
             }
             CauseKind::Shader => false,
             CauseKind::Disk => p.disk_bytes_per_sec as f64 >= self.disk_limit,
+            CauseKind::Dpc => p.dpc_pct.is_some_and(|v| v >= self.dpc_limit),
             CauseKind::Background => p
                 .background
                 .iter()
@@ -611,7 +647,7 @@ impl CauseContext {
     }
 
     /// Частка піків з ознакою поруч і «фонова» частка (те саме навколо кожного знімка).
-    fn coincidence(&self, a: &Analysis<'_>, kind: CauseKind) -> (f64, f64) {
+    pub(crate) fn coincidence(&self, a: &Analysis<'_>, kind: CauseKind) -> (f64, f64) {
         let share = |times: &mut dyn Iterator<Item = f64>| {
             let (mut hit, mut all) = (0usize, 0usize);
             for t in times {
@@ -684,6 +720,7 @@ impl CauseContext {
                     None => text.arg("mbps", total),
                 }
             }
+            CauseKind::Dpc => text.arg("pct", format!("{:.1}", max_of(&|p| p.dpc_pct))),
             CauseKind::Background => {
                 let top = near
                     .iter()
@@ -715,23 +752,47 @@ impl CauseContext {
 struct Cause {
     kind: CauseKind,
     at_spikes: f64,
+    /// Частка звичайних моментів з цією ознакою.
+    usual: f64,
 }
 
-/// Причини, що збігаються з піками щонайменше в половині випадків і вдвічі частіше, ніж
-/// у звичайні моменти, — від найчастішої.
-fn correlated_causes(a: &Analysis<'_>, ctx: &CauseContext) -> Vec<Cause> {
+/// Ознака біля піків вважається причиною, лише якщо там вона трапляється щонайменше
+/// в стільки разів частіше, ніж у звичайні моменти.
+pub const ABOVE_USUAL: f64 = 2.0;
+
+/// Причини за частотою збігу з піками: (головні, часткові, тло), кожні — від найчастішої.
+/// Головна — щонайменше в половині піків і вдвічі частіше, ніж у звичайні моменти.
+/// Часткова — не дотягує до головної, але трапляється біля [`PARTIAL_MIN_SHARE`] піків і теж
+/// вдвічі частіше за звичайне: пояснює частину ривків, коли вони мають різні причини.
+/// Тло — біля помітної частки піків, але й у звичайні моменти не рідше: сама по собі ознака
+/// ривків не пояснює (напр. гра постійно підвантажує світ з диска).
+fn correlated_causes(a: &Analysis<'_>, ctx: &CauseContext) -> (Vec<Cause>, Vec<Cause>, Vec<Cause>) {
     if a.spike_times.len() < 3 {
-        return Vec::new();
+        return (Vec::new(), Vec::new(), Vec::new());
     }
-    let mut causes: Vec<Cause> = CauseKind::ALL
-        .into_iter()
-        .filter_map(|kind| {
-            let (at_spikes, base) = ctx.coincidence(a, kind);
-            (at_spikes >= 0.5 && at_spikes >= base * 2.0).then_some(Cause { kind, at_spikes })
-        })
-        .collect();
-    causes.sort_by(|x, y| y.at_spikes.total_cmp(&x.at_spikes));
-    causes
+    let (mut main, mut partial, mut usual) = (Vec::new(), Vec::new(), Vec::new());
+    for kind in CauseKind::ALL {
+        let (at_spikes, base) = ctx.coincidence(a, kind);
+        let c = Cause {
+            kind,
+            at_spikes,
+            usual: base,
+        };
+        if at_spikes < PARTIAL_MIN_SHARE {
+            continue;
+        }
+        if at_spikes < base * ABOVE_USUAL {
+            usual.push(c);
+        } else if at_spikes >= 0.5 {
+            main.push(c);
+        } else {
+            partial.push(c);
+        }
+    }
+    for v in [&mut main, &mut partial, &mut usual] {
+        v.sort_by(|x, y| y.at_spikes.total_cmp(&x.at_spikes));
+    }
+    (main, partial, usual)
 }
 
 fn disk_threshold(a: &Analysis<'_>) -> f64 {
@@ -780,17 +841,19 @@ pub fn stutter(a: &Analysis<'_>) -> Option<Finding> {
     }
 
     let ctx = CauseContext::new(a);
-    let causes = correlated_causes(a, &ctx);
+    let (causes, partial, usual) = correlated_causes(a, &ctx);
 
     let impact = if ratio < 0.35 {
         Impact::High
     } else {
         Impact::Moderate
     };
-    let id = if causes.is_empty() {
-        "stutter.unknown"
-    } else {
+    let id = if !causes.is_empty() {
         "stutter.found"
+    } else if !partial.is_empty() {
+        "stutter.partial"
+    } else {
+        "stutter.unknown"
     };
     let mut d = draft(id, Category::Stutter, impact, 90)
         .arg("low", format!("{:.0}", s.low_1pct_fps))
@@ -810,15 +873,30 @@ pub fn stutter(a: &Analysis<'_>) -> Option<Finding> {
     // Сам факт фризів виміряний (90 %); впевненість у причині — за частотою збігів.
     // Кеш шейдерів — непряма ознака (час зміни файлу), тож для неї стеля нижча.
     if let Some(top) = causes.first() {
-        let ceiling = if top.kind == CauseKind::Shader {
-            65.0
-        } else {
-            85.0
+        // DPC — теж непряма: лічильник не каже, чи заблокований драйвером саме потік гри.
+        let ceiling = match top.kind {
+            CauseKind::Shader => 65.0,
+            CauseKind::Dpc => 70.0,
+            _ => 85.0,
         };
         d = d.confidence(conf((40.0 + 40.0 * top.at_spikes).min(ceiling)));
     }
     for c in &causes {
         d = d.evidence(Text::new(c.kind.key()), pct(c.at_spikes));
+    }
+    for c in &partial {
+        d = d.evidence(
+            Text::new(c.kind.name_key()),
+            Text::new("diag.ev.partial_share").arg("pct", format!("{:.0}", c.at_spikes * 100.0)),
+        );
+    }
+    for c in &usual {
+        d = d.evidence(
+            Text::new(c.kind.name_key()),
+            Text::new("diag.ev.as_usual")
+                .arg("pct", format!("{:.0}", c.at_spikes * 100.0))
+                .arg("usual", format!("{:.0}", c.usual * 100.0)),
+        );
     }
     if causes.iter().any(|c| c.kind == CauseKind::Shader) {
         let w = &a.timeline.shader_writes;
@@ -834,6 +912,114 @@ pub fn stutter(a: &Analysis<'_>) -> Option<Finding> {
         d = d.evidence(Text::new("diag.ev.what_to_do"), Text::new(advice));
     }
     Some(d.build())
+}
+
+/// Допуск відхилення кадру від кратного оновленню монітора (частка інтервалу оновлення).
+const VSYNC_TOLERANCE: f64 = 0.12;
+/// Кадри «кратні оновленню», якщо таких щонайменше стільки.
+const VSYNC_QUANTIZED_MIN: f64 = 0.85;
+/// Ривки V-Sync помітні, якщо пропущених оновлень (кадр на 2–3 інтервали) щонайменше стільки.
+const VSYNC_MISSED_MIN: f64 = 0.05;
+
+/// Ривки V-Sync без адаптивної синхронізації (G-Sync/FreeSync): кадр показується лише на
+/// оновленні монітора, тож коли гра не встигає за частотою, кадр чекає наступного оновлення —
+/// час кадру стрибає між 1 і 2 інтервалами (16.7 ↔ 33.3 мс на 60 Гц). З VRR кадри не
+/// прив'язані до оновлень, і такого шаблону немає.
+pub fn vsync_judder(a: &Analysis<'_>) -> Option<Finding> {
+    let hz = f64::from(a.display_hz.filter(|hz| *hz > 0)?);
+    let frames = &a.timeline.frames;
+    let n = frames.len();
+    // Явно вимкнений V-Sync (SyncInterval 0) — шаблон не про нього.
+    let no_vsync = frames.iter().filter(|f| f.sync_interval == Some(0)).count();
+    if n < 300 || no_vsync * 2 >= n {
+        return None;
+    }
+    let interval = 1000.0 / hz;
+    let mut at = [0usize; 3];
+    for f in frames {
+        let k = (f.frametime_ms / interval).round();
+        if (1.0..=3.0).contains(&k)
+            && (f.frametime_ms - k * interval).abs() <= interval * VSYNC_TOLERANCE
+        {
+            at[k as usize - 1] += 1;
+        }
+    }
+    let share = |c: usize| c as f64 / n as f64;
+    let quantized = share(at[0] + at[1] + at[2]);
+    let missed = share(at[1] + at[2]);
+    // Більшість кадрів на частоті монітора, частина — з пропущеним оновленням.
+    if quantized < VSYNC_QUANTIZED_MIN || missed < VSYNC_MISSED_MIN || share(at[0]) < 0.3 {
+        return None;
+    }
+    Some(
+        draft("vsync.judder", Category::FrameCap, Impact::Moderate, 75)
+            .arg("hz", format!("{hz:.0}"))
+            .arg("ms1", format!("{interval:.1}"))
+            .arg("ms2", format!("{:.1}", interval * 2.0))
+            .advice()
+            .evidence(Text::new("diag.ev.vsync_quantized"), pct(quantized))
+            .evidence(Text::new("diag.ev.vsync_missed"), pct(missed))
+            .evidence(
+                Text::new("diag.ev.refresh"),
+                Text::new("value.hz").arg("v", format!("{hz:.0}")),
+            )
+            .build(),
+    )
+}
+
+/// Ривки ближче за це вважаються одним (кілька довгих кадрів поспіль).
+const PERIODIC_MERGE_MS: f64 = 150.0;
+/// Найкоротший період, який вважаємо «за таймером».
+const PERIODIC_MIN_MS: f64 = 400.0;
+/// Мінімум ривків для висновку про періодичність.
+const PERIODIC_MIN_EVENTS: usize = 6;
+/// Інтервал «такий самий», якщо відхиляється від медіанного не більше ніж на цю частку.
+const PERIODIC_TOLERANCE: f64 = 0.15;
+/// Частка інтервалів, що мають збігатися з медіанним.
+const PERIODIC_MIN_SHARE: f64 = 0.7;
+
+/// Ривки з рівним періодом (наприклад, кожні 2 с): так поводиться щось за таймером —
+/// опитування пристроїв, утиліти моніторингу чи підсвітки, драйвер, автозбереження гри.
+/// Сцена гри так рівно не повторюється.
+pub fn periodic_spikes(a: &Analysis<'_>) -> Option<Finding> {
+    let mut events: Vec<f64> = Vec::new();
+    for &t in &a.spike_times {
+        if events
+            .last()
+            .is_none_or(|last| t - last > PERIODIC_MERGE_MS)
+        {
+            events.push(t);
+        }
+    }
+    if events.len() < PERIODIC_MIN_EVENTS {
+        return None;
+    }
+    let intervals: Vec<f64> = events.windows(2).map(|w| w[1] - w[0]).collect();
+    let period = median(intervals.clone())?;
+    if period < PERIODIC_MIN_MS {
+        return None;
+    }
+    let regular = intervals
+        .iter()
+        .filter(|i| (*i - period).abs() <= period * PERIODIC_TOLERANCE)
+        .count() as f64
+        / intervals.len() as f64;
+    if regular < PERIODIC_MIN_SHARE {
+        return None;
+    }
+    let seconds = format!("{:.1}", period / 1000.0);
+    Some(
+        draft("stutter.periodic", Category::Stutter, Impact::Info, 70)
+            .arg("period", seconds.as_str())
+            .arg("events", events.len())
+            .advice()
+            .evidence(
+                Text::new("diag.ev.spike_period"),
+                Text::new("value.seconds").arg("v", seconds.as_str()),
+            )
+            .evidence(Text::new("diag.ev.spike_period_regular"), pct(regular))
+            .build(),
+    )
 }
 
 /// Поодинокі ривки: самі по собі ще не «мікрофризи», але саме вони тягнуть 0.1% low вниз,

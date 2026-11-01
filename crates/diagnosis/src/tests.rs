@@ -38,6 +38,7 @@ fn base_sample() -> SamplePoint {
         background: HashMap::new(),
         mem_available_fraction: Some(0.5),
         hard_faults_per_sec: Some(10.0),
+        dpc_pct: Some(0.5),
         io_top: None,
     }
 }
@@ -942,6 +943,7 @@ fn snapshot(qpc: i64, procs: Vec<(u32, &str, f32)>) -> Snapshot {
             total_percent: 30.0,
             per_core_percent: vec![10.0, 97.0, 20.0],
             per_core_mhz: vec![],
+            dpc_percent: None,
         },
         memory: MemorySnapshot::default(),
         disk: DiskSnapshot {
@@ -1091,4 +1093,160 @@ fn frames_outside_counted_segments_are_ignored() {
         s.avg_fps
     );
     assert!(s.low_1pct_fps > 100.0);
+}
+
+#[test]
+fn dpc_spikes_are_a_cause_with_capped_confidence() {
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    let tl = timeline(&ft, |t, _| {
+        let mut s = base_sample();
+        if near_spike(&spikes, t) {
+            s.dpc_pct = Some(12.0);
+        }
+        s
+    });
+    let d = diagnose_timeline(&tl, &Context::default());
+    let f = find(&d, "stutter.found").expect("фризи з причиною");
+    assert_eq!(cause_keys(f), vec!["diag.cause.dpc"]);
+    assert!(f.confidence <= Confidence::new(70), "DPC — непряма ознака");
+    assert!(f.evidence.iter().any(|e| e.value.key == "diag.advice.dpc"));
+    let chart = d.chart.as_ref().unwrap();
+    assert_eq!(chart.summary[0].name.key, "diag.cause_name.dpc");
+    assert_eq!(chart.unexplained, 0);
+}
+
+#[test]
+fn small_dpc_noise_is_not_a_cause() {
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    // Нижче абсолютного порога: звичайне коливання навіть без навантаження.
+    let tl = timeline(&ft, |t, _| {
+        let mut s = base_sample();
+        s.dpc_pct = Some(if near_spike(&spikes, t) { 3.0 } else { 0.3 });
+        s
+    });
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert!(find(&d, "stutter.found").is_none());
+}
+
+#[test]
+fn mixed_causes_give_partial_verdict_and_summary() {
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    // Третина ривків — з диском, решта — без ознак.
+    let tl = timeline(&ft, |t, _| {
+        let mut s = base_sample();
+        if spikes
+            .iter()
+            .enumerate()
+            .any(|(i, st)| i % 3 == 0 && (st - t).abs() <= 150.0)
+        {
+            s.disk_bytes_per_sec = 150 << 20;
+        }
+        s
+    });
+    let d = diagnose_timeline(&tl, &Context::default());
+    let f = find(&d, "stutter.partial").expect("частково пояснені фризи");
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.label.key == "diag.cause_name.disk" && e.value.key == "diag.ev.partial_share"));
+    let chart = d.chart.as_ref().unwrap();
+    let disk = chart
+        .summary
+        .iter()
+        .find(|c| c.name.key == "diag.cause_name.disk")
+        .unwrap();
+    assert_eq!(disk.spikes + chart.unexplained, chart.spikes.len() as u32);
+    assert!(disk.spikes > 0 && chart.unexplained > 0);
+}
+
+/// Кадри з V-Sync на `hz`: здебільшого один інтервал, кожен `every`-й — два.
+fn vsync_frames(hz: f64, every: usize, n: usize) -> Vec<f64> {
+    let iv = 1000.0 / hz;
+    (0..n)
+        .map(|i| {
+            if i % every == 0 {
+                iv * 2.0
+            } else {
+                iv * [0.98, 1.0, 1.02][i % 3]
+            }
+        })
+        .collect()
+}
+
+fn vsync_on(mut tl: Timeline) -> Timeline {
+    for f in &mut tl.frames {
+        f.sync_interval = Some(1);
+        f.allows_tearing = Some(false);
+    }
+    tl
+}
+
+#[test]
+fn vsync_judder_detected_only_with_vsync_and_known_refresh() {
+    let ctx = Context {
+        display_hz: Some(60),
+        ..Context::default()
+    };
+    let tl = vsync_on(timeline(&vsync_frames(60.0, 8, 2000), |_, _| base_sample()));
+    let d = diagnose_timeline(&tl, &ctx);
+    assert!(find(&d, "vsync.judder").is_some());
+    // Без частоти монітора — не вгадуємо.
+    assert!(find(&diagnose_timeline(&tl, &Context::default()), "vsync.judder").is_none());
+    // V-Sync вимкнено (SyncInterval 0) — шаблон не про нього.
+    let off = timeline(&vsync_frames(60.0, 8, 2000), |_, _| base_sample());
+    assert!(find(&diagnose_timeline(&off, &ctx), "vsync.judder").is_none());
+    // Рівні 60 FPS без пропусків — це просто ліміт, а не ривки.
+    let even = vsync_on(timeline(&vsync_frames(60.0, usize::MAX, 2000), |_, _| {
+        base_sample()
+    }));
+    assert!(find(&diagnose_timeline(&even, &ctx), "vsync.judder").is_none());
+    // З VRR кадри не кратні оновленню.
+    let vrr = vsync_on(timeline(&jittery(22.0, 2000), |_, _| base_sample()));
+    assert!(find(&diagnose_timeline(&vrr, &ctx), "vsync.judder").is_none());
+}
+
+#[test]
+fn periodic_spikes_found_only_for_regular_intervals() {
+    // spiky(): пік кожні 250 кадрів — однаковий інтервал.
+    let tl = timeline(&spiky(), |_, _| base_sample());
+    let d = diagnose_timeline(&tl, &Context::default());
+    let f = find(&d, "stutter.periodic").expect("періодичні ривки");
+    assert_eq!(f.evidence[0].label.key, "diag.ev.spike_period");
+    // Ті самі ривки з довільними інтервалами.
+    let mut ft = jittery(8.0, 3000);
+    for i in [100, 180, 520, 610, 1200, 1290, 1900, 2500, 2560, 2900] {
+        ft[i] = 40.0;
+    }
+    let tl = timeline(&ft, |_, _| base_sample());
+    assert!(find(
+        &diagnose_timeline(&tl, &Context::default()),
+        "stutter.periodic"
+    )
+    .is_none());
+}
+
+#[test]
+fn constant_disk_activity_is_background_not_cause() {
+    // Гра часто підвантажує світ: сплески диска йдуть і біля ривків, і без них (поріг сплеску
+    // рахується від медіани, тож сплески мають бути менш ніж у половині знімків).
+    let tl = timeline(&spiky(), |_, i| {
+        let mut s = base_sample();
+        if i % 5 < 2 {
+            s.disk_bytes_per_sec = 150 << 20;
+        }
+        s
+    });
+    let d = diagnose_timeline(&tl, &Context::default());
+    let f = find(&d, "stutter.unknown").expect("диск — тло, причину не встановлено");
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.label.key == "diag.cause_name.disk" && e.value.key == "diag.ev.as_usual"));
+    let chart = d.chart.as_ref().unwrap();
+    let disk = chart.summary.iter().find(|c| c.code == "disk").unwrap();
+    assert!(!disk.above_usual);
+    assert!(disk.usual > 0.5);
 }

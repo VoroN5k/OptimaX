@@ -15,4 +15,9 @@ per_core_percent: Array<number>,
 /**
  * Частота кожного ядра, МГц (на Windows часто показує базову, а не реальну частоту).
  */
-per_core_mhz: Array<number>, };
+per_core_mhz: Array<number>, 
+/**
+ * Час на DPC і переривання драйверів на найзайнятішому ядрі, % (PDH). `None` —
+ * лічильник недоступний або це перший замір.
+ */
+dpc_percent: number | null, };

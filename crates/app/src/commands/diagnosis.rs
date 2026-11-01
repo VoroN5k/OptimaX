@@ -198,6 +198,7 @@ pub fn diag_start(
                 if let Ok(catalog) = Catalog::ukrainian() {
                     options = options.with_notices(RecordNotices::from_catalog(&catalog));
                 }
+                let progress = super::ProgressMark::new(&state);
                 let rec = record_with(
                     pm,
                     &options,
@@ -205,9 +206,11 @@ pub fn diag_start(
                     gpu,
                     &cancel,
                     &mut |p| {
+                        progress.set(p);
                         let _ = app.emit("diag-progress", p);
                     },
                 )?;
+                drop(progress);
                 let (mut ctx, display_hz) = context();
                 if let Some(start) = rec.start_unix_ms {
                     ctx.shader_cache_files = shader_cache_files(start);

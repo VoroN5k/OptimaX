@@ -6,7 +6,7 @@ use optimax_core::power::WinPower;
 use optimax_core::process::WinProcesses;
 use optimax_core::registry::WinRegistry;
 use optimax_core::service::WinServices;
-use optimax_frametime::{BundledPresentMon, CancelToken};
+use optimax_frametime::{BundledPresentMon, CancelToken, RecordProgress};
 use optimax_metrics::Sampler;
 use optimax_tweaks::restore::WinRestorePoint;
 use optimax_tweaks::{Confirm, Engine, FileStore, Plan};
@@ -72,6 +72,8 @@ pub struct AppState {
     pub metrics: Mutex<Option<Sampler>>,
     /// Поточний запис діагностики.
     pub recording: Mutex<Option<CancelToken>>,
+    /// Хід запису, що йде зараз (діагностика, A/B, тест роздільності) — для позначки в оверлеї.
+    pub record_progress: Mutex<Option<RecordProgress>>,
     /// A/B-сесія.
     pub ab: Mutex<Option<crate::commands::ab::AbSession>>,
     /// Тест чутливості до роздільності.
@@ -123,6 +125,7 @@ impl AppState {
             next_plan_id: Mutex::new(1),
             metrics: Mutex::new(None),
             recording: Mutex::new(None),
+            record_progress: Mutex::new(None),
             ab: Mutex::new(None),
             res_test: Mutex::new(None),
             lag: Mutex::new(None),

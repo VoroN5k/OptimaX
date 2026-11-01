@@ -191,6 +191,9 @@
         <FindingCard finding={v.finding} action={v.finding.id === "upscale.helps" ? openUpscale : undefined} />
       {/each}
     </div>
+    {#if rest.length === 0}
+      <p class="none small muted">{tk("ui.diag.no_more")}</p>
+    {/if}
     {#if result.presentmon_messages.length}
       <details class="pm small muted">
         <summary>{tk("ui.diag.pm_messages")}</summary>
@@ -255,6 +258,10 @@
   .list {
     display: grid;
     gap: calc(var(--space) * 3);
+  }
+  .none {
+    margin: 0;
+    padding: 0 calc(var(--space) * 1);
   }
   .pm pre {
     white-space: pre-wrap;

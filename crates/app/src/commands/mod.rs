@@ -19,10 +19,12 @@ pub mod update;
 pub mod upscale;
 
 use crate::error::{CmdError, CmdResult};
+use crate::state::lock;
 use crate::state::AppState;
 use optimax_core::Catalog;
 use optimax_frametime::{
-    record_with, CancelToken, RecordNotices, RecordOptions, Recording, StartMode, Target,
+    record_with, CancelToken, RecordNotices, RecordOptions, RecordProgress, Recording, StartMode,
+    Target,
 };
 use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
 use std::time::Duration;
@@ -49,6 +51,7 @@ pub(crate) fn record_game(
     if let Ok(catalog) = Catalog::ukrainian() {
         options = options.with_notices(RecordNotices::from_catalog(&catalog));
     }
+    let progress = ProgressMark::new(&state);
     Ok(record_with(
         state.presentmon()?,
         &options,
@@ -56,9 +59,34 @@ pub(crate) fn record_game(
         gpu,
         cancel,
         &mut |p| {
+            progress.set(p);
             let _ = app.emit(event, p);
         },
     )?)
+}
+
+/// Хід запису в стані застосунку (для позначки в оверлеї). Знімається при знищенні —
+/// і коли запис завершився з помилкою.
+pub(crate) struct ProgressMark<'a> {
+    state: &'a AppState,
+}
+
+impl<'a> ProgressMark<'a> {
+    /// Починає показувати хід запису.
+    pub(crate) fn new(state: &'a AppState) -> Self {
+        Self { state }
+    }
+
+    /// Новий хід запису.
+    pub(crate) fn set(&self, p: &RecordProgress) {
+        *lock(&self.state.record_progress) = Some(p.clone());
+    }
+}
+
+impl Drop for ProgressMark<'_> {
+    fn drop(&mut self) {
+        *lock(&self.state.record_progress) = None;
+    }
 }
 
 /// Виконує блокуючу роботу в пулі потоків Tauri.

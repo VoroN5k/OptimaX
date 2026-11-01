@@ -283,14 +283,18 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
 
     found.extend(upscale_advice(bottleneck, primary_conf));
 
-    let mut verdicts: Vec<Verdict> = vec![summary(
+    let mut head = summary(
         summary_id,
         primary_conf,
         Some(&a.stats),
         &tl.game_name,
         seconds,
-    )
-    .into()];
+    );
+    if bottleneck == Bottleneck::Unclear {
+        // Без цифр «не ясно» виглядає як збій: показуємо, наскільки далеко до порогів.
+        head.evidence.extend(rules::load_evidence(&a));
+    }
+    let mut verdicts: Vec<Verdict> = vec![head.into()];
     verdicts.extend(found.into_iter().map(Verdict::from));
     Diagnosis {
         game: tl.game_name.clone(),

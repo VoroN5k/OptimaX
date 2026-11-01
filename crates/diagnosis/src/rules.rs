@@ -3,7 +3,7 @@
 
 use crate::drivers::driver_kind;
 use crate::timeline::{DpcPoint, DpcTimeline, SamplePoint, ShaderWrite, Timeline};
-use optimax_core::{Category, Finding, FindingBuilder, Impact, Text};
+use optimax_core::{Category, Evidence, Finding, FindingBuilder, Impact, Text};
 use optimax_frametime::{find_spikes, FrameStats, PresentMode};
 use optimax_metrics::ThrottleReason;
 use std::collections::HashMap;
@@ -279,20 +279,72 @@ pub fn composed_present(a: &Analysis<'_>) -> Option<Finding> {
     Some(d.build())
 }
 
+/// GPU у стелі в цьому знімку: завантаження ≥ 95 % на робочій частоті.
+fn gpu_busy(s: &SamplePoint) -> bool {
+    let Some(g) = &s.gpu else { return false };
+    let clock_ok = match (g.clock_mhz, g.max_clock_mhz) {
+        (Some(c), Some(m)) if m > 0 => f64::from(c) >= f64::from(m) * GPU_CLOCK_MIN_FRACTION,
+        _ => true,
+    };
+    g.util.is_some_and(|u| u >= GPU_BOUND_UTIL) && clock_ok
+}
+
+/// Частка часу GPU в стелі, потрібна для вердикту «відеокарта»: 60 %, або 40 %, якщо за
+/// PresentMon GPU зайнятий ≥ 90 % часу кадру.
+fn gpu_share_needed(ratio: Option<f64>) -> f64 {
+    if ratio.is_some_and(|r| r >= 0.9) {
+        0.4
+    } else {
+        MOSTLY
+    }
+}
+
+/// Частка часу з найзавантаженішим ядром у стелі, потрібна для вердикту «процесор».
+const CORE_SHARE_NEEDED: f64 = 0.5;
+
+fn pct_of_needed(v: f64, needed: f64) -> Text {
+    Text::new("value.pct_needed")
+        .arg("v", format!("{:.0}", v * 100.0))
+        .arg("need", format!("{:.0}", needed * 100.0))
+}
+
+/// Цифри навантаження для вердикту «явного вузького місця немає»: чому не «відеокарта» і не
+/// «процесор» — поряд із кожною часткою поріг, від якого вердикт ставиться.
+pub fn load_evidence(a: &Analysis<'_>) -> Vec<Evidence> {
+    let mut out = Vec::new();
+    if let Some(u) = a.gpu_avg_util() {
+        out.push(Evidence::new(
+            Text::new("diag.ev.gpu_avg"),
+            Text::new("value.pct").arg("v", format!("{u:.0}")),
+        ));
+        let ratio = a.busy_ratio(true);
+        out.push(Evidence::new(
+            Text::new("diag.ev.gpu_busy_share"),
+            pct_of_needed(a.share(gpu_busy), gpu_share_needed(ratio)),
+        ));
+        if let Some(r) = ratio {
+            out.push(Evidence::new(
+                Text::new("diag.ev.gpu_busy_ratio"),
+                pct(r.min(1.0)),
+            ));
+        }
+    }
+    out.push(Evidence::new(
+        Text::new("diag.ev.core_saturated_share"),
+        pct_of_needed(
+            a.share(|s| s.busiest_core_pct >= CORE_SATURATED_PCT),
+            CORE_SHARE_NEEDED,
+        ),
+    ));
+    out
+}
+
 /// GPU-bound: GPU ≥ 95 % більшу частину часу на робочій частоті.
 pub fn gpu_bound(a: &Analysis<'_>) -> Option<Finding> {
-    let busy = |s: &SamplePoint| {
-        let Some(g) = &s.gpu else { return false };
-        let clock_ok = match (g.clock_mhz, g.max_clock_mhz) {
-            (Some(c), Some(m)) if m > 0 => f64::from(c) >= f64::from(m) * GPU_CLOCK_MIN_FRACTION,
-            _ => true,
-        };
-        g.util.is_some_and(|u| u >= GPU_BOUND_UTIL) && clock_ok
-    };
-    let share = a.share(busy);
+    let share = a.share(gpu_busy);
     let ratio = a.busy_ratio(true);
     let ratio_high = ratio.is_some_and(|r| r >= 0.9);
-    if !(share >= MOSTLY || (share >= 0.4 && ratio_high)) {
+    if share < gpu_share_needed(ratio) {
         return None;
     }
     // Чутливість FPS до роздільності не перевірялась (потрібен окремий прогін) — стеля 85 %.
@@ -329,7 +381,7 @@ pub fn cpu_bound(a: &Analysis<'_>) -> Option<Finding> {
         return None;
     }
     let share = a.share(|s| s.busiest_core_pct >= CORE_SATURATED_PCT);
-    if share < 0.5 {
+    if share < CORE_SHARE_NEEDED {
         return None;
     }
     let ratio = a.busy_ratio(false);

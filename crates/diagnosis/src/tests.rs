@@ -652,6 +652,53 @@ fn insufficient_data() {
 }
 
 #[test]
+fn unclear_summary_shows_load_against_thresholds() {
+    // GPU 91 %: «майже завжди 90+», але до порогу 95 % не дотягує — вердикт «не ясно».
+    let tl = timeline(&jittery(8.0, 3000), |_, i| {
+        let mut s = base_sample();
+        if let Some(g) = s.gpu.as_mut() {
+            g.util = Some(if i % 4 == 0 { 96 } else { 91 });
+        }
+        s
+    });
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert_eq!(d.bottleneck, Bottleneck::Unclear);
+    let head = &d.verdicts[0].finding;
+    let ev = |key: &str| {
+        head.evidence
+            .iter()
+            .find(|e| e.label.key == key)
+            .unwrap_or_else(|| panic!("немає {key}"))
+    };
+    let avg: f64 = ev("diag.ev.gpu_avg").value.args["v"].parse().unwrap();
+    assert!((91.0..=93.0).contains(&avg), "{avg}");
+    let share = ev("diag.ev.gpu_busy_share");
+    assert_eq!(share.value.key, "value.pct_needed");
+    let v: f64 = share.value.args["v"].parse().unwrap();
+    assert!((20.0..=30.0).contains(&v), "{v}");
+    assert_eq!(share.value.args["need"], "60");
+    let core = ev("diag.ev.core_saturated_share");
+    assert_eq!(core.value.args["v"], "0");
+    assert_eq!(core.value.args["need"], "50");
+}
+
+#[test]
+fn clear_verdict_summary_has_no_load_evidence() {
+    let tl = timeline(&jittery(8.0, 3000), |_, _| {
+        let mut s = base_sample();
+        if let Some(g) = s.gpu.as_mut() {
+            g.util = Some(99);
+        }
+        s
+    });
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert_eq!(d.bottleneck, Bottleneck::Gpu);
+    assert!(d.verdicts[0].finding.evidence.iter().all(
+        |e| !e.label.key.starts_with("diag.ev.gpu") && !e.label.key.starts_with("diag.ev.core")
+    ));
+}
+
+#[test]
 fn no_gpu_data_gives_unclear_not_guess() {
     let tl = timeline(&jittery(10.0, 2000), |_, _| {
         let mut s = base_sample();

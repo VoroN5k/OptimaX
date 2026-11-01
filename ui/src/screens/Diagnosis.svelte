@@ -92,6 +92,9 @@
 
   const stats = $derived(result?.diagnosis.stats ?? null);
   const summary = $derived(result?.diagnosis.verdicts[0]?.finding ?? null);
+  /** Цифри, що вже стоять плитками вище, — у списку доказів підсумку не повторюємо. */
+  const TILE_KEYS = new Set(["diag.ev.avg_fps", "diag.ev.low1", "diag.ev.low01", "diag.ev.p99"]);
+  const extra = $derived((summary?.evidence ?? []).filter((e) => !TILE_KEYS.has(e.label.key)));
   const rest = $derived(
     (result?.diagnosis.verdicts.slice(1) ?? []).filter((v) => !(resShown && v.finding.id.startsWith("res."))),
   );
@@ -170,6 +173,15 @@
           <div><strong>{stats.low_01pct_fps.toFixed(1)}</strong><span>0.1% low</span></div>
           <div><strong>{stats.p99_frametime_ms.toFixed(2)}</strong><span>{tk("ui.diag.p99")}</span></div>
         </div>
+      {/if}
+      {#if extra.length}
+        <p class="small muted load-title">{tk("ui.diag.load")}</p>
+        <dl class="load">
+          {#each extra as e, i (i)}
+            <dt>{t(e.label)}</dt>
+            <dd class="mono">{t(e.value)}</dd>
+          {/each}
+        </dl>
       {/if}
       <p class="small dim">
         {tk("ui.diag.confidence", { v: summary.confidence })}
@@ -258,6 +270,25 @@
   .list {
     display: grid;
     gap: calc(var(--space) * 3);
+  }
+  .load-title {
+    margin: 0 0 calc(var(--space) * 2);
+  }
+  .load {
+    display: grid;
+    grid-template-columns: minmax(160px, max-content) 1fr;
+    gap: 4px calc(var(--space) * 4);
+    margin: 0 0 calc(var(--space) * 3);
+    padding: calc(var(--space) * 3);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    font-size: 12px;
+  }
+  .load dt {
+    color: var(--text-muted);
+  }
+  .load dd {
+    margin: 0;
   }
   .none {
     margin: 0;

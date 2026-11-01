@@ -89,3 +89,37 @@ Frametime — [PresentMon](https://github.com/GameTechDev/PresentMon) 2.6.0 (в�
 
 Ліцензії вбудованих компонентів (PresentMon — MIT, шрифти Inter і JetBrains Mono — OFL 1.1)
 — у [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
+
+## Ліцензія
+
+OptimaX розповсюджується на умовах на вибір користувача:
+[MIT](LICENSE-MIT) або [Apache-2.0](LICENSE-APACHE).
+
+## Code signing policy
+
+> Статус: заявку на безкоштовний підпис від SignPath Foundation подано; поки її не схвалено,
+> релізи **не підписані** сертифікатом.
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org).
+
+- Підписуються лише файли, зібрані GitHub Actions з цього репозиторію (`optimax.exe` та
+  інсталятор NSIS); кожен реліз підписується після ручного схвалення.
+- Committers and reviewers: [VoroN5k](https://github.com/VoroN5k)
+- Approvers: [VoroN5k](https://github.com/VoroN5k)
+
+### Privacy policy
+
+This program will not transfer any information to other networked systems unless
+specifically requested by the user or the person installing or operating it.
+
+Українською: програма нічого не передає в мережу без запиту користувача. Мережеві звернення
+бувають лише такі, і всі — за дією користувача:
+- перевірка оновлень (`latest.json` на GitHub Releases цього репозиторію) — кнопкою або при
+  запуску, якщо користувач сам увімкнув це в налаштуваннях (за замовчуванням вимкнено);
+  завантаження інсталятора оновлення — лише за кнопкою з підтвердженням;
+- замір мережі (ping до роутера й до DNS-сервера з налаштувань адаптера або вузла, який
+  вказав користувач) — лише за кнопкою;
+- якщо WebView2 немає — кнопка відкриває офіційну сторінку Microsoft у браузері.
+
+Телеметрії немає.

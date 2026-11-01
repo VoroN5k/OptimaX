@@ -63,6 +63,27 @@ Actions (`.github/workflows/release.yml`) збирає zip, інсталятор
 - **Не закомічено / не в релізі:** прогрес завантаження у вікні оновлення
   (`ui/src/screens/Settings.svelte`) — перевірити наживо можна лише на оновленні 0.1.5 → 0.1.6.
 
+## 2i. Перевірка RAM — пункт (4) (не закомічено, чекає перевірки користувачем)
+
+- `smbios.rs`: Type 17 тепер читає Bank Locator (0x11) → `MemoryModule.bank`; усі структури
+  Type 17 (з порожніми слотами) рахуються в `FirmwareInfo.memory_slots`.
+- `audit/src/memlayout.rs` — чисті функції: `channel_of(bank, locator)` (лише явне `CHANNEL x`,
+  контролер — `ControllerN` або сокет `PN`; `DIMM_A1`, `DIMM 0` → невідомо, не вгадуємо),
+  `check_memory_layout` → `ram.single_module` (High), `ram.single_channel` (High),
+  `ram.asymmetric` (Moderate), `ram.multi_channel` / `ram.channels_unknown` (Info), `ram.mixed`
+  (Info). Для LPDDR і невідомих типів канальних вердиктів немає.
+- Реальні дані ПК користувача (AMD AGESA): `P0 CHANNEL A/B` + `DIMM 1`, 2 × 16 ГБ, 4 слоти →
+  «2 канали по 16 ГБ» (перевірено прикладом `cargo run -p optimax-audit --example audit`).
+- Схеми підписів Intel (`BANK n` + `ChannelA-DIMM0` / `Controller1-ChannelA-DIMM1`) — лише з
+  тестів, на реальному Intel-ПК не перевірено.
+- `audit/src/partnum.rs` — `kit_speed_mts(part, type)`: G.Skill (`F4-3600C18…`, `F5-6000J3038…`,
+  специфікації gskill.com + SPD на ПК користувача) і Corsair (`CMK32GX4M2Z3200C16`, офіційний
+  гайд: «3200 — MT/s з профілем розгону»). Покоління в партномері має збігатися з типом модуля.
+  У `check_memory`: усі модулі розпізнано → `ram.below_kit` (High, 90) або `ram.at_kit` (Info);
+  інакше стара евристика `ram.jedec_base`. Kingston FURY не додано: декодер kingston.com
+  віддає 403 автоматичним запитам, а поле частоти не завжди × 100 (`26` = 2666). Чи пише
+  Corsair номер набору в SPD модуля — не перевірено (якщо ні, просто не розпізнається).
+
 ## 3. Наступні завдання (обрав користувач 2026-11-01)
 
 Робити **по одному**, після кожного — звіт, чекліст і зупинка. Нові залежності — спершу питати.
@@ -370,6 +391,6 @@ Windows 11 Pro, Ryzen 7 5800X, RTX 4070 SUPER; основний монітор 2
 ```
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace            # зараз 349 тестів
+cargo test --workspace            # зараз 360 тестів
 cd ui && npm run check && npm run check:i18n
 ```

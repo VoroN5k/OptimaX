@@ -26,7 +26,12 @@ const BIOS_OLD_DAYS: i64 = 730;
 pub use optimax_core::power::guids as power_guids;
 
 /// Будівник знахідки аудиту: ключі тексту `audit.<id>.title` / `.detail` / `.advice`.
-fn draft(id: &'static str, category: Category, impact: Impact, confidence: u8) -> FindingBuilder {
+pub(crate) fn draft(
+    id: &'static str,
+    category: Category,
+    impact: Impact,
+    confidence: u8,
+) -> FindingBuilder {
     FindingBuilder::new("audit", id, category, impact, confidence)
 }
 
@@ -43,7 +48,7 @@ pub fn check_memory(modules: &[MemoryModule]) -> Vec<Finding> {
         .iter()
         .map(|m| {
             Evidence::new(
-                Text::new("audit.ev.module").arg("slot", &m.locator),
+                Text::new("audit.ev.module").arg("slot", m.slot_label()),
                 Text::new("audit.ev.module_value")
                     .arg("size_gb", m.size_mib / 1024)
                     .arg("type", m.memory_type.label())
@@ -72,13 +77,30 @@ pub fn check_memory(modules: &[MemoryModule]) -> Vec<Finding> {
         ];
     };
 
-    let draft = match rated {
-        Some(rated) if f64::from(configured) < f64::from(rated) * RAM_BELOW_RATED_RATIO => {
+    // Частота набору за партномером — лише якщо розпізнано всі модулі.
+    let kit: Option<u32> = modules
+        .iter()
+        .map(|m| crate::partnum::kit_speed_mts(&m.part_number, m.memory_type))
+        .collect::<Option<Vec<u32>>>()
+        .and_then(|v| v.into_iter().min());
+    let below = |target: u32| f64::from(configured) < f64::from(target) * RAM_BELOW_RATED_RATIO;
+
+    let draft = match (rated, kit) {
+        (Some(rated), _) if below(rated) => {
             draft("ram.below_rated", Category::Memory, Impact::High, 85)
                 .arg("configured", configured)
                 .arg("rated", rated)
                 .advice()
         }
+        (_, Some(kit)) if below(kit) => draft("ram.below_kit", Category::Memory, Impact::High, 90)
+            .arg("configured", configured)
+            .arg("kit", kit)
+            .arg("part", part)
+            .advice(),
+        (_, Some(kit)) => draft("ram.at_kit", Category::Memory, Impact::Info, 90)
+            .arg("configured", configured)
+            .arg("kit", kit)
+            .arg("part", part),
         _ => {
             let jedec_base = match mem_type {
                 MemoryType::Ddr4 => configured <= DDR4_JEDEC_BASE_MAX,
@@ -552,6 +574,7 @@ mod tests {
     fn module(t: MemoryType, rated: Option<u32>, configured: Option<u32>) -> MemoryModule {
         MemoryModule {
             locator: "DIMM_A2".into(),
+            bank: String::new(),
             size_mib: 16384,
             memory_type: t,
             rated_mts: rated,
@@ -620,6 +643,46 @@ mod tests {
         assert_eq!(
             check_memory(&[module(MemoryType::Ddr4, Some(3600), Some(3533))])[0].id,
             "ram.ok"
+        );
+    }
+
+    #[test]
+    fn ram_kit_speed_from_part_number() {
+        let kit = |configured: u32, part: &str| {
+            let mut m = module(MemoryType::Ddr4, Some(2133), Some(configured));
+            m.part_number = part.into();
+            m
+        };
+        // Набір 3600 на базових 2133 — впевнено, не «імовірно».
+        let f = check_memory(&[
+            kit(2133, "F4-3600C18-16GTZN"),
+            kit(2133, "F4-3600C18-16GTZN"),
+        ]);
+        assert_eq!(f[0].id, "ram.below_kit");
+        assert_eq!(f[0].impact, Impact::High);
+        assert!(f[0].advice.is_some());
+        // На частоті набору або вище (ручний розгін).
+        assert_eq!(
+            check_memory(&[kit(3600, "F4-3600C18-16GTZN")])[0].id,
+            "ram.at_kit"
+        );
+        assert_eq!(
+            check_memory(&[kit(3733, "F4-3600C18-16GTZN")])[0].id,
+            "ram.at_kit"
+        );
+        // Один модуль не розпізнано — повертаємось до евристики JEDEC.
+        assert_eq!(
+            check_memory(&[kit(2133, "F4-3600C18-16GTZN"), kit(2133, "KF432C16BB/16")])[0].id,
+            "ram.jedec_base"
+        );
+        // Змішані набори: орієнтир — найповільніший.
+        assert_eq!(
+            check_memory(&[
+                kit(3200, "F4-3600C18-16GTZN"),
+                kit(3200, "CMK16GX4M2B3200C16")
+            ])[0]
+                .id,
+            "ram.at_kit"
         );
     }
 

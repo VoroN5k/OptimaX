@@ -1,4 +1,4 @@
-//! Аудит конфігурації ігрового ПК: RAM (XMP/EXPO), частота монітора, PCIe, Resizable BAR,
+//! Аудит конфігурації ігрового ПК: RAM (XMP/EXPO, канали, змішані модулі), частота монітора, PCIe, Resizable BAR,
 //! драйвер GPU, BIOS, схема живлення, ігровий режим, HAGS, помилки заліза з журналу подій
 //! (скидання драйвера відеокарти — TDR, апаратні помилки WHEA).
 //!
@@ -10,7 +10,9 @@
 pub mod crashes;
 pub mod devprop;
 pub mod gpu_info;
+pub mod memlayout;
 pub mod model;
+pub mod partnum;
 pub mod probe;
 pub mod report;
 pub mod rules;

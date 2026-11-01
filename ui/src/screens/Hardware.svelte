@@ -78,7 +78,7 @@
         <ul class="modules">
           {#each info.firmware.memory as m, i (i)}
             <li>
-              <span class="mono">{m.locator}</span>
+              <span class="mono">{m.bank ? `${m.bank} · ${m.locator}` : m.locator}</span>
               <span>{Math.round(m.size_mib / 1024)} ГБ {typeof m.memory_type === "string" ? m.memory_type.toUpperCase() : "?"}</span>
               <span class="muted">{m.configured_mts ?? "?"} MT/s</span>
               <span class="dim small">{m.part_number}</span>

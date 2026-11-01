@@ -6,9 +6,13 @@ import type { MemoryType } from "./MemoryType";
  */
 export type MemoryModule = { 
 /**
- * Слот (Device Locator), напр. `DIMM_A2`.
+ * Слот (Device Locator), напр. `DIMM_A2` або `DIMM 1`.
  */
 locator: string, 
+/**
+ * Банк (Bank Locator), напр. `P0 CHANNEL A` або `BANK 0`. Порожній, якщо BIOS не заповнив.
+ */
+bank: string, 
 /**
  * Обсяг, МіБ.
  */

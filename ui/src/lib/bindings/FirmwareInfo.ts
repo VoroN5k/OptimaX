@@ -13,4 +13,8 @@ bios: BiosInfo | null,
 /**
  * Встановлені модулі (Type 17, лише зайняті слоти).
  */
-memory: Array<MemoryModule>, };
+memory: Array<MemoryModule>, 
+/**
+ * Усього слотів пам'яті (кількість структур Type 17, разом із порожніми).
+ */
+memory_slots: number, };

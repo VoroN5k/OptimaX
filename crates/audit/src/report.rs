@@ -1,7 +1,7 @@
 //! Запуск усіх перевірок і звіт.
 
 use crate::probe::SystemProbe;
-use crate::rules;
+use crate::{memlayout, rules};
 use optimax_core::{CivilDate, CoreError, Finding, Text};
 use serde::{Deserialize, Serialize};
 
@@ -89,6 +89,7 @@ pub fn run_audit(probe: &dyn SystemProbe, today: CivilDate) -> AuditReport {
         CheckId::Firmware,
         probe.firmware().map(|fw| {
             let mut out = rules::check_memory(&fw.memory);
+            out.extend(memlayout::check_memory_layout(&fw.memory, fw.memory_slots));
             out.extend(fw.bios.as_ref().map(|b| rules::check_bios(b, today)));
             out
         }),
@@ -166,6 +167,7 @@ mod tests {
                 }),
                 memory: vec![MemoryModule {
                     locator: "DIMM_A2".into(),
+                    bank: "BANK 0".into(),
                     size_mib: 16384,
                     memory_type: MemoryType::Ddr4,
                     rated_mts: Some(3200),
@@ -173,6 +175,7 @@ mod tests {
                     manufacturer: "Kingston".into(),
                     part_number: "KF432C16BB/16".into(),
                 }],
+                memory_slots: 4,
             })
         }
         fn displays(&self) -> Result<Vec<DisplayInfo>, CoreError> {
@@ -243,7 +246,12 @@ mod tests {
             .collect();
         assert_eq!(
             high,
-            vec!["display.low_refresh", "ram.below_rated", "power.saver"]
+            vec![
+                "ram.single_module",
+                "display.low_refresh",
+                "ram.below_rated",
+                "power.saver"
+            ]
         );
     }
 
@@ -280,6 +288,7 @@ mod tests {
             rules::check_memory(&[]),
             rules::check_memory(&[MemoryModule {
                 locator: "A".into(),
+                bank: String::new(),
                 size_mib: 1,
                 memory_type: MemoryType::Ddr4,
                 rated_mts: None,
@@ -290,6 +299,45 @@ mod tests {
         ];
         for f in extra_probe_findings.iter().flatten() {
             collect(f);
+        }
+        // Розкладка пам'яті: усі вердикти, яких немає в моку.
+        let dimm = |bank: &str, locator: &str, gb: u64, part: &str| MemoryModule {
+            locator: locator.into(),
+            bank: bank.into(),
+            size_mib: gb * 1024,
+            memory_type: MemoryType::Ddr4,
+            rated_mts: Some(3600),
+            configured_mts: Some(3600),
+            manufacturer: String::new(),
+            part_number: part.into(),
+        };
+        for part in ["F4-3600C18-16GTZN", "F4-2133C15-8GNT"] {
+            for f in rules::check_memory(&[dimm("", "DIMM 1", 16, part)]) {
+                collect(&f);
+            }
+        }
+        let layouts = [
+            vec![
+                dimm("P0 CHANNEL A", "DIMM 1", 16, "X"),
+                dimm("P0 CHANNEL B", "DIMM 1", 16, "X"),
+            ],
+            vec![
+                dimm("P0 CHANNEL A", "DIMM 0", 8, "X"),
+                dimm("P0 CHANNEL A", "DIMM 1", 8, "X"),
+            ],
+            vec![
+                dimm("", "ChannelA-DIMM0", 16, "X"),
+                dimm("", "ChannelB-DIMM0", 8, "Y"),
+            ],
+            vec![
+                dimm("BANK 0", "DIMM_A1", 16, "X"),
+                dimm("BANK 1", "DIMM_B1", 16, "X"),
+            ],
+        ];
+        for modules in &layouts {
+            for f in memlayout::check_memory_layout(modules, 4) {
+                collect(&f);
+            }
         }
         let variants = [
             rules::check_game_mode(GameModeState::Enabled),

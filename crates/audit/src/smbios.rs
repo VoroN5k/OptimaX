@@ -129,6 +129,7 @@ fn parse_memory(s: &Structure<'_>) -> Option<MemoryModule> {
     let size_mib = module_size_mib(s)?;
     Some(MemoryModule {
         locator: s.string(0x10),
+        bank: s.string(0x11),
         size_mib,
         memory_type: MemoryType::from_smbios(s.byte(0x12).unwrap_or(0)),
         rated_mts: speed(s, 0x15, 0x54),
@@ -154,7 +155,10 @@ pub fn parse_raw_smbios(raw: &[u8]) -> Result<FirmwareInfo, CoreError> {
     for s in structures(table) {
         match s.kind {
             TYPE_BIOS if info.bios.is_none() => info.bios = Some(parse_bios(&s)),
-            TYPE_MEMORY_DEVICE => info.memory.extend(parse_memory(&s)),
+            TYPE_MEMORY_DEVICE => {
+                info.memory_slots += 1;
+                info.memory.extend(parse_memory(&s));
+            }
             _ => {}
         }
     }
@@ -189,6 +193,7 @@ pub(crate) mod tests {
         };
         put16(&mut b, 0x0C, size_mib);
         b[0x10 - 4] = 1; // Device Locator → рядок 1
+        b[0x11 - 4] = 4; // Bank Locator → рядок 4 (якщо рядка немає — порожній)
         b[0x12 - 4] = mem_type;
         put16(&mut b, 0x15, rated);
         b[0x17 - 4] = 2; // Manufacturer → рядок 2
@@ -223,7 +228,7 @@ pub(crate) mod tests {
         table.extend(structure(
             17,
             &memory_body(16384, 0x1A, 2133, 2133),
-            &["DIMM_A2", "G.Skill", "F4-3600C16-16GVKC"],
+            &["DIMM 1", "G.Skill", "F4-3600C16-16GVKC", "P0 CHANNEL A"],
         ));
         // Порожній слот.
         table.extend(structure(
@@ -240,8 +245,11 @@ pub(crate) mod tests {
         assert_eq!(bios.release_date, CivilDate::new(2024, 5, 14));
 
         assert_eq!(info.memory.len(), 1);
+        assert_eq!(info.memory_slots, 2);
         let m = &info.memory[0];
-        assert_eq!(m.locator, "DIMM_A2");
+        assert_eq!(m.locator, "DIMM 1");
+        assert_eq!(m.bank, "P0 CHANNEL A");
+        assert_eq!(m.slot_label(), "P0 CHANNEL A · DIMM 1");
         assert_eq!(m.size_mib, 16384);
         assert_eq!(m.memory_type, MemoryType::Ddr4);
         assert_eq!(m.rated_mts, Some(2133));

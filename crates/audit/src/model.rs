@@ -52,8 +52,11 @@ impl MemoryType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct MemoryModule {
-    /// Слот (Device Locator), напр. `DIMM_A2`.
+    /// Слот (Device Locator), напр. `DIMM_A2` або `DIMM 1`.
     pub locator: String,
+    /// Банк (Bank Locator), напр. `P0 CHANNEL A` або `BANK 0`. Порожній, якщо BIOS не заповнив.
+    #[serde(default)]
+    pub bank: String,
     /// Обсяг, МіБ.
     pub size_mib: u64,
     /// Тип пам'яті.
@@ -66,6 +69,17 @@ pub struct MemoryModule {
     pub manufacturer: String,
     /// Партномер.
     pub part_number: String,
+}
+
+impl MemoryModule {
+    /// Підпис слота для показу: банк і слот, напр. `P0 CHANNEL A · DIMM 1`.
+    pub fn slot_label(&self) -> String {
+        match (self.bank.is_empty(), self.locator.is_empty()) {
+            (true, _) => self.locator.clone(),
+            (false, true) => self.bank.clone(),
+            (false, false) => format!("{} · {}", self.bank, self.locator),
+        }
+    }
 }
 
 /// Відомості про BIOS/UEFI.
@@ -88,6 +102,9 @@ pub struct FirmwareInfo {
     pub bios: Option<BiosInfo>,
     /// Встановлені модулі (Type 17, лише зайняті слоти).
     pub memory: Vec<MemoryModule>,
+    /// Усього слотів пам'яті (кількість структур Type 17, разом із порожніми).
+    #[serde(default)]
+    pub memory_slots: u32,
 }
 
 /// Активний монітор.

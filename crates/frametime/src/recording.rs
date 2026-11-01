@@ -458,7 +458,7 @@ pub fn record_with(
     snapshots.extend(snapshots_rx.try_iter());
     let dpc_trace = dpc_tracer.and_then(optimax_core::etw::DpcTracer::stop);
     if let Some(t) = &dpc_trace {
-        tracing::info!(
+        tracing::debug!(
             "DPC: {} подій, втрачено {}, довгих {}",
             t.events,
             t.lost,

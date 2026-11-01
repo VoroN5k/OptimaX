@@ -339,6 +339,26 @@ pub struct AbView {
     pub profile: bool,
 }
 
+/// Стан тесту чутливості до роздільності для UI.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ResView {
+    /// Гра.
+    pub game: String,
+    /// Тривалість прогону, с.
+    pub seconds: u32,
+    /// Спосіб старту прогонів.
+    pub start: optimax_frametime::StartMode,
+    /// Порядок прогонів: `false` — рідна роздільність, `true` — знижена.
+    pub order: Vec<bool>,
+    /// Виконані прогони.
+    pub runs: Vec<optimax_diagnosis::resolution::ResolutionRun>,
+    /// Іде прогін.
+    pub running: bool,
+    /// Підсумок (після всіх прогонів).
+    pub report: Option<optimax_diagnosis::resolution::ResolutionReport>,
+}
+
 /// Підсумок A/B.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]

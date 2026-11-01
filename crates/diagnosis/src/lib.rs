@@ -9,6 +9,7 @@
 pub mod chart;
 pub mod drivers;
 pub mod framegen;
+pub mod resolution;
 pub mod rules;
 pub mod timeline;
 

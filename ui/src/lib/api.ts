@@ -36,6 +36,7 @@ import type { RollbackResult } from "./bindings/RollbackResult";
 import type { Settings } from "./bindings/Settings";
 import type { CrashReport } from "./bindings/CrashReport";
 import type { DiagnosisState } from "./bindings/DiagnosisState";
+import type { ResView } from "./bindings/ResView";
 import type { Snapshot } from "./bindings/Snapshot";
 import type { StartupEntry } from "./bindings/StartupEntry";
 import type { StartupReport } from "./bindings/StartupReport";
@@ -78,6 +79,10 @@ export const api = {
   diagStart: (exe: string, seconds: number) => invoke<void>("diag_start", { exe, seconds }),
   diagCancel: () => invoke<void>("diag_cancel"),
   diagState: () => invoke<DiagnosisState>("diag_state"),
+  resStart: (exe: string, seconds: number) => invoke<ResView>("res_start", { exe, seconds }),
+  resState: () => invoke<ResView | null>("res_state"),
+  resRunNext: () => invoke<ResView>("res_run_next"),
+  resCancel: () => invoke<void>("res_cancel"),
 
   powerSchemes: () => invoke<PowerSchemes>("power_schemes"),
   tweakPlan: (desired: UiDesired) => invoke<PlanHandle>("tweak_plan", { desired }),
@@ -141,6 +146,7 @@ type Events = {
   gamemode: GameModeEvent;
   "diag-progress": RecordProgress;
   "ab-progress": RecordProgress;
+  "res-progress": RecordProgress;
   "diag-done": DiagnosisResult;
   "diag-error": CmdError;
   upscale: UpscaleView;

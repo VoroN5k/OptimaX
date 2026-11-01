@@ -161,6 +161,13 @@ pub fn diag_start(
 ) -> CmdResult<()> {
     let target = Target::ProcessName(exe);
     target.validate()?;
+    if super::resolution::is_running(&state) {
+        return Err(CmdError::Failed(
+            "іде прогін тесту роздільності — дочекайся кінця або скасуй тест".into(),
+        ));
+    }
+    // Новий діагноз — старий тест роздільності стосувався попереднього.
+    super::resolution::cancel_session(&state);
     let mut slot = lock(&state.recording);
     if slot.is_some() {
         return Err(CmdError::Failed("запис уже йде".into()));

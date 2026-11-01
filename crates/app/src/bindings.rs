@@ -81,6 +81,7 @@ fn export_typescript_bindings() {
         optimax_tweaks::JournalEntry,
         RollbackResult,
         AbView,
+        ResView,
         AbFinal,
         optimax_gamemode::GameProfile,
         crate::commands::upscale::UpscaleView,

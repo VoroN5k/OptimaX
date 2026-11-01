@@ -34,8 +34,8 @@ pub fn run() -> anyhow::Result<()> {
 #[cfg(windows)]
 mod app {
     use crate::commands::{
-        ab, audit, cleanup, diagnosis, feedback, gamemode, laptop, metrics, network, startup,
-        system, tweaks, update, upscale,
+        ab, audit, cleanup, diagnosis, feedback, gamemode, laptop, metrics, network, resolution,
+        startup, system, tweaks, update, upscale,
     };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
@@ -84,6 +84,7 @@ mod app {
             c.cancel();
         }
         cleanup::cancel_all(&lock(&state.cleanup));
+        resolution::cancel_session(state);
         if let Err(e) = ab::cancel_session(state) {
             tracing::error!("не вдалося відкотити зміну A/B-тесту при виході: {e:?}");
         }
@@ -232,6 +233,10 @@ mod app {
                 ab::ab_run_next,
                 ab::ab_finish,
                 ab::ab_cancel,
+                resolution::res_start,
+                resolution::res_state,
+                resolution::res_run_next,
+                resolution::res_cancel,
                 gamemode::profiles_list,
                 gamemode::profile_preview,
                 gamemode::profile_save,

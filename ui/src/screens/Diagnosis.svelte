@@ -14,6 +14,7 @@
   import Page from "../components/Page.svelte";
   import ProcessPicker from "../components/ProcessPicker.svelte";
   import RecordStatus from "../components/RecordStatus.svelte";
+  import ResolutionTest from "../components/ResolutionTest.svelte";
   import StartModePicker from "../components/StartModePicker.svelte";
   import Segmented from "../components/Segmented.svelte";
   import StateView from "../components/StateView.svelte";
@@ -75,9 +76,28 @@
     }
   }
 
+  /** Підсумок тесту роздільності вже показано в його картці — у списку не дублюємо. */
+  let resShown = $state(false);
+
+  /** Бекенд уточнив діагноз (тест роздільності) — перечитати. */
+  async function reloadResult() {
+    try {
+      const s = await api.diagState();
+      if (s.last) result = s.last;
+    } catch {
+      /* лишаємо показаний результат */
+    }
+  }
+
   const stats = $derived(result?.diagnosis.stats ?? null);
   const summary = $derived(result?.diagnosis.verdicts[0]?.finding ?? null);
-  const rest = $derived(result?.diagnosis.verdicts.slice(1) ?? []);
+  const rest = $derived(
+    (result?.diagnosis.verdicts.slice(1) ?? []).filter((v) => !(resShown && v.finding.id.startsWith("res."))),
+  );
+  /** Тест роздільності має сенс, коли вузьке місце — GPU чи CPU (а не ліміт кадрів). */
+  const resTestable = $derived(
+    !recording && (result?.diagnosis.bottleneck === "gpu" || result?.diagnosis.bottleneck === "cpu"),
+  );
 </script>
 
 {#snippet openUpscale()}
@@ -156,6 +176,9 @@
         {#if result.end_reason !== "completed"} · {tk(`ui.rec.end.${result.end_reason}`)}{/if}
       </p>
     </Card>
+    {#if resTestable && result}
+      <ResolutionTest game={result.diagnosis.game} bind:hasReport={resShown} onupdated={reloadResult} />
+    {/if}
     {#if result.diagnosis.chart}
       <Card title={tk("ui.chart.title")} subtitle={tk("ui.chart.subtitle")}>
         <FrametimeChart chart={result.diagnosis.chart} />

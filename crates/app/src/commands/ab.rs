@@ -4,27 +4,23 @@
 //! гри). Профіль перевіряється на запущеній грі; режим гри на час тесту має бути зупинений,
 //! інакше він сам увімкне профіль і в прогонах «без профілю».
 
-use super::blocking;
+use super::{blocking, record_game};
 use crate::dto::{AbFinal, AbView, UiDesired};
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState, FlagConfirm, MEMORY, PROCESSES};
 use optimax_core::process::{ProcessApi, ProcessInfo};
 use optimax_core::{Catalog, CivilDate};
 use optimax_diagnosis::{diagnose, Bottleneck, Context};
-use optimax_frametime::{
-    record_with, CancelToken, RecordNotices, RecordOptions, StartMode, Target,
-};
+use optimax_frametime::{CancelToken, StartMode, Target};
 use optimax_gamemode::{
     end_session, preview_changes, session_plan, start_session, GameProfile, ProfileStore,
     ProfileTest, SessionReport,
 };
-use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
 use optimax_tweaks::ab::{
     evaluate, render_markdown, schedule, Arm, Decision, RunConditions, RunResult,
 };
 use optimax_tweaks::{Desired, Plan, TweakError, TweakId};
-use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 /// Що перевіряє A/B.
 enum AbSubject {
@@ -99,6 +95,11 @@ pub fn ab_start(
     seconds: u32,
 ) -> CmdResult<AbView> {
     Target::ProcessName(game.clone()).validate()?;
+    if super::resolution::is_running(&state) {
+        return Err(CmdError::Failed(
+            "іде прогін тесту роздільності — дочекайся кінця або скасуй тест".into(),
+        ));
+    }
     let mut slot = lock(&state.ab);
     if slot.is_some() {
         return Err(CmdError::Failed(
@@ -149,6 +150,11 @@ pub fn ab_start_profile(
         return Err(CmdError::Failed(
             "зупини режим гри на час перевірки: він сам вмикає профіль і зіпсує прогони без профілю"
                 .into(),
+        ));
+    }
+    if super::resolution::is_running(&state) {
+        return Err(CmdError::Failed(
+            "іде прогін тесту роздільності — дочекайся кінця або скасуй тест".into(),
         ));
     }
     let mut slot = lock(&state.ab);
@@ -268,25 +274,7 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
             (arm, s.game.clone(), s.seconds, s.start, s.sound, cancel)
         };
         // 2. Запис (довго, без замків).
-        let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
-        let mut options = RecordOptions::new(
-            Target::ProcessName(game),
-            Duration::from_secs(u64::from(seconds)),
-        )
-        .with_start(start, sound);
-        if let Ok(catalog) = Catalog::ukrainian() {
-            options = options.with_notices(RecordNotices::from_catalog(&catalog));
-        }
-        let rec = record_with(
-            state.presentmon()?,
-            &options,
-            Box::new(SysinfoSource::new()),
-            gpu,
-            &cancel,
-            &mut |p| {
-                let _ = app.emit("ab-progress", p);
-            },
-        )?;
+        let rec = record_game(&app, game, seconds, start, sound, &cancel, "ab-progress")?;
         if rec.cancelled {
             return Err(CmdError::Cancelled("прогін зупинено".into()));
         }

@@ -8,6 +8,7 @@
   import BackgroundDots from "./components/BackgroundDots.svelte";
   import LogPanel from "./components/LogPanel.svelte";
   import Sidebar from "./components/Sidebar.svelte";
+  import UpdateBanner from "./components/UpdateBanner.svelte";
   import Analysis from "./screens/Analysis.svelte";
   import Backups from "./screens/Backups.svelte";
   import Cleanup from "./screens/Cleanup.svelte";
@@ -119,6 +120,7 @@
   {/if}
   <Sidebar />
   <main class="main">
+    <UpdateBanner />
     <div class="screen">
       {#key ui.screen}
         {#if ui.screen === "analysis"}

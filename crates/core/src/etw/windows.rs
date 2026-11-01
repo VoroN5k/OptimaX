@@ -3,17 +3,17 @@
 
 use super::{Collector, DpcKind, EtwError, RawEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use windows::core::{GUID, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_SUCCESS, WIN32_ERROR};
 use windows::Win32::System::Diagnostics::Etw::{
     CloseTrace, ControlTraceW, OpenTraceW, PerfInfoGuid, ProcessTrace, StartTraceW,
-    CONTROLTRACE_HANDLE, EVENT_HEADER_FLAG_32_BIT_HEADER, EVENT_RECORD, EVENT_TRACE_CONTROL_STOP,
-    EVENT_TRACE_FLAG_DPC, EVENT_TRACE_FLAG_INTERRUPT, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES,
-    EVENT_TRACE_REAL_TIME_MODE, EVENT_TRACE_SYSTEM_LOGGER_MODE, PROCESSTRACE_HANDLE,
-    PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_RAW_TIMESTAMP,
-    PROCESS_TRACE_MODE_REAL_TIME, WNODE_FLAG_TRACED_GUID,
+    CONTROLTRACE_HANDLE, EVENT_HEADER_FLAG_32_BIT_HEADER, EVENT_RECORD, EVENT_TRACE_CONTROL_QUERY,
+    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_FLAG_DPC, EVENT_TRACE_FLAG_INTERRUPT,
+    EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE,
+    EVENT_TRACE_SYSTEM_LOGGER_MODE, PROCESSTRACE_HANDLE, PROCESS_TRACE_MODE_EVENT_RECORD,
+    PROCESS_TRACE_MODE_RAW_TIMESTAMP, PROCESS_TRACE_MODE_REAL_TIME, WNODE_FLAG_TRACED_GUID,
 };
 use windows::Win32::System::ProcessStatus::{EnumDeviceDrivers, GetDeviceDriverBaseNameW};
 
@@ -95,17 +95,25 @@ pub(super) struct Session {
     trace: PROCESSTRACE_HANDLE,
     /// Дескриптор трасування вже закрито (або ще не відкрито) — хто перший, той і закриває.
     closed: Arc<AtomicBool>,
-    done: mpsc::Receiver<Box<Collector>>,
-    /// Потік обробки ще не повернув колектор.
+    /// Колектор: пише потік обробки (зворотні виклики), читає зріз — будь-хто під замком.
+    collector: Arc<Mutex<Collector>>,
+    /// Сигнал «ProcessTrace завершився, зворотних викликів більше не буде».
+    done: mpsc::Receiver<()>,
+    /// Потік обробки ще не завершився.
     pending: bool,
     stopped: bool,
 }
 
-/// Вказівник на колектор для потоку обробки (`*mut` сам по собі не `Send`).
-struct CollectorPtr(*mut Collector);
-// SAFETY: колектором користується лише потік обробки (зворотні виклики ProcessTrace йдуть у
-// його ж потоці); володіння повертається через канал після завершення ProcessTrace.
+/// Вказівник на спільний колектор для потоку обробки (`*const` сам по собі не `Send`).
+struct CollectorPtr(*const Mutex<Collector>);
+// SAFETY: вказівник отримано з `Arc::into_raw`; `Mutex` — `Sync`, тож доступ із потоку обробки
+// безпечний. Посилання, що його тримає вказівник, звільняється в тому ж потоці після ProcessTrace.
 unsafe impl Send for CollectorPtr {}
+
+/// Замок колектора; «отруєний» замок (паніка в іншому потоці) не заважає читати дані.
+fn locked(c: &Mutex<Collector>) -> MutexGuard<'_, Collector> {
+    c.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 impl Session {
     pub(super) fn start(collector: Collector) -> Result<Self, EtwError> {
@@ -139,15 +147,17 @@ impl Session {
                 Value: INVALID_TRACE,
             },
             closed: Arc::new(AtomicBool::new(true)),
+            collector: Arc::new(Mutex::new(collector)),
             done: mpsc::channel().1,
             pending: false,
             stopped: false,
         };
 
-        let raw = Box::into_raw(Box::new(collector));
+        // Окреме посилання для зворотних викликів; звільняється потоком обробки.
+        let raw = Arc::into_raw(session.collector.clone());
         let mut logfile = EVENT_TRACE_LOGFILEW {
             LoggerName: PWSTR(session.name.as_mut_ptr()),
-            Context: raw.cast(),
+            Context: raw.cast_mut().cast(),
             ..Default::default()
         };
         logfile.Anonymous1.ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME
@@ -157,8 +167,9 @@ impl Session {
         // SAFETY: структура повністю ініціалізована; ім'я сесії живе в `session` до Drop.
         let trace = unsafe { OpenTraceW(&mut logfile) };
         if trace.Value == INVALID_TRACE {
-            // SAFETY: `raw` щойно отримано з Box::into_raw і більше ніде не використовується.
-            drop(unsafe { Box::from_raw(raw) });
+            // SAFETY: `raw` щойно отримано з Arc::into_raw; трасування не відкрито, тож
+            // зворотних викликів із ним не буде.
+            drop(unsafe { Arc::from_raw(raw) });
             // SAFETY: без аргументів; читає код помилки цього потоку.
             let code = unsafe { windows::Win32::Foundation::GetLastError() }.0;
             return Err(EtwError::Api {
@@ -177,8 +188,8 @@ impl Session {
             .name("optimax-etw-dpc".into())
             .spawn(move || {
                 let ptr = ptr;
-                // SAFETY: дескриптор відкрито OpenTraceW; колектор живий (Box), доступ до нього
-                // лише з цього потоку через зворотний виклик.
+                // SAFETY: дескриптор відкрито OpenTraceW; колектор живий (посилання `ptr`),
+                // зворотні виклики беруть його замок.
                 let r = unsafe { ProcessTrace(&[trace], None, None) };
                 if r != ERROR_SUCCESS {
                     tracing::debug!("ProcessTrace: {}", r.0);
@@ -188,14 +199,14 @@ impl Session {
                     let _ = unsafe { CloseTrace(trace) };
                 }
                 // SAFETY: ProcessTrace завершився — зворотних викликів більше не буде;
-                // вказівник отримано з Box::into_raw.
-                let collector = unsafe { Box::from_raw(ptr.0) };
-                let _ = tx.send(collector);
+                // вказівник отримано з Arc::into_raw і звільняється рівно один раз.
+                drop(unsafe { Arc::from_raw(ptr.0) });
+                let _ = tx.send(());
             });
         if let Err(e) = spawned {
             tracing::warn!("потік ETW не запустився: {e}");
-            // Колектор свідомо не звільняємо: дескриптор трасування відкрито, і після CloseTrace
-            // формально ще можливий зворотний виклик. Витік одноразовий і малий.
+            // Посилання на колектор свідомо не звільняємо: дескриптор трасування відкрито, і після
+            // CloseTrace формально ще можливий зворотний виклик. Витік одноразовий і малий.
             session.close_trace();
             return Err(EtwError::Api {
                 call: "spawn",
@@ -237,31 +248,66 @@ impl Session {
 
     pub(super) fn stop(mut self) -> Option<(Collector, u64)> {
         let lost = self.stop_session();
-        self.join().map(|c| (*c, lost))
-    }
-
-    /// Чекає, поки потік обробки поверне колектор.
-    fn join(&mut self) -> Option<Box<Collector>> {
-        if !self.pending {
+        if !self.join() {
             return None;
         }
-        let collector = match self.done.recv_timeout(JOIN_TIMEOUT) {
-            Ok(c) => Some(c),
+        let mut c = locked(&self.collector);
+        let fresh = Collector {
+            keep_ticks: c.keep_ticks,
+            ..Collector::new(c.freq)
+        };
+        Some((std::mem::replace(&mut *c, fresh), lost))
+    }
+
+    /// Виконує `f` над колектором під замком (поки сесія працює).
+    pub(super) fn with_collector<T>(&self, f: impl FnOnce(&Collector) -> T) -> Option<T> {
+        if self.stopped {
+            return None;
+        }
+        Some(f(&locked(&self.collector)))
+    }
+
+    /// Втрачені досі події (`ControlTrace(QUERY)`); 0, якщо запит не вдався.
+    pub(super) fn lost_so_far(&self) -> u64 {
+        let mut props = Properties::new(&self.name);
+        // SAFETY: дескриптор сесії отримано від StartTraceW; буфер властивостей коректний.
+        let r = unsafe {
+            ControlTraceW(
+                self.control,
+                PCWSTR::null(),
+                props.ptr(),
+                EVENT_TRACE_CONTROL_QUERY,
+            )
+        };
+        if r == ERROR_SUCCESS {
+            props.lost()
+        } else {
+            0
+        }
+    }
+
+    /// Чекає завершення потоку обробки. `false` — не дочекались (колектор не чіпаємо).
+    fn join(&mut self) -> bool {
+        if !self.pending {
+            return false;
+        }
+        let finished = match self.done.recv_timeout(JOIN_TIMEOUT) {
+            Ok(()) => true,
             Err(_) => {
                 // ProcessTrace не повернувся сам — закриваємо дескриптор, це його розблоковує.
                 self.close_trace();
-                self.done.recv_timeout(JOIN_TIMEOUT).ok()
+                self.done.recv_timeout(JOIN_TIMEOUT).is_ok()
             }
         };
         self.pending = false;
-        collector
+        finished
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
         self.stop_session();
-        drop(self.join());
+        self.join();
         self.close_trace();
     }
 }
@@ -299,10 +345,10 @@ unsafe extern "system" fn on_event(record: *mut EVENT_RECORD) {
             data[8..12].try_into().unwrap_or_default(),
         ))
     };
-    // SAFETY: UserContext — наш `*mut Collector` з OpenTraceW; живий, поки працює ProcessTrace,
-    // і використовується лише з цього потоку.
-    let collector = unsafe { &mut *rec.UserContext.cast::<Collector>() };
-    collector.push(RawEvent {
+    // SAFETY: UserContext — наш `*const Mutex<Collector>` з OpenTraceW (Arc::into_raw); посилання
+    // живе, поки працює ProcessTrace.
+    let collector = unsafe { &*rec.UserContext.cast::<Mutex<Collector>>() };
+    locked(collector).push(RawEvent {
         start_qpc: start,
         end_qpc: h.TimeStamp,
         routine,

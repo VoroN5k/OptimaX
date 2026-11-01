@@ -14,6 +14,7 @@
   import Page from "../components/Page.svelte";
   import ProcessPicker from "../components/ProcessPicker.svelte";
   import RecordStatus from "../components/RecordStatus.svelte";
+  import LagWatch from "../components/LagWatch.svelte";
   import ResolutionTest from "../components/ResolutionTest.svelte";
   import StartModePicker from "../components/StartModePicker.svelte";
   import Segmented from "../components/Segmented.svelte";
@@ -139,6 +140,7 @@
     </div>
     <div class="mode"><StartModePicker /></div>
   </Card>
+  <LagWatch game={exe} />
 
   {#if recording}
     <Card><RecordStatus {progress} game={exe} /></Card>

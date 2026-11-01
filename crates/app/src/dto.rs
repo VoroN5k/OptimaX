@@ -256,6 +256,38 @@ pub struct DiagnosisResult {
     pub end_reason: optimax_frametime::EndReason,
 }
 
+/// Знімок «Щойно лагнуло».
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct LagCapture {
+    /// Номер знімка в сесії.
+    pub id: u32,
+    /// Unix-час натискання, мс.
+    pub at_unix_ms: Option<i64>,
+    /// Аналіз вікна перед натисканням.
+    pub result: DiagnosisResult,
+}
+
+/// Стан «Щойно лагнуло» для UI.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct LagView {
+    /// Гра.
+    pub game: String,
+    /// Скільки останніх секунд зберігає знімок.
+    pub window_s: u32,
+    /// Стеження йде.
+    pub watching: bool,
+    /// Останній стан буфера.
+    pub status: Option<optimax_frametime::watch::WatchStatus>,
+    /// Знімки, новіші першими.
+    pub captures: Vec<LagCapture>,
+    /// Останній знімок не вдався (скидається після вдалого).
+    pub last_failure: Option<optimax_frametime::watch::CaptureFailure>,
+    /// Чому стеження завершилось (якщо завершилось).
+    pub ended: Option<optimax_frametime::watch::WatchEnd>,
+}
+
 /// Стан «Чому лагає?» на момент відкриття сторінки.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]

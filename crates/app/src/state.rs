@@ -76,6 +76,8 @@ pub struct AppState {
     pub ab: Mutex<Option<crate::commands::ab::AbSession>>,
     /// Тест чутливості до роздільності.
     pub res_test: Mutex<Option<crate::commands::resolution::ResSession>>,
+    /// «Щойно лагнуло»: стеження з кільцевим буфером.
+    pub lag: Mutex<Option<crate::commands::lag::LagSession>>,
     /// Режим гри.
     pub gamemode: Mutex<Option<crate::commands::gamemode::Watcher>>,
     /// Користувач дозволив режиму гри працювати без точки відновлення (до кінця сеансу).
@@ -121,6 +123,7 @@ impl AppState {
             recording: Mutex::new(None),
             ab: Mutex::new(None),
             res_test: Mutex::new(None),
+            lag: Mutex::new(None),
             gamemode: Mutex::new(None),
             gamemode_allow_without_restore: Arc::new(Mutex::new(false)),
             settings: Mutex::new(Settings::load()),

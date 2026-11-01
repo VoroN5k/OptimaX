@@ -37,6 +37,8 @@ import type { Settings } from "./bindings/Settings";
 import type { CrashReport } from "./bindings/CrashReport";
 import type { DiagnosisState } from "./bindings/DiagnosisState";
 import type { ResView } from "./bindings/ResView";
+import type { LagView } from "./bindings/LagView";
+import type { WatchStatus } from "./bindings/WatchStatus";
 import type { Snapshot } from "./bindings/Snapshot";
 import type { StartupEntry } from "./bindings/StartupEntry";
 import type { StartupReport } from "./bindings/StartupReport";
@@ -83,6 +85,11 @@ export const api = {
   resState: () => invoke<ResView | null>("res_state"),
   resRunNext: () => invoke<ResView>("res_run_next"),
   resCancel: () => invoke<void>("res_cancel"),
+  lagStart: (exe: string) => invoke<LagView>("lag_start", { exe }),
+  lagState: () => invoke<LagView | null>("lag_state"),
+  lagCapture: () => invoke<void>("lag_capture"),
+  lagStop: () => invoke<LagView | null>("lag_stop"),
+  lagClose: () => invoke<void>("lag_close"),
 
   powerSchemes: () => invoke<PowerSchemes>("power_schemes"),
   tweakPlan: (desired: UiDesired) => invoke<PlanHandle>("tweak_plan", { desired }),
@@ -147,6 +154,8 @@ type Events = {
   "diag-progress": RecordProgress;
   "ab-progress": RecordProgress;
   "res-progress": RecordProgress;
+  "lag-status": WatchStatus;
+  "lag-update": LagView;
   "diag-done": DiagnosisResult;
   "diag-error": CmdError;
   upscale: UpscaleView;

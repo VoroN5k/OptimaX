@@ -6,6 +6,7 @@ pub mod cleanup;
 pub mod diagnosis;
 pub mod feedback;
 pub mod gamemode;
+pub mod lag;
 pub mod laptop;
 pub mod metrics;
 pub mod network;

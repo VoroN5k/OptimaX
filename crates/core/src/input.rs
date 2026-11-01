@@ -25,9 +25,11 @@ pub enum FunctionKey {
     F9,
     /// F10 — увімкнути/вимкнути апскейл.
     F10,
+    /// F11 — зберегти останні секунди гри («Щойно лагнуло»).
+    F11,
 }
 
-/// Глобальна гаряча клавіша `Ctrl+Shift+F9/F10`. Працює й поверх повноекранних ігор.
+/// Глобальна гаряча клавіша `Ctrl+Shift+F9/F10/F11`. Працює й поверх повноекранних ігор.
 /// Натискання накопичуються в каналі й читаються [`GlobalHotkey::pressed`]; знімається при знищенні.
 pub struct GlobalHotkey {
     inner: imp::Hotkey,
@@ -74,16 +76,30 @@ mod imp {
     use crate::error::CoreError;
     use std::sync::mpsc::{self, Receiver};
     use std::thread::JoinHandle;
+    use std::time::{Duration, Instant};
     use windows::Win32::Foundation::{LPARAM, WPARAM};
     use windows::Win32::System::Diagnostics::Debug::Beep;
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, VK_F10, VK_F9,
+        GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
+        VIRTUAL_KEY, VK_CONTROL, VK_F10, VK_F11, VK_F9, VK_SHIFT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, PeekMessageW,
-        PostThreadMessageW, MSG, PM_NOREMOVE, WM_HOTKEY, WM_QUIT,
+        GetForegroundWindow, GetWindowThreadProcessId, PeekMessageW, PostThreadMessageW, MSG,
+        PM_NOREMOVE, PM_REMOVE, WM_HOTKEY, WM_QUIT,
     };
+
+    /// Як часто опитувати стан клавіш (натискання триває щонайменше ~50 мс).
+    const POLL: Duration = Duration::from_millis(25);
+    /// Два сигнали одного натискання (WM_HOTKEY і опитування) ближче за це — одне натискання.
+    const DEBOUNCE: Duration = Duration::from_millis(400);
+
+    /// Чи натиснута клавіша зараз (старший біт `GetAsyncKeyState`).
+    fn down(vk: VIRTUAL_KEY) -> bool {
+        // SAFETY: читання стану клавіші за кодом, без вказівників.
+        let state = unsafe { GetAsyncKeyState(i32::from(vk.0)) };
+        state < 0
+    }
 
     pub(super) fn foreground_process_id() -> Option<u32> {
         // SAFETY: функції без вказівників на наші дані, крім локального `pid`.
@@ -129,6 +145,7 @@ mod imp {
             let vk = match key {
                 FunctionKey::F9 => VK_F9,
                 FunctionKey::F10 => VK_F10,
+                FunctionKey::F11 => VK_F11,
             };
             // Ідентифікатор у межах потоку; кожна клавіша має власний потік, тож достатньо коду клавіші.
             let id = i32::from(vk.0);
@@ -158,15 +175,31 @@ mod imp {
                     }
                     // SAFETY: без аргументів.
                     let _ = ready_tx.send(Ok(unsafe { GetCurrentThreadId() }));
-                    loop {
-                        // SAFETY: `msg` — локальна структура; 0 — отримано WM_QUIT, -1 — помилка.
-                        let r = unsafe { GetMessageW(&mut msg, None, 0, 0) }.0;
-                        if r <= 0 || msg.message == WM_QUIT {
-                            break;
+                    // Багато ігор (Raw Input з RIDEV_NOHOTKEYS) у фокусі не пропускають WM_HOTKEY,
+                    // тому стан комбінації ще й опитується. Читаються лише три клавіші комбінації —
+                    // жодного перехоплення клавіатури.
+                    let mut last_press: Option<Instant> = None;
+                    let mut was_down = false;
+                    'run: loop {
+                        let mut fired = false;
+                        // SAFETY: `msg` — локальна структура; PM_REMOVE забирає повідомлення з черги.
+                        while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+                            match msg.message {
+                                WM_QUIT => break 'run,
+                                WM_HOTKEY => fired = true,
+                                _ => {}
+                            }
                         }
-                        if msg.message == WM_HOTKEY && press_tx.send(()).is_err() {
-                            break;
+                        let is_down = down(VK_CONTROL) && down(VK_SHIFT) && down(vk);
+                        fired |= is_down && !was_down;
+                        was_down = is_down;
+                        if fired && last_press.is_none_or(|t| t.elapsed() >= DEBOUNCE) {
+                            last_press = Some(Instant::now());
+                            if press_tx.send(()).is_err() {
+                                break;
+                            }
                         }
+                        std::thread::sleep(POLL);
                     }
                     // SAFETY: знімаємо реєстрацію в тому самому потоці.
                     let _ = unsafe { UnregisterHotKey(None, id) };

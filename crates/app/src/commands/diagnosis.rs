@@ -77,7 +77,7 @@ const SHADER_SCAN_LIMIT: usize = 100_000;
 /// Файли кешу шейдерів драйвера, змінені після `since_unix_ms`. Теки — з перевірених правил
 /// очищення (категорія «Шейдер-кеші»), тож шляхи не вигадуються. Лише метадані (без вмісту),
 /// посилання не розкриваються, обсяг перегляду обмежено.
-fn shader_cache_files(since_unix_ms: i64) -> Vec<CacheFile> {
+pub(crate) fn shader_cache_files(since_unix_ms: i64) -> Vec<CacheFile> {
     use optimax_cleanup::rules::Category as CleanupCategory;
     use optimax_cleanup::scan::expand_roots;
     use optimax_cleanup::{Env, RuleSet, StdFs};
@@ -130,7 +130,8 @@ fn shader_cache_files(since_unix_ms: i64) -> Vec<CacheFile> {
     out
 }
 
-fn context() -> (Context, Option<u32>) {
+/// Контекст аналізу: частота монітора й знахідки аудиту конфігурації.
+pub(crate) fn context() -> (Context, Option<u32>) {
     let probe = WindowsProbe::new();
     let display_hz = probe
         .displays()
@@ -161,6 +162,9 @@ pub fn diag_start(
 ) -> CmdResult<()> {
     let target = Target::ProcessName(exe);
     target.validate()?;
+    if super::lag::is_watching(&state) {
+        return Err(super::lag::busy_error());
+    }
     if super::resolution::is_running(&state) {
         return Err(CmdError::Failed(
             "іде прогін тесту роздільності — дочекайся кінця або скасуй тест".into(),

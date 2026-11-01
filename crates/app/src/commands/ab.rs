@@ -95,6 +95,9 @@ pub fn ab_start(
     seconds: u32,
 ) -> CmdResult<AbView> {
     Target::ProcessName(game.clone()).validate()?;
+    if super::lag::is_watching(&state) {
+        return Err(super::lag::busy_error());
+    }
     if super::resolution::is_running(&state) {
         return Err(CmdError::Failed(
             "іде прогін тесту роздільності — дочекайся кінця або скасуй тест".into(),
@@ -151,6 +154,9 @@ pub fn ab_start_profile(
             "зупини режим гри на час перевірки: він сам вмикає профіль і зіпсує прогони без профілю"
                 .into(),
         ));
+    }
+    if super::lag::is_watching(&state) {
+        return Err(super::lag::busy_error());
     }
     if super::resolution::is_running(&state) {
         return Err(CmdError::Failed(

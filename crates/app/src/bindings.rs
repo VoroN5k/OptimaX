@@ -82,6 +82,8 @@ fn export_typescript_bindings() {
         RollbackResult,
         AbView,
         ResView,
+        LagCapture,
+        LagView,
         AbFinal,
         optimax_gamemode::GameProfile,
         crate::commands::upscale::UpscaleView,

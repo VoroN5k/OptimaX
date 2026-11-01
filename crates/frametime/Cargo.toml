@@ -27,6 +27,8 @@ sha2.workspace = true
 [dev-dependencies]
 anyhow.workspace = true
 serde_json.workspace = true
+# Лише приклад `watch`: CPU процесів OptimaX і PresentMon під час стеження.
+sysinfo.workspace = true
 
 [lints]
 workspace = true

@@ -40,6 +40,9 @@ impl ResSession {
 #[tauri::command]
 pub fn res_start(state: State<'_, AppState>, exe: String, seconds: u32) -> CmdResult<ResView> {
     Target::ProcessName(exe.clone()).validate()?;
+    if super::lag::is_watching(&state) {
+        return Err(super::lag::busy_error());
+    }
     if lock(&state.recording).is_some() || lock(&state.ab).is_some() {
         return Err(CmdError::Failed(
             "уже йде запис або A/B-тест — дочекайся кінця".into(),
@@ -85,6 +88,9 @@ pub async fn res_run_next(app: AppHandle) -> CmdResult<ResView> {
                 .ok_or_else(|| CmdError::NotFound("тест роздільності не запущено".into()))?;
             if s.cancel.is_some() {
                 return Err(CmdError::Failed("прогін тесту вже йде".into()));
+            }
+            if super::lag::is_watching(&state) {
+                return Err(super::lag::busy_error());
             }
             let reduced = *resolution::schedule()
                 .get(s.runs.len())

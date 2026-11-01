@@ -12,7 +12,7 @@
 mod windows;
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 /// Події, довші за це (мкс), зберігаються поштучно — для збігу з піками frametime.
 pub const LONG_DPC_US: f64 = 100.0;
@@ -94,15 +94,29 @@ struct RoutineStat {
     max_ticks: i64,
 }
 
+/// Статистика по процедурах (адреса → лічильники).
+type Routines = HashMap<u64, RoutineStat>;
+
+/// Довга подія до приписування модулю: (старт QPC, тривалість у тиках, процедура, вид).
+type RawLong = (i64, i64, u64, DpcKind);
+
 /// Збирає статистику по процедурах під час трасування.
+///
+/// Звичайний режим — підсумок за всю сесію. Кільцевий ([`Collector::ring`]) — лише останні
+/// `keep` тиків: статистика по секундних кошиках і довгі події, старіші за вікно, відкидаються,
+/// тож пам'ять не росте за довгої гри, а зріз за будь-яке вікно в межах `keep` доступний на льоту.
 #[derive(Debug)]
 #[cfg_attr(not(windows), allow(dead_code))]
 struct Collector {
     freq: i64,
     long_ticks: i64,
     max_ticks: i64,
-    routines: HashMap<u64, RoutineStat>,
-    long: Vec<(i64, i64, u64, DpcKind)>,
+    /// Кільцевий режим: скільки тиків історії тримати.
+    keep_ticks: Option<i64>,
+    routines: Routines,
+    /// Кільцевий режим: (номер секунди QPC, статистика за цю секунду), за зростанням.
+    buckets: VecDeque<(i64, Routines)>,
+    long: VecDeque<RawLong>,
     long_dropped: u64,
     events: u64,
 }
@@ -115,10 +129,20 @@ impl Collector {
             freq,
             long_ticks: ticks(LONG_DPC_US).max(1),
             max_ticks: ticks(MAX_SANE_US),
+            keep_ticks: None,
             routines: HashMap::with_capacity(512),
-            long: Vec::with_capacity(4096),
+            buckets: VecDeque::new(),
+            long: VecDeque::with_capacity(4096),
             long_dropped: 0,
             events: 0,
+        }
+    }
+
+    /// Кільцевий колектор: тримає лише останні `keep_secs` секунд.
+    fn ring(freq: i64, keep_secs: u32) -> Self {
+        Self {
+            keep_ticks: Some(i64::from(keep_secs.max(1)) * freq.max(1)),
+            ..Self::new(freq)
         }
     }
 
@@ -128,7 +152,36 @@ impl Collector {
             return;
         }
         self.events += 1;
-        let s = self.routines.entry(e.routine).or_default();
+        let stats = match self.keep_ticks {
+            None => &mut self.routines,
+            Some(keep) => {
+                let freq = self.freq.max(1);
+                let second = e.start_qpc.div_euclid(freq);
+                if self.buckets.back().is_none_or(|(s, _)| *s < second) {
+                    let horizon = e.end_qpc - keep;
+                    let oldest = horizon.div_euclid(freq);
+                    while self.buckets.front().is_some_and(|(s, _)| *s < oldest) {
+                        self.buckets.pop_front();
+                    }
+                    while self.long.front().is_some_and(|l| l.0 < horizon) {
+                        self.long.pop_front();
+                    }
+                    self.buckets.push_back((second, HashMap::with_capacity(64)));
+                }
+                // Події з різних ядер приходять не строго за часом старту — кладемо в кошик
+                // своєї секунди, якщо він ще є (інакше в найстаріший).
+                let i = self
+                    .buckets
+                    .iter()
+                    .rposition(|(s, _)| *s <= second)
+                    .unwrap_or(0);
+                match self.buckets.get_mut(i) {
+                    Some((_, r)) => r,
+                    None => return,
+                }
+            }
+        };
+        let s = stats.entry(e.routine).or_default();
         match e.kind {
             DpcKind::Dpc => s.dpc += 1,
             DpcKind::Isr => s.isr += 1,
@@ -137,15 +190,56 @@ impl Collector {
         s.max_ticks = s.max_ticks.max(dur);
         if dur >= self.long_ticks {
             if self.long.len() < MAX_LONG {
-                self.long.push((e.start_qpc, dur, e.routine, e.kind));
+                self.long.push_back((e.start_qpc, dur, e.routine, e.kind));
             } else {
                 self.long_dropped += 1;
             }
         }
     }
 
+    /// Зріз за `[from_qpc, to_qpc]`. У звичайному режимі — уся сесія (вікно ігнорується).
+    fn window(&self, from_qpc: i64, to_qpc: i64, modules: &[(u64, String)], lost: u64) -> DpcTrace {
+        if self.keep_ticks.is_none() {
+            return self.summarize(&self.routines, self.long.iter(), modules, lost, self.events);
+        }
+        let freq = self.freq.max(1);
+        let (first, last) = (from_qpc.div_euclid(freq), to_qpc.div_euclid(freq));
+        let mut routines: Routines = HashMap::new();
+        let mut events = 0;
+        for (_, bucket) in self
+            .buckets
+            .iter()
+            .filter(|(s, _)| (first..=last).contains(s))
+        {
+            for (routine, st) in bucket {
+                events += st.dpc + st.isr;
+                let a = routines.entry(*routine).or_default();
+                a.dpc += st.dpc;
+                a.isr += st.isr;
+                a.total_ticks += st.total_ticks;
+                a.max_ticks = a.max_ticks.max(st.max_ticks);
+            }
+        }
+        let long = self
+            .long
+            .iter()
+            .filter(|l| l.0 >= from_qpc && l.0 <= to_qpc);
+        self.summarize(&routines, long, modules, lost, events)
+    }
+
     /// Підсумок із приписуванням процедур модулям `(база, ім'я)`.
     fn finish(self, modules: &[(u64, String)], lost: u64) -> DpcTrace {
+        self.window(i64::MIN, i64::MAX, modules, lost)
+    }
+
+    fn summarize<'a>(
+        &self,
+        routines: &Routines,
+        long: impl Iterator<Item = &'a RawLong>,
+        modules: &[(u64, String)],
+        lost: u64,
+        events: u64,
+    ) -> DpcTrace {
         let mut mods: Vec<&(u64, String)> = modules.iter().filter(|(b, _)| *b != 0).collect();
         mods.sort_by_key(|(b, _)| *b);
         let owner = |routine: u64| -> Option<&str> {
@@ -157,7 +251,7 @@ impl Collector {
 
         let mut by_name: HashMap<Option<&str>, DriverDpc> = HashMap::new();
         let mut routine_driver: HashMap<u64, Option<&str>> = HashMap::new();
-        for (routine, s) in &self.routines {
+        for (routine, s) in routines {
             let name = owner(*routine);
             routine_driver.insert(*routine, name);
             let d = by_name.entry(name).or_insert_with(|| DriverDpc {
@@ -180,9 +274,7 @@ impl Collector {
             .map(|(i, d)| (d.name.as_deref(), u16::try_from(i).unwrap_or(u16::MAX)))
             .collect();
 
-        let mut long: Vec<LongDpc> = self
-            .long
-            .iter()
+        let mut long: Vec<LongDpc> = long
             .map(|(start, dur, routine, kind)| LongDpc {
                 start_qpc: *start,
                 dur_us: us(*dur) as f32,
@@ -198,7 +290,7 @@ impl Collector {
         DpcTrace {
             drivers,
             long,
-            events: self.events,
+            events,
             lost,
             long_dropped: self.long_dropped,
         }
@@ -238,6 +330,37 @@ impl DpcTracer {
         {
             let _ = freq;
             Err(EtwError::Unsupported)
+        }
+    }
+
+    /// Запускає сесію в кільцевому режимі: зберігає лише останні `keep_secs` секунд, тож може
+    /// працювати годинами; зріз на льоту — [`DpcTracer::window`].
+    pub fn start_ring(freq: i64, keep_secs: u32) -> Result<Self, EtwError> {
+        #[cfg(windows)]
+        {
+            windows::Session::start(Collector::ring(freq, keep_secs)).map(|inner| Self { inner })
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (freq, keep_secs);
+            Err(EtwError::Unsupported)
+        }
+    }
+
+    /// Зріз за `[from_qpc, to_qpc]` без зупинки сесії (у звичайному режимі — усе з початку
+    /// сесії). `None`, якщо сесія вже не працює.
+    pub fn window(&self, from_qpc: i64, to_qpc: i64) -> Option<DpcTrace> {
+        #[cfg(windows)]
+        {
+            let lost = self.inner.lost_so_far();
+            let modules = windows::kernel_modules();
+            self.inner
+                .with_collector(|c| c.window(from_qpc, to_qpc, &modules, lost))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (from_qpc, to_qpc);
+            None
         }
     }
 
@@ -307,5 +430,54 @@ mod tests {
         );
         assert_eq!(t.long[1].kind, DpcKind::Isr);
         assert!((t.long[1].dur_us - 300.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn ring_keeps_only_recent_seconds_and_slices_windows() {
+        // 1000 тиків = 1 с; тримаємо 3 с.
+        let mut c = Collector::ring(1000, 3);
+        let modules = vec![(0x1000, "a.sys".to_string()), (0x2000, "b.sys".to_string())];
+        // Секунди 0..10: щосекунди коротка подія a.sys і довга (200 мс) b.sys.
+        for sec in 0..10 {
+            c.push(ev(sec * 1000 + 10, 0, 0x1001, DpcKind::Dpc)); // коротка (0 мс)
+            c.push(ev(sec * 1000 + 20, 200, 0x2001, DpcKind::Isr));
+        }
+        // Старі секунди відкинуто: кошиків не більше вікна (+ поточний).
+        assert!(c.buckets.len() <= 4, "{}", c.buckets.len());
+        assert!(c.long.iter().all(|l| l.0 >= 6000), "{:?}", c.long);
+
+        // Зріз за секунди 8–9.
+        let t = c.window(8000, 9999, &modules, 0);
+        assert_eq!(t.events, 4);
+        assert_eq!(t.long.len(), 2);
+        assert_eq!(t.long[0].start_qpc, 8020);
+        let b = t
+            .drivers
+            .iter()
+            .find(|d| d.name.as_deref() == Some("b.sys"))
+            .unwrap();
+        assert_eq!(b.isr_count, 2);
+        assert!((b.max_us - 200_000.0).abs() < 1e-6);
+
+        // Зріз поза збереженим — порожній.
+        let old = c.window(0, 3000, &modules, 0);
+        assert_eq!(old.events, 0);
+        assert!(old.long.is_empty());
+
+        // Подія із запізненням (інше ядро) потрапляє у свою секунду, якщо та ще є.
+        c.push(ev(8500, 0, 0x1001, DpcKind::Dpc));
+        let t = c.window(8000, 8999, &modules, 0);
+        assert_eq!(t.events, 3);
+    }
+
+    #[test]
+    fn normal_mode_ignores_window() {
+        let mut c = Collector::new(1000);
+        for sec in 0..10 {
+            c.push(ev(sec * 1000, 1, 0x1001, DpcKind::Dpc));
+        }
+        let modules = vec![(0x1000, "a.sys".to_string())];
+        assert_eq!(c.window(5000, 6000, &modules, 0).events, 10);
+        assert_eq!(c.finish(&modules, 0).events, 10);
     }
 }

@@ -256,6 +256,16 @@ pub struct DiagnosisResult {
     pub end_reason: optimax_frametime::EndReason,
 }
 
+/// Стан «Чому лагає?» на момент відкриття сторінки.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct DiagnosisState {
+    /// Запис іде просто зараз (результат прийде подією `diag-done`).
+    pub recording: bool,
+    /// Останній результат цього запуску програми.
+    pub last: Option<DiagnosisResult>,
+}
+
 /// Процес для вибору гри.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -325,6 +335,8 @@ pub struct AbView {
     pub start: optimax_frametime::StartMode,
     /// Результати виконаних прогонів.
     pub results: Vec<optimax_tweaks::ab::RunResult>,
+    /// Перевіряється профіль гри цілком (а не один твік).
+    pub profile: bool,
 }
 
 /// Підсумок A/B.

@@ -10,7 +10,7 @@ use optimax_gamemode::{
     end_session, scan, start_session, step, GameProfile, ProfileStore, SessionReport, WatchEvent,
     WatchState,
 };
-use optimax_tweaks::{Engine, TweakError};
+use optimax_tweaks::{Confirm, Desired, Engine, TweakError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -112,6 +112,61 @@ pub fn gamemode_stop(state: State<'_, AppState>) {
     }
 }
 
+/// Повний шлях до exe запущеного процесу.
+fn exe_path_of(pid: u32) -> Option<String> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut sys = System::new();
+    let pid = Pid::from_u32(pid);
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_exe(UpdateKind::Always),
+    );
+    sys.process(pid)?
+        .exe()
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Запам'ятовує шлях до гри в профілі й ставить вибрану відеокарту. Windows читає вибір
+/// відеокарти під час запуску гри, тож він постійний (не відкочується після сесії) і діє з
+/// наступного запуску; запис — у журналі змін («Резервні копії»).
+fn remember_path_and_gpu(
+    engine: &mut Engine<'_>,
+    profile: &GameProfile,
+    game: &ProcessInfo,
+    confirm: &dyn Confirm,
+) -> Option<Text> {
+    let path = exe_path_of(game.pid)?;
+    if profile.exe_path.as_deref() != Some(path.as_str()) {
+        let mut updated = profile.clone();
+        updated.exe_path = Some(path.clone());
+        if let Err(e) = store().and_then(|s| s.upsert(&updated).map_err(CmdError::from)) {
+            tracing::warn!(
+                "не вдалося запам'ятати шлях до {}: {}",
+                profile.exe,
+                e.message()
+            );
+        }
+    }
+    let preference = profile.gpu?;
+    let desired = Desired::GpuPreference {
+        exe_path: path,
+        preference,
+    };
+    let plan = engine.plan(&desired).ok()?;
+    if plan.is_noop() {
+        return None;
+    }
+    match engine.apply(&plan, confirm) {
+        Ok(_) => Some(Text::new("gm.applied.gpu")),
+        Err(e) => Some(
+            Text::new("gm.skip.error")
+                .arg("what", "GPU")
+                .arg("error", e),
+        ),
+    }
+}
+
 fn finish(app: &AppHandle, engine: &Mutex<Engine<'static>>, game: &str, report: &SessionReport) {
     let result: RollbackResult = end_session(&mut lock(engine), report).into();
     let _ = app.emit(
@@ -168,8 +223,14 @@ fn watch_loop(
                     &confirm,
                 );
                 match result {
-                    Ok(report) => {
+                    Ok(mut report) => {
                         waiting_confirm = None;
+                        // Окремо від сесії: вибір відеокарти не відкочується після гри.
+                        if let Some(t) =
+                            remember_path_and_gpu(&mut lock(engine), profile, &game, &confirm)
+                        {
+                            report.applied.push(t);
+                        }
                         let _ = app.emit(
                             "gamemode",
                             GameModeEvent::Started {

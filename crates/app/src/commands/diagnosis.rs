@@ -2,7 +2,7 @@
 //! Події: `diag-progress` (щосекунди), `diag-done` (результат), `diag-error`.
 
 use super::blocking;
-use crate::dto::{DiagnosisResult, ProcessEntry};
+use crate::dto::{DiagnosisResult, DiagnosisState, ProcessEntry};
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
 use optimax_audit::{run_audit, SystemProbe, WindowsProbe};
@@ -223,6 +223,16 @@ pub fn diag_start(
 }
 
 /// Зупиняє запис раніше (діагноз буде за вже записаними даними).
+/// Стан «Чому лагає?» для повернення на сторінку: чи йде запис і останній результат цього
+/// запуску програми (щоб він не зникав при переході на інший екран).
+#[tauri::command]
+pub fn diag_state(state: State<'_, AppState>) -> DiagnosisState {
+    DiagnosisState {
+        recording: lock(&state.recording).is_some(),
+        last: lock(&state.last_diagnosis).clone(),
+    }
+}
+
 #[tauri::command]
 pub fn diag_cancel(state: State<'_, AppState>) {
     if let Some(c) = lock(&state.recording).as_ref() {

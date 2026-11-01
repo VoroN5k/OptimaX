@@ -14,8 +14,11 @@ pub mod profile;
 pub mod session;
 pub mod watcher;
 
-pub use profile::{GamePriority, GameProfile, ProfileStore};
-pub use session::{end_session, restore_leftovers, start_session, SessionReport};
+pub use profile::{GamePriority, GameProfile, ProfileStore, ProfileTest};
+pub use session::{
+    end_session, preview_changes, restore_leftovers, session_plan, start_session, SessionPlan,
+    SessionReport,
+};
 pub use watcher::{scan, step, WatchEvent, WatchState};
 
 /// Помилки режиму гри.

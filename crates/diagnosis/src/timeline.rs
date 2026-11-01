@@ -22,6 +22,10 @@ pub struct FramePoint {
     pub sync_interval: Option<i32>,
     /// Чи дозволено розриви кадру.
     pub allows_tearing: Option<bool>,
+    /// Скільки попередній кадр був на екрані, мс (`MsBetweenDisplayChange`; `None` — кадр
+    /// не показано). Для генерації кадрів це і є те, що бачить око.
+    #[serde(default)]
+    pub display_ms: Option<f64>,
 }
 
 /// Стан відеокарти в момент знімка.
@@ -164,6 +168,7 @@ impl Timeline {
                 present_mode: PresentMode::parse(&f.present_mode),
                 sync_interval: f.sync_interval,
                 allows_tearing: f.allows_tearing,
+                display_ms: f.ms_between_display_change,
             })
             .collect();
         frames.sort_by(|a, b| a.t_ms.total_cmp(&b.t_ms));

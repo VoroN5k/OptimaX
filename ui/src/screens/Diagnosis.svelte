@@ -28,6 +28,20 @@
   let error = $state<CmdError | null>(null);
 
   onMount(() => {
+    // Повернення на сторінку: показати останній результат і хід запису, якщо він іде.
+    void api
+      .diagState()
+      .then((s) => {
+        if (s.recording) {
+          recording = true;
+          ui.measuring = true;
+        }
+        if (s.last && !result) {
+          result = s.last;
+          if (!exe) exe = s.last.diagnosis.game;
+        }
+      })
+      .catch(() => undefined);
     const subs = [
       on("diag-progress", (p) => (progress = p)),
       on("diag-done", (r) => {

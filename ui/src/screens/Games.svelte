@@ -47,8 +47,48 @@
       stop_services: [],
       purge_standby_when_low: false,
       upscale: null,
+      gpu: null,
+      exe_path: null,
+      last_test: null,
     };
   }
+
+  /** Вибір відеокарти в редакторі: «не змінювати» = `null`. */
+  type GpuChoice = "keep" | NonNullable<GameProfile["gpu"]>;
+  const gpuChoice = {
+    get: (): GpuChoice => editing?.gpu ?? "keep",
+    set: (v: GpuChoice) => {
+      if (editing) editing.gpu = v === "keep" ? null : v;
+    },
+  };
+
+  /** Перевірка профілю A/B-тестом: прогони відкриваються на екрані «Оптимізація». */
+  async function testProfile(exe: string) {
+    error = null;
+    try {
+      if (gm.watching) {
+        // Інакше режим гри сам увімкне профіль і в прогонах «без профілю».
+        await api.gamemodeStop();
+        gm.watching = false;
+        logLocal("info", tk("ui.games.test_watch_stopped"));
+      }
+      await api.abStartProfile(exe, 3, 60);
+      ui.screen = "optimization";
+    } catch (e) {
+      error = asCmdError(e).message;
+    }
+  }
+
+  const testLabel = (p: GameProfile) => {
+    const r = p.last_test;
+    if (!r) return tk("ui.games.test_none");
+    const pct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+    return tk(`ui.games.test_${r.effect}`, {
+      low: pct(r.low_1pct_pct),
+      avg: pct(r.avg_fps_pct),
+      date: `${String(r.date.day).padStart(2, "0")}.${String(r.date.month).padStart(2, "0")}.${r.date.year}`,
+    });
+  };
 
   /** Власні налаштування апскейлу для гри: старт — копія загальних. */
   function toggleOwnUpscale(on: boolean) {
@@ -180,7 +220,15 @@
             <dd>{p.purge_standby_when_low ? tk("ui.common.yes") : tk("ui.common.no")}</dd>
             <dt>{tk("ui.games.upscale")}</dt>
             <dd>{p.upscale ? tk(`upscale.filter.${p.upscale.filter}`) : tk("ui.games.upscale_global")}</dd>
+            <dt>{tk("ui.games.gpu")}</dt>
+            <dd>{tk(`ui.games.gpu_${p.gpu ?? "keep"}`)}</dd>
+            <dt>{tk("ui.games.test")}</dt>
+            <dd class:ok={p.last_test?.effect === "better"} class:bad={p.last_test?.effect === "worse"}>{testLabel(p)}</dd>
           </dl>
+          <div class="test-row">
+            <Button small variant="secondary" icon="play" onclick={() => testProfile(p.exe)}>{tk("ui.games.test_run")}</Button>
+            <span class="small dim">{tk("ui.games.test_hint")}</span>
+          </div>
         </Card>
       {/each}
     </div>
@@ -250,6 +298,21 @@
           {#if editing.upscale}
             <div class="upscale"><UpscaleOptions bind:settings={editing.upscale} /></div>
           {/if}
+        </div>
+        <div class="field">
+          <span class="small muted">{tk("ui.games.gpu")}</span>
+          <Segmented
+            label={tk("ui.games.gpu")}
+            bind:value={gpuChoice.get, gpuChoice.set}
+            options={[
+              { value: "keep", label: tk("ui.games.gpu_keep") },
+              { value: "default", label: tk("ui.games.gpu_default") },
+              { value: "power_saving", label: tk("ui.games.gpu_power_saving") },
+              { value: "high_performance", label: tk("ui.games.gpu_high_performance") },
+            ]}
+          />
+          <p class="small dim">{tk("ui.games.gpu_hint")}</p>
+          {#if editing.exe_path}<p class="small dim mono path">{editing.exe_path}</p>{/if}
         </div>
         <div class="form-actions">
           <Button variant="ghost" onclick={() => (editing = null)}>{tk("ui.common.cancel")}</Button>
@@ -341,12 +404,12 @@
   }
   .profiles {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 560px), 1fr));
     gap: calc(var(--space) * 4);
   }
   .props {
     display: grid;
-    grid-template-columns: max-content 1fr;
+    grid-template-columns: minmax(0, max-content) minmax(180px, 1fr);
     gap: calc(var(--space) * 1.5) calc(var(--space) * 4);
     margin: 0;
     font-size: 13px;
@@ -355,6 +418,20 @@
     color: var(--text-muted);
   }
   dd {
+    margin: 0;
+  }
+  dd.bad {
+    color: var(--danger);
+  }
+  .test-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: calc(var(--space) * 3);
+    margin-top: calc(var(--space) * 4);
+  }
+  .path {
+    overflow-wrap: anywhere;
     margin: 0;
   }
   .form {

@@ -7,7 +7,8 @@ use optimax_core::service::ServiceState;
 use optimax_core::Text;
 use optimax_tweaks::engine::RollbackSummary;
 use optimax_tweaks::{
-    Confirm, Desired, Engine, EntryState, RestorePointStatus, SettingTarget, TweakError, TweakId,
+    Confirm, Desired, Engine, EntryState, PlannedChange, RestorePointStatus, SettingTarget,
+    TweakError, TweakId,
 };
 
 /// Що зроблено на старті сесії.
@@ -34,22 +35,31 @@ fn rank(p: PriorityClass) -> u8 {
     }
 }
 
-/// Застосовує профіль до запущеної гри. Помилка окремої зміни не зупиняє решту
-/// (її видно в `skipped`); відмова користувача без точки відновлення — скасовує все.
-pub fn start_session(
-    engine: &mut Engine<'_>,
+/// Що профіль змінить для запущеної гри — ще без застосування. Спільне для режиму гри й
+/// A/B-тесту профілю, щоб тест перевіряв рівно те, що робить режим гри.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SessionPlan {
+    /// Бажані стани з підписами для показу.
+    pub wanted: Vec<(Desired, Text)>,
+    /// Що пропущено й чому (попередження профілю теж тут).
+    pub skipped: Vec<Text>,
+    /// Очистити standby-пам'ять, якщо вільної RAM мало.
+    pub purge_standby_when_low: bool,
+}
+
+/// Складає [`SessionPlan`] для профілю й запущеної гри.
+pub fn session_plan(
     processes: &dyn ProcessApi,
-    memory: &dyn MemoryApi,
     profile: &GameProfile,
     game: &ProcessInfo,
-    confirm: &dyn Confirm,
-) -> Result<SessionReport, TweakError> {
+) -> Result<SessionPlan, TweakError> {
     let (profile, warnings) = profile
         .sanitized()
         .map_err(|e| TweakError::Forbidden(e.to_string()))?;
-    let mut report = SessionReport {
+    let mut report = SessionPlan {
         skipped: warnings,
-        ..SessionReport::default()
+        purge_standby_when_low: profile.purge_standby_when_low,
+        ..SessionPlan::default()
     };
 
     let mut wanted: Vec<(Desired, Text)> = Vec::new();
@@ -121,8 +131,37 @@ pub fn start_session(
             Text::new("gm.applied.service").arg("name", name),
         ));
     }
+    report.wanted = wanted;
+    Ok(report)
+}
 
-    for (desired, label) in wanted {
+/// Зміни, які застосує план (для показу «що зміниться»). Те, що вже в потрібному стані
+/// або не планується, просто не потрапляє в список.
+pub fn preview_changes(engine: &Engine<'_>, plan: &SessionPlan) -> Vec<PlannedChange> {
+    plan.wanted
+        .iter()
+        .filter_map(|(d, _)| engine.plan(d).ok())
+        .flat_map(|p| p.changes)
+        .collect()
+}
+
+/// Застосовує профіль до запущеної гри. Помилка окремої зміни не зупиняє решту
+/// (її видно в `skipped`); відмова користувача без точки відновлення — скасовує все.
+pub fn start_session(
+    engine: &mut Engine<'_>,
+    processes: &dyn ProcessApi,
+    memory: &dyn MemoryApi,
+    profile: &GameProfile,
+    game: &ProcessInfo,
+    confirm: &dyn Confirm,
+) -> Result<SessionReport, TweakError> {
+    let plan = session_plan(processes, profile, game)?;
+    let mut report = SessionReport {
+        skipped: plan.skipped,
+        ..SessionReport::default()
+    };
+
+    for (desired, label) in plan.wanted {
         let plan = match engine.plan(&desired) {
             Ok(p) => p,
             Err(e) => {
@@ -163,7 +202,7 @@ pub fn start_session(
         }
     }
 
-    if profile.purge_standby_when_low {
+    if plan.purge_standby_when_low {
         match memory.status() {
             Ok(status) if status.is_low() => {
                 let mib = status.available_bytes / (1024 * 1024);
@@ -282,7 +321,34 @@ mod tests {
             stop_services: vec!["WSearch".into(), "SysMain".into()],
             purge_standby_when_low: true,
             upscale: None,
+            gpu: None,
+            exe_path: None,
+            last_test: None,
         }
+    }
+
+    /// A/B профілю показує рівно ті зміни, які потім застосує режим гри.
+    #[test]
+    fn session_plan_preview_matches_what_is_applied() {
+        let w = world();
+        let restore = FakeRestore(Ok(3));
+        let mem = FakeMemory::new(16 * GIB, 8 * GIB);
+        let game = w.procs.spawn(10, "game.exe", 1);
+        w.procs.spawn(20, "chrome.exe", 2);
+        let mut engine = Engine::new(&w.reg, &w.power, &restore, &w.store)
+            .unwrap()
+            .with_processes(&w.procs)
+            .with_services(&w.svc);
+        let plan = session_plan(&w.procs, &full_profile(), &game).unwrap();
+        let preview = preview_changes(&engine, &plan);
+        // Гра (вище середнього), chrome (нижче середнього), WSearch (зупинити); SysMain уже
+        // зупинена — її в переліку немає.
+        assert_eq!(preview.len(), 3);
+        // Перегляд нічого не змінює.
+        assert_eq!(w.svc.state("WSearch").unwrap(), ServiceState::Running);
+        let report =
+            start_session(&mut engine, &w.procs, &mem, &full_profile(), &game, &Yes).unwrap();
+        assert_eq!(report.entry_ids.len(), preview.len());
     }
 
     #[test]
@@ -490,6 +556,9 @@ mod localization {
                 stop_services: vec!["WSearch".into(), "SysMain".into(), "wuauserv".into()],
                 purge_standby_when_low: true,
                 upscale: None,
+                gpu: None,
+                exe_path: None,
+                last_test: None,
             };
             let r = start_session(&mut engine, &procs, &mem, &profile, &game, &Yes).unwrap();
             texts.extend(r.applied);

@@ -32,6 +32,8 @@
   let runs = $state(3);
   let seconds = $state(60);
   let ab = $state<AbView | null>(null);
+  /** Підсумок стосується профілю гри (результат збережено в профіль, а не «залишено / відкочено»). */
+  let testedProfile = $state(false);
   let running = $state(false);
   let final = $state<AbFinal | null>(null);
   let error = $state<string | null>(null);
@@ -113,9 +115,10 @@
 
   async function finish(keep: boolean) {
     try {
+      testedProfile = ab?.profile ?? false;
       final = await api.abFinish(keep);
       flashBg(final.report.effect === "better" ? "ok" : "warn");
-      logLocal("info", tk(final.kept ? "ui.opt.kept_log" : "ui.opt.reverted_log"));
+      logLocal("info", tk(testedProfile ? "ui.opt.profile_saved_log" : final.kept ? "ui.opt.kept_log" : "ui.opt.reverted_log"));
       ab = null;
       step = 4;
     } catch (e) {
@@ -225,7 +228,7 @@
       <Card title={tk("ui.opt.report")}>
         <div class="verdict {final.report.effect}">
           {tk(final.report.effect === "better" ? "ui.opt.effect_better" : final.report.effect === "worse" ? "ui.opt.effect_worse" : "ui.opt.effect_none")}
-          — {tk(final.kept ? "ui.opt.kept" : "ui.opt.reverted")}
+          — {tk(testedProfile ? "ui.opt.profile_saved" : final.kept ? "ui.opt.kept" : "ui.opt.reverted")}
         </div>
         <pre class="md mono">{final.markdown}</pre>
         <Button small icon="copy" onclick={() => navigator.clipboard.writeText(final?.markdown ?? "")}>{tk("ui.opt.copy")}</Button>
@@ -279,7 +282,9 @@
       {:else if step === 2}
         <Button variant="primary" icon="play" disabled={!game.trim()} onclick={startAb}>{tk("ui.opt.start_ab")}</Button>
       {:else if step === 3 && ab}
-        {#if done}
+        {#if done && ab.profile}
+          <Button variant="primary" icon="check" onclick={() => finish(false)}>{tk("ui.opt.finish_profile")}</Button>
+        {:else if done}
           <Button variant="secondary" onclick={() => finish(false)}>{tk("ui.opt.finish_revert")}</Button>
           <Button variant="primary" icon="check" onclick={() => finish(true)}>{tk("ui.opt.finish")}</Button>
         {:else}

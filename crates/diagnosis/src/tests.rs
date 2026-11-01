@@ -1,6 +1,7 @@
 //! Сценарні тести діагностики на синтетичних записах.
 
 use super::*;
+use crate::framegen::FrameGenSeries;
 use crate::timeline::{FramePoint, GpuPoint, SamplePoint, ShaderWrite, Timeline};
 use optimax_core::{Catalog, Confidence};
 use optimax_frametime::{FrameRecord, FrameTimestamp, PresentMode, Target};
@@ -55,6 +56,7 @@ fn timeline(frametimes: &[f64], sample: impl Fn(f64, usize) -> SamplePoint) -> T
                 present_mode: PresentMode::HardwareIndependentFlip,
                 sync_interval: Some(0),
                 allows_tearing: Some(true),
+                display_ms: None,
             }
         })
         .collect();
@@ -432,6 +434,88 @@ fn disk_spike_names_the_busiest_process() {
     assert_eq!(c.args["pmbps"], "80");
 }
 
+/// Як у записі RE9: диск 43 МБ/с, а найактивніший процес у замірі — 2 МБ/с. Називати його
+/// не можна: справжній сплеск у замір процесів не потрапив.
+#[test]
+fn disk_spike_does_not_blame_a_minor_process() {
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    let tl = timeline(&ft, |t, _| {
+        let mut s = base_sample();
+        if near_spike(&spikes, t) {
+            s.disk_bytes_per_sec = 43 << 20;
+            s.io_top = Some(crate::timeline::IoProcess {
+                name: "msedgewebview2.exe".into(),
+                bytes_per_sec: 2 << 20,
+            });
+        }
+        s
+    });
+    let chart = diagnose_timeline(&tl, &Context::default())
+        .chart
+        .expect("графік");
+    let c = &chart.spikes[0].causes[0];
+    assert_eq!(c.key, "diag.spike.disk");
+    assert_eq!(c.args["mbps"], "43");
+}
+
+/// DLSS FG ×2: Present() парами (0.5 мс + 17.5 мс), на екрані — рівно по 9 мс; кілька
+/// справжніх ривків (на екрані 40 мс).
+fn framegen_timeline(with_display: bool) -> Timeline {
+    let n = 4000;
+    let ft: Vec<f64> = (0..n)
+        .map(|i| if i % 2 == 0 { 0.5 } else { 17.5 })
+        .collect();
+    let mut tl = timeline(&ft, |_, _| base_sample());
+    if with_display {
+        for (i, f) in tl.frames.iter_mut().enumerate() {
+            f.display_ms = Some(if i % 400 == 201 { 40.0 } else { 9.0 });
+        }
+    }
+    tl
+}
+
+#[test]
+fn frame_generation_is_measured_by_what_is_shown() {
+    let d = diagnose_timeline(&framegen_timeline(true), &Context::default());
+    let fg = d.frame_gen.as_ref().expect("генерацію кадрів виявлено");
+    assert_eq!(fg.series, FrameGenSeries::Display);
+    assert!((fg.factor - 2.0).abs() < 0.05, "{fg:?}");
+    assert!((fg.real_fps - 55.6).abs() < 1.0, "{fg:?}");
+    // Вердикт про генерацію — одразу після підсумку.
+    assert_eq!(d.verdicts[1].finding.id, "framegen.display");
+    // Ривки — лише справжні (10), а не кожен другий кадр.
+    let chart = d.chart.as_ref().unwrap();
+    assert_eq!(chart.spikes_total, 10);
+    let stats = d.stats.as_ref().unwrap();
+    assert!(stats.avg_fps > 100.0, "на екрані ~111 FPS: {stats:?}");
+    assert!(find(&d, "stutter.unknown").is_none() && find(&d, "stutter.found").is_none());
+}
+
+#[test]
+fn frame_generation_without_display_times_uses_real_frames() {
+    let d = diagnose_timeline(&framegen_timeline(false), &Context::default());
+    let fg = d.frame_gen.as_ref().unwrap();
+    assert_eq!(fg.series, FrameGenSeries::Real);
+    assert_eq!(d.verdicts[1].finding.id, "framegen.real");
+    let stats = d.stats.as_ref().unwrap();
+    assert!((stats.avg_fps - 55.6).abs() < 1.0, "{stats:?}");
+    assert_eq!(d.chart.as_ref().unwrap().spikes_total, 0);
+}
+
+#[test]
+fn ordinary_games_are_not_mistaken_for_frame_generation() {
+    for tl in [
+        timeline(&jittery(8.0, 3000), |_, _| base_sample()),
+        timeline(&spiky(), |_, _| base_sample()),
+        timeline(&hitches_at_start(), |_, _| base_sample()),
+    ] {
+        assert!(diagnose_timeline(&tl, &Context::default())
+            .frame_gen
+            .is_none());
+    }
+}
+
 #[test]
 fn downsample_keeps_max_and_average() {
     let frames = [(10.0, 10.0), (20.0, 30.0), (110.0, 10.0), (120.0, 20.0)];
@@ -754,6 +838,8 @@ fn every_verdict_text_is_localized() {
             }),
             Context::default(),
         ),
+        (framegen_timeline(true), Context::default()),
+        (framegen_timeline(false), Context::default()),
     ];
     let scenarios: Vec<(Timeline, Context)> = scenarios
         .into_iter()
@@ -816,6 +902,8 @@ fn every_verdict_text_is_localized() {
         "stutter.isolated",
         "background",
         "background.defender",
+        "framegen.display",
+        "framegen.real",
         "present.composed",
     ] {
         assert!(seen.contains(id), "сценарії не покривають {id}: {seen:?}");

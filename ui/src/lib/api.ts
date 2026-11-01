@@ -35,6 +35,7 @@ import type { RecordProgress } from "./bindings/RecordProgress";
 import type { RollbackResult } from "./bindings/RollbackResult";
 import type { Settings } from "./bindings/Settings";
 import type { CrashReport } from "./bindings/CrashReport";
+import type { DiagnosisState } from "./bindings/DiagnosisState";
 import type { Snapshot } from "./bindings/Snapshot";
 import type { StartupEntry } from "./bindings/StartupEntry";
 import type { StartupReport } from "./bindings/StartupReport";
@@ -76,6 +77,7 @@ export const api = {
   listProcesses: () => invoke<ProcessEntry[]>("list_processes"),
   diagStart: (exe: string, seconds: number) => invoke<void>("diag_start", { exe, seconds }),
   diagCancel: () => invoke<void>("diag_cancel"),
+  diagState: () => invoke<DiagnosisState>("diag_state"),
 
   powerSchemes: () => invoke<PowerSchemes>("power_schemes"),
   tweakPlan: (desired: UiDesired) => invoke<PlanHandle>("tweak_plan", { desired }),
@@ -87,6 +89,8 @@ export const api = {
 
   abStart: (game: string, desired: UiDesired, runs: number, seconds: number) =>
     invoke<AbView>("ab_start", { game, desired, runs, seconds }),
+  abStartProfile: (exe: string, runs: number, seconds: number) =>
+    invoke<AbView>("ab_start_profile", { exe, runs, seconds }),
   abState: () => invoke<AbView | null>("ab_state"),
   abRunNext: (allowWithoutRestorePoint: boolean) => invoke<AbView>("ab_run_next", { allowWithoutRestorePoint }),
   abFinish: (keep: boolean) => invoke<AbFinal>("ab_finish", { keep }),

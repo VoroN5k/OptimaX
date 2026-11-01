@@ -70,6 +70,7 @@ fn export_typescript_bindings() {
         ProcessEntry,
         optimax_frametime::RecordProgress,
         DiagnosisResult,
+        DiagnosisState,
         PowerSchemes,
         UiDesired,
         StartupEntry,

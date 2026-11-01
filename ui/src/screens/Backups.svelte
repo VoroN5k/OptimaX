@@ -69,10 +69,19 @@
     }
   }
 
+  /** Байти — як у редакторі реєстру (hex), не довше за 12, щоб рядок читався. */
+  function bytes(b: number[]): string {
+    const shown = b.slice(0, 12).map((x) => x.toString(16).padStart(2, "0").toUpperCase());
+    return shown.join(" ") + (b.length > 12 ? " …" : "");
+  }
+
   function value(v: JournalEntry["old"]): string {
     switch (v.kind) {
       case "registry":
-        return v.value ? `${v.value.type} ${JSON.stringify(v.value.value)}` : tk("tweak.value.absent");
+        if (!v.value) return tk("tweak.value.absent");
+        return Array.isArray(v.value.value)
+          ? `${v.value.type} ${bytes(v.value.value as number[])}`
+          : `${v.value.type} ${JSON.stringify(v.value.value)}`;
       case "power_scheme":
         return v.value;
       case "priority":
@@ -93,34 +102,32 @@
     <Card><StateView kind="empty" title={tk("ui.backups.empty_title")} text={tk("ui.backups.empty_text")} /></Card>
   {:else}
     <Card padded={false}>
-      <table>
-        <thead>
-          <tr>
-            <th>#</th><th>{tk("ui.backups.when")}</th><th>{tk("ui.backups.what")}</th><th>{tk("ui.backups.change")}</th><th>{tk("ui.backups.state")}</th><th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each entries as e (e.id)}
-            <tr>
-              <td class="dim">{e.id}</td>
-              <td class="small">{dateTime(e.created_unix)}</td>
-              <td>
-                <div>{t({ key: `tweak.${e.tweak_id}.title`, args: {} })}</div>
-                <div class="mono small muted">{location(e)}</div>
-              </td>
-              <td class="mono small">{value(e.old)} → {value(e.new)}</td>
-              <td><span class="state {e.state.state}">{tk(`ui.backups.state.${e.state.state}`)}</span>
-                {#if e.state.state === "failed"}<div class="small err">{e.state.error}</div>{/if}
-              </td>
-              <td>
-                {#if e.state.state === "applied"}
-                  <Button small icon="undo" onclick={() => (confirm = { id: e.id })}>{tk("ui.backups.rollback")}</Button>
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+      <ul class="entries">
+        {#each entries as e (e.id)}
+          <li class="entry">
+            <div class="main">
+              <div class="head">
+                <span class="id dim">#{e.id}</span>
+                <strong>{t({ key: `tweak.${e.tweak_id}.title`, args: {} })}</strong>
+                <span class="state {e.state.state}">{tk(`ui.backups.state.${e.state.state}`)}</span>
+              </div>
+              <div class="mono small muted wrap">{location(e)}</div>
+              <div class="mono small wrap">
+                <span class="old">{value(e.old)}</span>
+                <span class="arrow" aria-hidden="true">→</span>
+                <span>{value(e.new)}</span>
+              </div>
+              {#if e.state.state === "failed"}<div class="small err">{e.state.error}</div>{/if}
+            </div>
+            <div class="side">
+              <span class="small dim">{dateTime(e.created_unix)}</span>
+              {#if e.state.state === "applied"}
+                <Button small icon="undo" onclick={() => (confirm = { id: e.id })}>{tk("ui.backups.rollback")}</Button>
+              {/if}
+            </div>
+          </li>
+        {/each}
+      </ul>
     </Card>
   {/if}
 
@@ -146,21 +153,52 @@
 {/if}
 
 <style>
-  table {
-    width: 100%;
-    border-collapse: collapse;
+  .entries {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .entry {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: calc(var(--space) * 4);
+    padding: calc(var(--space) * 4) calc(var(--space) * 5);
     font-size: 13px;
   }
-  th {
-    text-align: left;
-    color: var(--text-muted);
-    font-weight: 500;
-    padding: calc(var(--space) * 4) calc(var(--space) * 4) calc(var(--space) * 2);
-  }
-  td {
-    padding: calc(var(--space) * 3) calc(var(--space) * 4);
+  .entry + .entry {
     border-top: 1px solid var(--border);
-    vertical-align: top;
+  }
+  .main {
+    display: grid;
+    gap: calc(var(--space) * 1.5);
+    min-width: 0;
+  }
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(var(--space) * 2);
+  }
+  .head strong {
+    font-weight: 600;
+  }
+  /* Довгі шляхи реєстру й значення переносяться, а не розтягують сторінку вшир. */
+  .wrap {
+    overflow-wrap: anywhere;
+  }
+  .old {
+    color: var(--text-muted);
+  }
+  .arrow {
+    margin: 0 calc(var(--space) * 1.5);
+    color: var(--text-dim);
+  }
+  .side {
+    display: grid;
+    justify-items: end;
+    align-content: start;
+    gap: calc(var(--space) * 2);
+    white-space: nowrap;
   }
   .state {
     display: inline-block;

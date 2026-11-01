@@ -36,6 +36,9 @@ pub const HARD_FAULT_MIN: f64 = 500.0;
 /// Пам'ять майже заповнена нижче цієї частки вільної RAM. Без цього сплеск page faults —
 /// це звичайне читання файлів гри (причина «диск»), а не нестача пам'яті.
 pub const LOW_RAM_FRACTION: f64 = 0.15;
+/// Процес називаємо винуватцем диска біля ривка, лише якщо на нього припадає щонайменше
+/// така частка загальної активності диска.
+pub const IO_NAME_MIN_SHARE: f64 = 0.25;
 /// Вікно до ривка для записів у кеш шейдерів.
 pub const SHADER_BEFORE_MS: f64 = 200.0;
 /// Вікно після ривка: драйвер пише файл кешу під час компіляції або невдовзі після неї.
@@ -662,12 +665,17 @@ impl CauseContext {
             CauseKind::Shader => text.arg("files", shader_writes_near(a.timeline, t).len()),
             CauseKind::Disk => {
                 let mb = |b: f64| format!("{:.0}", b / (1024.0 * 1024.0));
-                let total = mb(max_of(&|p| Some(p.disk_bytes_per_sec as f64)));
-                // Хто найбільше читав/писав поруч — щоб «диск» не був знеособленим.
+                let total_bytes = max_of(&|p| Some(p.disk_bytes_per_sec as f64));
+                let total = mb(total_bytes);
+                // Хто найбільше читав/писав поруч — щоб «диск» не був знеособленим. Процеси
+                // міряються рідше за диск, тож короткий сплеск може не потрапити в їхній замір:
+                // називаємо процес, лише якщо на нього припадає помітна частка, інакше ім'я
+                // було б хибним.
                 let who = near
                     .iter()
                     .filter_map(|p| p.io_top.as_ref())
-                    .max_by_key(|io| io.bytes_per_sec);
+                    .max_by_key(|io| io.bytes_per_sec)
+                    .filter(|io| io.bytes_per_sec as f64 >= total_bytes * IO_NAME_MIN_SHARE);
                 match who {
                     Some(io) => Text::new("diag.spike.disk_by")
                         .arg("mbps", total)

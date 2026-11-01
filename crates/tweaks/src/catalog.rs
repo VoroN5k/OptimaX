@@ -40,6 +40,9 @@ pub enum TweakId {
     GpuPreference,
     /// Програма в автозапуску (прапорець StartupApproved, як у Диспетчері задач).
     StartupApp,
+    /// Профіль гри OptimaX цілком — лише як предмет A/B-тесту. Окремих записів у журналі не
+    /// має (профіль застосовується як набір звичайних твіків), тож у [`TweakId::ALL`] не входить.
+    GameProfile,
 }
 
 impl TweakId {
@@ -66,6 +69,7 @@ impl TweakId {
             Self::PowerMode => "power_mode",
             Self::GpuPreference => "gpu_preference",
             Self::StartupApp => "startup_app",
+            Self::GameProfile => "game_profile",
         }
     }
 

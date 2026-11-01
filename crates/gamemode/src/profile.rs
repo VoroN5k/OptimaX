@@ -3,7 +3,9 @@
 use crate::GameModeError;
 use optimax_core::process::{is_protected_process, PriorityClass};
 use optimax_core::service::is_stoppable_service;
-use optimax_core::Text;
+use optimax_core::{CivilDate, Text};
+use optimax_tweaks::ab::Outcome;
+use optimax_tweaks::catalog::GpuPref;
 use optimax_upscale::UpscaleSettings;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -57,6 +59,34 @@ pub struct GameProfile {
     /// Систему не змінює, тож у перегляді змін режиму гри не з'являється.
     #[serde(default)]
     pub upscale: Option<UpscaleSettings>,
+    /// Відеокарта для гри на ПК із двома відеокартами (ноутбук). Windows читає це налаштування
+    /// під час запуску гри, тож воно постійне (журнал і відкат — у «Резервних копіях»), а не
+    /// лише на час сесії. `None` — не змінювати.
+    #[serde(default)]
+    pub gpu: Option<GpuPref>,
+    /// Повний шлях до exe — OptimaX запам'ятовує його, коли бачить запущену гру (потрібен для
+    /// вибору відеокарти: Windows зберігає його за шляхом, а не за іменем).
+    #[serde(default)]
+    pub exe_path: Option<String>,
+    /// Результат останньої перевірки профілю A/B-тестом.
+    #[serde(default)]
+    pub last_test: Option<ProfileTest>,
+}
+
+/// Чим закінчилась перевірка профілю A/B-тестом.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProfileTest {
+    /// Дата перевірки.
+    pub date: CivilDate,
+    /// Прогонів на варіант.
+    pub runs_per_arm: u32,
+    /// Зміна середнього FPS із профілем, %.
+    pub avg_fps_pct: f64,
+    /// Зміна 1% low із профілем, %.
+    pub low_1pct_pct: f64,
+    /// Висновок (з урахуванням похибки вимірювання).
+    pub effect: Outcome,
 }
 
 fn valid_exe_name(name: &str) -> bool {
@@ -79,6 +109,9 @@ impl GameProfile {
             stop_services: Vec::new(),
             purge_standby_when_low: false,
             upscale: None,
+            gpu: None,
+            exe_path: None,
+            last_test: None,
         }
     }
 
@@ -138,6 +171,15 @@ impl GameProfile {
                     },
                     ..u
                 }),
+                gpu: self.gpu,
+                // Шлях має вести саме до цього exe: інакше вибір відеокарти потрапив би не туди.
+                exe_path: self.exe_path.as_ref().and_then(|p| {
+                    let p = p.trim();
+                    let name = p.rsplit(['\\', '/']).next().unwrap_or("");
+                    (p.len() > name.len() && name.eq_ignore_ascii_case(self.exe.trim()))
+                        .then(|| p.to_string())
+                }),
+                last_test: self.last_test.clone(),
             },
             warnings,
         ))
@@ -228,6 +270,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn exe_path_must_point_to_the_same_exe() {
+        let mut p = GameProfile::new("TslGame.exe");
+        p.gpu = Some(GpuPref::HighPerformance);
+        for (path, keep) in [
+            (r"F:\Steam\PUBG\TslGame.exe", true),
+            (r"F:\Steam\PUBG\tslgame.EXE", true),
+            (r"C:\Windows\System32\cmd.exe", false),
+            ("TslGame.exe", false),
+            (r"F:\Steam\PUBG\TslGame.exe.bak", false),
+        ] {
+            p.exe_path = Some(path.into());
+            let (s, _) = p.sanitized().unwrap();
+            assert_eq!(s.exe_path.is_some(), keep, "{path}");
+            assert_eq!(s.gpu, Some(GpuPref::HighPerformance));
+        }
+        // Старі профілі без нових полів читаються.
+        let old: GameProfile = serde_json::from_str(r#"{"exe":"Old.exe"}"#).unwrap();
+        assert_eq!((old.gpu, old.exe_path, old.last_test), (None, None, None));
+    }
+
+    #[test]
     fn sanitize_removes_unsafe_entries() {
         let p = GameProfile {
             exe: "Game.exe".into(),
@@ -242,6 +305,9 @@ mod tests {
             stop_services: vec!["WSearch".into(), "wuauserv".into(), "WinDefend".into()],
             purge_standby_when_low: true,
             upscale: None,
+            gpu: None,
+            exe_path: None,
+            last_test: None,
         };
         let (clean, warnings) = p.sanitized().unwrap();
         assert_eq!(clean.lower_background, vec!["chrome.exe"]);

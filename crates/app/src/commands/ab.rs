@@ -1,26 +1,49 @@
 //! A/B-тест зміни з інтерфейсу: старт → прогони по одному (користувач готує сцену) → підсумок.
+//!
+//! Предмет тесту — або один твік, або профіль гри цілком (усе, що профіль робить у режимі
+//! гри). Профіль перевіряється на запущеній грі; режим гри на час тесту має бути зупинений,
+//! інакше він сам увімкне профіль і в прогонах «без профілю».
 
 use super::blocking;
 use crate::dto::{AbFinal, AbView, UiDesired};
 use crate::error::{CmdError, CmdResult};
-use crate::state::{lock, AppState, FlagConfirm};
-use optimax_core::Catalog;
+use crate::state::{lock, AppState, FlagConfirm, MEMORY, PROCESSES};
+use optimax_core::process::{ProcessApi, ProcessInfo};
+use optimax_core::{Catalog, CivilDate};
 use optimax_diagnosis::{diagnose, Bottleneck, Context};
 use optimax_frametime::{
     record_with, CancelToken, RecordNotices, RecordOptions, StartMode, Target,
+};
+use optimax_gamemode::{
+    end_session, preview_changes, session_plan, start_session, GameProfile, ProfileStore,
+    ProfileTest, SessionReport,
 };
 use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
 use optimax_tweaks::ab::{
     evaluate, render_markdown, schedule, Arm, Decision, RunConditions, RunResult,
 };
-use optimax_tweaks::{Desired, Plan, TweakError};
+use optimax_tweaks::{Desired, Plan, TweakError, TweakId};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
+
+/// Що перевіряє A/B.
+enum AbSubject {
+    /// Один твік; `active_entry` — запис журналу, поки зміна застосована.
+    Tweak {
+        desired: Desired,
+        active_entry: Option<u64>,
+    },
+    /// Профіль гри; `session` — поки профіль застосований.
+    Profile {
+        profile: Box<GameProfile>,
+        session: Option<SessionReport>,
+    },
+}
 
 /// Сесія A/B.
 pub struct AbSession {
     game: String,
-    desired: Desired,
+    subject: AbSubject,
     plan: Plan,
     order: Vec<Arm>,
     next: usize,
@@ -29,8 +52,6 @@ pub struct AbSession {
     start: StartMode,
     sound: bool,
     results: Vec<RunResult>,
-    /// Запис журналу, якщо зміна (варіант B) зараз застосована.
-    active_entry: Option<u64>,
     /// Скасування поточного прогону.
     cancel: Option<CancelToken>,
 }
@@ -45,8 +66,27 @@ impl AbSession {
             seconds: self.seconds,
             start: self.start,
             results: self.results.clone(),
+            profile: matches!(self.subject, AbSubject::Profile { .. }),
         }
     }
+}
+
+fn profiles() -> CmdResult<ProfileStore> {
+    ProfileStore::default_location().map_err(|e| CmdError::Failed(e.to_string()))
+}
+
+/// Запущений процес гри (перший за іменем).
+fn running_game(exe: &str) -> CmdResult<ProcessInfo> {
+    PROCESSES
+        .find_by_name(exe)
+        .map_err(|e| CmdError::Failed(e.to_string()))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            CmdError::NotFound(format!(
+                "{exe} не запущено — запусти гру: профіль перевіряється на запущеній грі"
+            ))
+        })
 }
 
 /// Починає A/B: перевіряє, що зміна не порожня, і складає розклад ABAB…
@@ -80,13 +120,76 @@ pub fn ab_start(
         start,
         sound,
         game,
-        desired,
+        subject: AbSubject::Tweak {
+            desired,
+            active_entry: None,
+        },
         plan,
         order: schedule(usize::try_from(runs).unwrap_or(3)),
         next: 0,
         seconds: seconds.clamp(20, 300),
         results: Vec::new(),
-        active_entry: None,
+        cancel: None,
+    };
+    let view = session.view();
+    *slot = Some(session);
+    Ok(view)
+}
+
+/// Починає A/B профілю гри: без профілю (A) і з профілем (B), гра має бути запущена.
+#[tauri::command]
+pub fn ab_start_profile(
+    state: State<'_, AppState>,
+    exe: String,
+    runs: u32,
+    seconds: u32,
+) -> CmdResult<AbView> {
+    Target::ProcessName(exe.clone()).validate()?;
+    if lock(&state.gamemode).is_some() {
+        return Err(CmdError::Failed(
+            "зупини режим гри на час перевірки: він сам вмикає профіль і зіпсує прогони без профілю"
+                .into(),
+        ));
+    }
+    let mut slot = lock(&state.ab);
+    if slot.is_some() {
+        return Err(CmdError::Failed(
+            "A/B-тест уже йде — заверши або скасуй його".into(),
+        ));
+    }
+    let profile = profiles()?
+        .load()?
+        .into_iter()
+        .find(|p| p.exe.eq_ignore_ascii_case(&exe))
+        .ok_or_else(|| CmdError::NotFound(format!("немає профілю для {exe}")))?;
+    let game = running_game(&profile.exe)?;
+    let session_plan = session_plan(&PROCESSES, &profile, &game)?;
+    let changes = preview_changes(&lock(&state.engine), &session_plan);
+    if changes.is_empty() {
+        return Err(CmdError::Failed(
+            "профіль зараз нічого не змінює для цієї гри — порівнювати нічого".into(),
+        ));
+    }
+    let (start, sound) = {
+        let st = lock(&state.settings);
+        (st.record_start, st.record_sound)
+    };
+    let session = AbSession {
+        start,
+        sound,
+        game: profile.exe.clone(),
+        subject: AbSubject::Profile {
+            profile: Box::new(profile),
+            session: None,
+        },
+        plan: Plan {
+            info: TweakId::GameProfile.info(),
+            changes,
+        },
+        order: schedule(usize::try_from(runs).unwrap_or(3)),
+        next: 0,
+        seconds: seconds.clamp(20, 300),
+        results: Vec::new(),
         cancel: None,
     };
     let view = session.view();
@@ -116,24 +219,47 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
                 .get(s.next)
                 .ok_or_else(|| CmdError::Failed("усі прогони вже виконано".into()))?;
             let mut engine = lock(&state.engine);
-            match (arm, s.active_entry) {
-                (Arm::B, None) => {
-                    let plan = engine.plan(&s.desired)?;
-                    let confirm = FlagConfirm::new(allow_without_restore_point);
+            let confirm = FlagConfirm::new(allow_without_restore_point);
+            let cancelled = |confirm: &FlagConfirm| {
+                confirm.reason().map_or(
+                    CmdError::Cancelled("скасовано".into()),
+                    CmdError::RestorePoint,
+                )
+            };
+            match (&mut s.subject, arm) {
+                (
+                    AbSubject::Tweak {
+                        desired,
+                        active_entry,
+                    },
+                    Arm::B,
+                ) if active_entry.is_none() => {
+                    let plan = engine.plan(desired)?;
                     match engine.apply(&plan, &confirm) {
-                        Ok(out) => s.active_entry = out.entry_ids.last().copied(),
-                        Err(TweakError::Cancelled) => {
-                            return Err(confirm.reason().map_or(
-                                CmdError::Cancelled("скасовано".into()),
-                                CmdError::RestorePoint,
-                            ))
-                        }
+                        Ok(out) => *active_entry = out.entry_ids.last().copied(),
+                        Err(TweakError::Cancelled) => return Err(cancelled(&confirm)),
                         Err(e) => return Err(e.into()),
                     }
                 }
-                (Arm::A, Some(id)) => {
-                    engine.rollback(id)?;
-                    s.active_entry = None;
+                (AbSubject::Tweak { active_entry, .. }, Arm::A) => {
+                    if let Some(id) = active_entry.take() {
+                        engine.rollback(id)?;
+                    }
+                }
+                (AbSubject::Profile { profile, session }, Arm::B) if session.is_none() => {
+                    // Гру могли перезапустити між прогонами — шукаємо процес щоразу.
+                    let game = running_game(&profile.exe)?;
+                    match start_session(&mut engine, &PROCESSES, &MEMORY, profile, &game, &confirm)
+                    {
+                        Ok(report) => *session = Some(report),
+                        Err(TweakError::Cancelled) => return Err(cancelled(&confirm)),
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+                (AbSubject::Profile { session, .. }, Arm::A) => {
+                    if let Some(report) = session.take() {
+                        end_session(&mut engine, &report);
+                    }
                 }
                 _ => {}
             }
@@ -210,10 +336,32 @@ pub fn ab_finish(state: State<'_, AppState>, keep: bool) -> CmdResult<AbFinal> {
     let catalog = Catalog::ukrainian()?;
     let title = catalog.render(&s.plan.info.title);
     let markdown = render_markdown(&report, &catalog, &title, &s.game);
-    let kept = keep && report.decision == Decision::Keep;
-    if let (false, Some(id)) = (kept, s.active_entry) {
-        lock(&state.engine).rollback(id)?;
-    }
+    let kept = match &s.subject {
+        AbSubject::Tweak { active_entry, .. } => {
+            let kept = keep && report.decision == Decision::Keep;
+            if let (false, Some(id)) = (kept, *active_entry) {
+                lock(&state.engine).rollback(id)?;
+            }
+            kept
+        }
+        AbSubject::Profile { profile, session } => {
+            // Профіль сам діє лише в режимі гри: після тесту все повертаємо, а результат
+            // зберігаємо в профіль, щоб його було видно на екрані «Ігри».
+            if let Some(report) = session {
+                end_session(&mut lock(&state.engine), report);
+            }
+            let mut updated = (**profile).clone();
+            updated.last_test = Some(ProfileTest {
+                date: CivilDate::today(),
+                runs_per_arm: u32::try_from(s.results.len() / 2).unwrap_or(0),
+                avg_fps_pct: report.avg_fps.delta_pct,
+                low_1pct_pct: report.low_1pct.delta_pct,
+                effect: report.effect,
+            });
+            profiles()?.upsert(&updated)?;
+            false
+        }
+    };
     *guard = None;
     Ok(AbFinal {
         report,
@@ -235,8 +383,18 @@ pub fn cancel_session(state: &AppState) -> CmdResult<()> {
         if let Some(c) = &s.cancel {
             c.cancel();
         }
-        if let Some(id) = s.active_entry {
-            lock(&state.engine).rollback(id)?;
+        match &s.subject {
+            AbSubject::Tweak {
+                active_entry: Some(id),
+                ..
+            } => lock(&state.engine).rollback(*id)?,
+            AbSubject::Profile {
+                session: Some(report),
+                ..
+            } => {
+                end_session(&mut lock(&state.engine), report);
+            }
+            _ => {}
         }
     }
     *guard = None;

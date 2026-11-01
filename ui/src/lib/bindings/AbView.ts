@@ -35,4 +35,8 @@ start: StartMode,
 /**
  * Результати виконаних прогонів.
  */
-results: Array<RunResult>, };
+results: Array<RunResult>, 
+/**
+ * Перевіряється профіль гри цілком (а не один твік).
+ */
+profile: boolean, };

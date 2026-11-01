@@ -7,10 +7,12 @@
 #![forbid(unsafe_code)]
 
 pub mod chart;
+pub mod framegen;
 pub mod rules;
 pub mod timeline;
 
 pub use chart::{ChartPoint, FrametimeChart, SpikeMark};
+pub use framegen::{FrameGenInfo, FrameGenSeries};
 pub use timeline::{FramePoint, GpuPoint, IoProcess, SamplePoint, ShaderWrite, Timeline};
 
 use optimax_core::{Category, Finding, FindingBuilder, Impact, Text};
@@ -91,6 +93,9 @@ pub struct Diagnosis {
     /// Графік frametime із позначками ривків (немає, якщо кадрів немає).
     #[serde(default)]
     pub chart: Option<FrametimeChart>,
+    /// Виявлена генерація кадрів (тоді діагностика йде за шкалою, яку бачить око).
+    #[serde(default)]
+    pub frame_gen: Option<FrameGenInfo>,
 }
 
 /// Файл кешу шейдерів, змінений під час запису (за годинником, бо так його бачить ФС).
@@ -164,8 +169,37 @@ fn summary(
     d.build()
 }
 
-/// Діагностика за шкалою часу.
+/// Діагностика за шкалою часу. За генерації кадрів аналізується шкала, яку бачить людина
+/// ([`framegen::effective_timeline`]), а одразу після підсумку йде вердикт про генерацію.
 pub fn diagnose_timeline(tl: &Timeline, ctx: &Context) -> Diagnosis {
+    let Some((visible, fg)) = framegen::effective_timeline(tl) else {
+        return diagnose_frames(tl, ctx);
+    };
+    let mut d = diagnose_frames(&visible, ctx);
+    let id = match fg.series {
+        FrameGenSeries::Display => "framegen.display",
+        FrameGenSeries::Real => "framegen.real",
+    };
+    let finding = FindingBuilder::new("diag", id, Category::FrameCap, Impact::Info, 90)
+        .arg("factor", format!("{:.0}", fg.factor))
+        .arg("presented", format!("{:.0}", fg.presented_fps))
+        .arg("real", format!("{:.0}", fg.real_fps))
+        .evidence(
+            Text::new("diag.ev.presented_fps"),
+            Text::new("value.fps").arg("v", format!("{:.1}", fg.presented_fps)),
+        )
+        .evidence(
+            Text::new("diag.ev.real_fps"),
+            Text::new("value.fps").arg("v", format!("{:.1}", fg.real_fps)),
+        )
+        .build();
+    let at = d.verdicts.len().min(1);
+    d.verdicts.insert(at, finding.into());
+    d.frame_gen = Some(fg);
+    d
+}
+
+fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
     let analysis = Analysis::new(tl, ctx.display_hz);
     let stats = analysis.as_ref().map(|a| a.stats.clone());
     let chart = analysis.as_ref().map(chart::frametime_chart);
@@ -188,6 +222,7 @@ pub fn diagnose_timeline(tl: &Timeline, ctx: &Context) -> Diagnosis {
             .into()],
             stats,
             chart,
+            frame_gen: None,
         };
     };
 
@@ -257,6 +292,7 @@ pub fn diagnose_timeline(tl: &Timeline, ctx: &Context) -> Diagnosis {
         bottleneck,
         verdicts,
         chart,
+        frame_gen: None,
     }
 }
 
@@ -294,6 +330,7 @@ pub fn diagnose(rec: &Recording, ctx: &Context) -> Diagnosis {
             bottleneck: Bottleneck::InsufficientData,
             verdicts: vec![summary("summary.insufficient", 100, None, "", 0.0).into()],
             chart: None,
+            frame_gen: None,
         },
     }
 }

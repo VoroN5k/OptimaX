@@ -1,5 +1,7 @@
 //! Спільна шкала часу: кадри гри та знімки метрик у мілісекундах від старту запису.
 
+use optimax_core::clock::ticks_to_ms;
+use optimax_core::etw::{DpcKind, DriverDpc};
 use optimax_frametime::{main_swap_chain, PresentMode, Recording};
 use optimax_metrics::{Snapshot, ThrottleReason};
 use serde::{Deserialize, Serialize};
@@ -113,6 +115,44 @@ pub struct ShaderWrite {
     pub bytes: u64,
 }
 
+/// Довга подія DPC/ISR драйвера на шкалі часу.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DpcPoint {
+    /// Початок виконання, мс від старту запису.
+    pub t_ms: f64,
+    /// Тривалість, мкс.
+    pub dur_us: f64,
+    /// Індекс у [`DpcTimeline::drivers`].
+    pub driver: u16,
+    /// Обробник переривання (а не DPC).
+    pub isr: bool,
+}
+
+/// Трасування драйверів за час запису.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct DpcTimeline {
+    /// Підсумок по драйверах (за весь запис, зокрема поза зарахованими відрізками).
+    pub drivers: Vec<DriverDpc>,
+    /// Довгі події в зарахованих відрізках, за часом.
+    pub long: Vec<DpcPoint>,
+    /// Подій, втрачених ETW.
+    pub lost: u64,
+}
+
+impl DpcTimeline {
+    /// Ім'я драйвера події (`None` — адреса поза відомими модулями).
+    pub fn driver_name(&self, e: &DpcPoint) -> Option<&str> {
+        self.drivers.get(usize::from(e.driver))?.name.as_deref()
+    }
+
+    /// Довгі події, що почались у `[from, to]` (мс).
+    pub fn between(&self, from: f64, to: f64) -> &[DpcPoint] {
+        let lo = self.long.partition_point(|e| e.t_ms < from);
+        let hi = self.long.partition_point(|e| e.t_ms <= to);
+        &self.long[lo..hi.max(lo)]
+    }
+}
+
 /// Дані для діагностики.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Timeline {
@@ -127,6 +167,9 @@ pub struct Timeline {
     /// Записи в кеш шейдерів драйвера під час запису, відсортовані за часом.
     #[serde(default)]
     pub shader_writes: Vec<ShaderWrite>,
+    /// DPC і переривання драйверів (ETW). `None` — не вимірювалось.
+    #[serde(default)]
+    pub dpc: Option<DpcTimeline>,
 }
 
 /// Процеси, які не вважаються фоновими навантаженнями (наш власний інструмент запису).
@@ -245,6 +288,21 @@ impl Timeline {
             frames,
             samples,
             shader_writes: Vec::new(),
+            dpc: rec.dpc_trace.as_ref().map(|t| DpcTimeline {
+                drivers: t.drivers.clone(),
+                long: t
+                    .long
+                    .iter()
+                    .filter(|e| rec.in_segments(e.start_qpc))
+                    .map(|e| DpcPoint {
+                        t_ms: ticks_to_ms(e.start_qpc - rec.start_qpc, rec.qpc_frequency),
+                        dur_us: f64::from(e.dur_us),
+                        driver: e.driver,
+                        isr: e.kind == DpcKind::Isr,
+                    })
+                    .collect(),
+                lost: t.lost,
+            }),
         })
     }
 

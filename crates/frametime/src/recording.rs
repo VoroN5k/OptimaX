@@ -184,6 +184,9 @@ pub struct Recording {
     /// годинником (напр. час зміни файлів кешу шейдерів). `None` у старих записах.
     #[serde(default)]
     pub start_unix_ms: Option<i64>,
+    /// DPC і переривання драйверів (ETW). `None` — трасування недоступне або старий запис.
+    #[serde(default)]
+    pub dpc_trace: Option<optimax_core::etw::DpcTrace>,
 }
 
 impl Recording {
@@ -284,6 +287,14 @@ pub fn record_with(
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .and_then(|d| i64::try_from(d.as_millis()).ok());
+    // Трасування драйверів — необов'язкове: без нього радар спирається лише на лічильники PDH.
+    let dpc_tracer = match optimax_core::etw::DpcTracer::start(freq) {
+        Ok(t) => Some(t),
+        Err(e) => {
+            tracing::warn!("трасування DPC недоступне: {e}");
+            None
+        }
+    };
     let (sampler, snapshots_rx) = Sampler::spawn(options.sampler, system, gpu)?;
     let mut child = presentmon.spawn_capture(&options.target, pm_duration, immediate)?;
 
@@ -445,6 +456,15 @@ pub fn record_with(
     drop(hotkey);
     sampler.stop();
     snapshots.extend(snapshots_rx.try_iter());
+    let dpc_trace = dpc_tracer.and_then(optimax_core::etw::DpcTracer::stop);
+    if let Some(t) = &dpc_trace {
+        tracing::info!(
+            "DPC: {} подій, втрачено {}, довгих {}",
+            t.events,
+            t.lost,
+            t.long.len()
+        );
+    }
 
     let (frames, skipped_lines) = frames_thread.join().unwrap_or_default();
     let presentmon_messages = messages_thread.join().unwrap_or_default();
@@ -468,6 +488,7 @@ pub fn record_with(
         segments,
         end_reason,
         start_unix_ms,
+        dpc_trace,
     };
     if !rec.frames.iter().any(|f| rec.frame_counted(f)) {
         return Err(FrametimeError::NoFrames(
@@ -520,6 +541,7 @@ mod tests {
             segments: vec![(1000, 3000), (4000, 5000)],
             end_reason: EndReason::Completed,
             start_unix_ms: None,
+            dpc_trace: None,
         };
         let counted: Vec<bool> = rec.frames.iter().map(|f| rec.frame_counted(f)).collect();
         assert_eq!(counted, vec![false, true, true, true]);

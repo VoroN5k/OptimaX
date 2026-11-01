@@ -7,13 +7,16 @@
 #![forbid(unsafe_code)]
 
 pub mod chart;
+pub mod drivers;
 pub mod framegen;
 pub mod rules;
 pub mod timeline;
 
 pub use chart::{ChartPoint, FrametimeChart, SpikeMark};
 pub use framegen::{FrameGenInfo, FrameGenSeries};
-pub use timeline::{FramePoint, GpuPoint, IoProcess, SamplePoint, ShaderWrite, Timeline};
+pub use timeline::{
+    DpcPoint, DpcTimeline, FramePoint, GpuPoint, IoProcess, SamplePoint, ShaderWrite, Timeline,
+};
 
 use optimax_core::{Category, Finding, FindingBuilder, Impact, Text};
 use optimax_frametime::{FrameStats, Recording};

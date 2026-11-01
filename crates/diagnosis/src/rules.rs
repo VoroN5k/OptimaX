@@ -1,7 +1,8 @@
 //! Правила вердиктів. Кожне — чиста функція над [`Analysis`], повертає знахідку з
 //! впевненістю й доказами або `None`, якщо ознак недостатньо. Пороги — з CLAUDE.md, розд. 9.
 
-use crate::timeline::{SamplePoint, ShaderWrite, Timeline};
+use crate::drivers::driver_kind;
+use crate::timeline::{DpcPoint, DpcTimeline, SamplePoint, ShaderWrite, Timeline};
 use optimax_core::{Category, Finding, FindingBuilder, Impact, Text};
 use optimax_frametime::{find_spikes, FrameStats, PresentMode};
 use optimax_metrics::ThrottleReason;
@@ -44,6 +45,16 @@ pub const IO_NAME_MIN_SHARE: f64 = 0.25;
 pub const DPC_MIN_PCT: f64 = 5.0;
 /// Ознака пояснює частину ривків, якщо трапляється біля такої частки з них.
 pub const PARTIAL_MIN_SHARE: f64 = 0.2;
+/// Виконання драйвера (DPC/ISR), довше за це (мкс), здатне помітно затримати кадр: увесь цей
+/// час ядро недоступне потокам гри.
+pub const DPC_STALL_US: f64 = 500.0;
+/// Вікно до моменту показу кадру, де шукаємо довгі виконання драйверів (кадр затримувався,
+/// поки ще не був показаний).
+const DPC_BEFORE_MS: f64 = 100.0;
+/// Невеликий запас після показу кадру (неточність часу кадру).
+const DPC_AFTER_MS: f64 = 10.0;
+/// Головна причина DPC з відомим драйвером, якщо на нього припадає така частка піків з ним.
+const DPC_DRIVER_MIN_SHARE: f64 = 0.5;
 /// Вікно до ривка для записів у кеш шейдерів.
 pub const SHADER_BEFORE_MS: f64 = 200.0;
 /// Вікно після ривка: драйвер пише файл кешу під час компіляції або невдовзі після неї.
@@ -684,6 +695,51 @@ fn shader_writes_near(tl: &Timeline, t: f64) -> &[ShaderWrite] {
     &w[lo..hi.max(lo)]
 }
 
+/// Найдовше виконання драйвера (≥ [`DPC_STALL_US`]) біля моменту `t`.
+fn longest_stall_near(tl: &Timeline, t: f64) -> Option<&DpcPoint> {
+    tl.dpc
+        .as_ref()?
+        .between(t - DPC_BEFORE_MS, t + DPC_AFTER_MS)
+        .iter()
+        .filter(|e| e.dur_us >= DPC_STALL_US)
+        .max_by(|x, y| x.dur_us.total_cmp(&y.dur_us))
+}
+
+/// Текст із назвою драйвера: `known` з `{name}`, або `unknown`, якщо адреса поза модулями.
+fn driver_text(known: &str, unknown: &str, name: Option<&str>) -> Text {
+    match name {
+        Some(n) => Text::new(known).arg("name", n),
+        None => Text::new(unknown),
+    }
+}
+
+/// Драйвер, найчастіше найдовший біля піків: (індекс, піків, частка серед піків із довгим
+/// виконанням драйвера, найдовше біля піків, мкс).
+fn spike_driver(a: &Analysis<'_>) -> Option<(u16, usize, f64, f64)> {
+    let mut by: HashMap<u16, (usize, f64)> = HashMap::new();
+    let mut with_stall = 0usize;
+    for &t in &a.spike_times {
+        if let Some(e) = longest_stall_near(a.timeline, t) {
+            with_stall += 1;
+            let v = by.entry(e.driver).or_default();
+            v.0 += 1;
+            v.1 = v.1.max(e.dur_us);
+        }
+    }
+    let (driver, (n, max)) = by
+        .into_iter()
+        .max_by(|x, y| x.1 .0.cmp(&y.1 .0).then(x.1 .1.total_cmp(&y.1 .1)))?;
+    Some((driver, n, n as f64 / with_stall.max(1) as f64, max))
+}
+
+/// Найдовше виконання драйвера за весь запис: (ім'я, мкс).
+fn longest_driver(d: &DpcTimeline) -> Option<(Option<&str>, f64)> {
+    d.drivers
+        .iter()
+        .max_by(|x, y| x.max_us.total_cmp(&y.max_us))
+        .map(|x| (x.name.as_deref(), x.max_us))
+}
+
 /// Пороги причин, обчислені за весь запис («сплеск» = помітно вище за звичайне).
 pub struct CauseContext {
     disk_limit: f64,
@@ -752,6 +808,7 @@ impl CauseContext {
     pub fn hit_near(&self, a: &Analysis<'_>, kind: CauseKind, t: f64) -> bool {
         match kind {
             CauseKind::Shader => !shader_writes_near(a.timeline, t).is_empty(),
+            CauseKind::Dpc if longest_stall_near(a.timeline, t).is_some() => true,
             _ => a
                 .timeline
                 .samples_near(t, WINDOW_MS)
@@ -834,7 +891,15 @@ impl CauseContext {
                     None => text.arg("mbps", total),
                 }
             }
-            CauseKind::Dpc => text.arg("pct", format!("{:.1}", max_of(&|p| p.dpc_pct))),
+            CauseKind::Dpc => match longest_stall_near(a.timeline, t) {
+                Some(e) => driver_text(
+                    "diag.spike.dpc_driver",
+                    "diag.spike.dpc_driver_unknown",
+                    a.timeline.dpc.as_ref().and_then(|d| d.driver_name(e)),
+                )
+                .arg("us", format!("{:.0}", e.dur_us)),
+                None => text.arg("pct", format!("{:.1}", max_of(&|p| p.dpc_pct))),
+            },
             CauseKind::Background => {
                 let top = near
                     .iter()
@@ -986,10 +1051,28 @@ pub fn stutter(a: &Analysis<'_>) -> Option<Finding> {
         );
     // Сам факт фризів виміряний (90 %); впевненість у причині — за частотою збігів.
     // Кеш шейдерів — непряма ознака (час зміни файлу), тож для неї стеля нижча.
+    // Драйвер, що найчастіше довго виконувався біля піків (трасування ETW).
+    let dpc_cause = causes
+        .iter()
+        .chain(&partial)
+        .any(|c| c.kind == CauseKind::Dpc);
+    let driver = spike_driver(a).filter(|_| dpc_cause);
+    let dpc = a.timeline.dpc.as_ref();
+    let driver_name = driver.and_then(|(i, ..)| {
+        dpc.and_then(|d| d.drivers.get(usize::from(i)))
+            .and_then(|x| x.name.as_deref())
+    });
     if let Some(top) = causes.first() {
-        // DPC — теж непряма: лічильник не каже, чи заблокований драйвером саме потік гри.
+        // DPC за лічильником — непряма ознака: не каже, чи заблокований саме потік гри і який
+        // драйвер. Коли трасування називає один драйвер біля більшості таких піків — пряма.
         let ceiling = match top.kind {
             CauseKind::Shader => 65.0,
+            CauseKind::Dpc
+                if driver.is_some_and(|(.., share, _)| share >= DPC_DRIVER_MIN_SHARE)
+                    && driver_name.is_some() =>
+            {
+                85.0
+            }
             CauseKind::Dpc => 70.0,
             _ => 85.0,
         };
@@ -1022,8 +1105,48 @@ pub fn stutter(a: &Analysis<'_>) -> Option<Finding> {
                 .arg("mb", format!("{:.1}", bytes as f64 / (1024.0 * 1024.0))),
         );
     }
-    for advice in causes.iter().filter_map(|c| c.kind.advice()) {
-        d = d.evidence(Text::new("diag.ev.what_to_do"), Text::new(advice));
+    if let Some((_, n, _, max)) = driver {
+        d = d.evidence(
+            Text::new("diag.ev.dpc_driver"),
+            driver_text(
+                "diag.ev.dpc_driver_value",
+                "diag.ev.dpc_driver_value_unknown",
+                driver_name,
+            )
+            .arg("n", n)
+            .arg("of", a.spike_times.len())
+            .arg("us", format!("{max:.0}")),
+        );
+        if let Some(name) = driver_name {
+            d = d.evidence(
+                Text::new("diag.ev.dpc_driver_kind"),
+                Text::new(driver_kind(name).name_key()),
+            );
+        }
+    }
+    if let Some((name, us)) = dpc.and_then(longest_driver) {
+        d = d.evidence(
+            Text::new("diag.ev.dpc_longest"),
+            driver_text(
+                "diag.ev.dpc_longest_value",
+                "diag.ev.dpc_longest_value_unknown",
+                name,
+            )
+            .arg("us", format!("{us:.0}")),
+        );
+    }
+    for c in &causes {
+        let Some(advice) = c.kind.advice() else {
+            continue;
+        };
+        // Відомий драйвер — порада про його пристрій замість загальної.
+        let text = match (c.kind, driver_name) {
+            (CauseKind::Dpc, Some(name)) => {
+                Text::new(driver_kind(name).advice_key()).arg("name", name)
+            }
+            _ => Text::new(advice),
+        };
+        d = d.evidence(Text::new("diag.ev.what_to_do"), text);
     }
     Some(d.build())
 }

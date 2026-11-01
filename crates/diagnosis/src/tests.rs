@@ -79,6 +79,7 @@ fn timeline(frametimes: &[f64], sample: impl Fn(f64, usize) -> SamplePoint) -> T
         frames,
         samples,
         shader_writes: Vec::new(),
+        dpc: None,
     }
 }
 
@@ -1021,6 +1022,7 @@ fn timeline_from_recording_sorts_filters_and_aligns() {
         segments: vec![],
         end_reason: optimax_frametime::EndReason::Completed,
         start_unix_ms: None,
+        dpc_trace: None,
     };
     let tl = Timeline::from_recording(&rec).unwrap();
     assert_eq!(tl.game_pid, 100);
@@ -1055,6 +1057,7 @@ fn empty_recording_is_insufficient() {
         segments: vec![],
         end_reason: optimax_frametime::EndReason::Completed,
         start_unix_ms: None,
+        dpc_trace: None,
     };
     assert_eq!(
         diagnose(&rec, &Context::default()).bottleneck,
@@ -1090,6 +1093,7 @@ fn frames_outside_counted_segments_are_ignored() {
         segments: vec![(game_start + 1, t + 1)],
         end_reason: optimax_frametime::EndReason::Completed,
         start_unix_ms: None,
+        dpc_trace: None,
     };
     let tl = Timeline::from_recording(&rec).unwrap();
     assert_eq!(tl.frames.len(), 2500);
@@ -1123,6 +1127,100 @@ fn dpc_spikes_are_a_cause_with_capped_confidence() {
     let chart = d.chart.as_ref().unwrap();
     assert_eq!(chart.summary[0].name.key, "diag.cause_name.dpc");
     assert_eq!(chart.unexplained, 0);
+}
+
+fn dpc_trace(long: Vec<crate::timeline::DpcPoint>) -> crate::timeline::DpcTimeline {
+    let driver = |name: &str, max_us: f64| optimax_core::etw::DriverDpc {
+        name: Some(name.to_string()),
+        dpc_count: 1000,
+        isr_count: 0,
+        total_us: 10_000.0,
+        max_us,
+    };
+    crate::timeline::DpcTimeline {
+        drivers: vec![driver("nvlddmkm.sys", 1500.0), driver("ntoskrnl.exe", 60.0)],
+        long,
+        lost: 0,
+    }
+}
+
+fn stall(t_ms: f64, dur_us: f64, driver: u16) -> crate::timeline::DpcPoint {
+    crate::timeline::DpcPoint {
+        t_ms,
+        dur_us,
+        driver,
+        isr: false,
+    }
+}
+
+#[test]
+fn traced_driver_stalls_name_the_driver() {
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    // Лічильник PDH спокійний (секундне усереднення ховає 1,5 мс), але трасування бачить
+    // довге виконання nvlddmkm перед кожним ривком; короткі виконання — шум, не ознака.
+    let mut tl = timeline(&ft, |_, _| base_sample());
+    let mut long: Vec<_> = spikes.iter().map(|t| stall(t - 20.0, 1500.0, 0)).collect();
+    long.extend((0..50).map(|i| stall(f64::from(i) * 300.0 + 7.0, 150.0, 1)));
+    long.sort_by(|a, b| a.t_ms.total_cmp(&b.t_ms));
+    tl.dpc = Some(dpc_trace(long));
+    let d = diagnose_timeline(&tl, &Context::default());
+    let f = find(&d, "stutter.found").expect("фризи з причиною");
+    assert_eq!(cause_keys(f), vec!["diag.cause.dpc"]);
+    assert!(
+        f.confidence > Confidence::new(70),
+        "драйвер названо трасуванням"
+    );
+    assert!(f.confidence <= Confidence::new(85));
+    let driver = f
+        .evidence
+        .iter()
+        .find(|e| e.label.key == "diag.ev.dpc_driver")
+        .expect("драйвер біля ривків");
+    assert_eq!(driver.value.key, "diag.ev.dpc_driver_value");
+    assert!(driver.value.args.iter().any(|(_, v)| v == "nvlddmkm.sys"));
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.value.key == "diag.driver_kind.gpu"));
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.value.key == "diag.advice.dpc_gpu"));
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.label.key == "diag.ev.dpc_longest"));
+    let chart = d.chart.as_ref().unwrap();
+    assert!(chart
+        .spikes
+        .iter()
+        .any(|m| m.causes.iter().any(|c| c.key == "diag.spike.dpc_driver")));
+}
+
+#[test]
+fn constant_driver_stalls_are_background() {
+    let ft = spiky();
+    // Довгі виконання драйвера рівномірно весь запис — біля піків не частіше, ніж зазвичай.
+    let mut tl = timeline(&ft, |_, _| base_sample());
+    let end = tl.frames.last().map(|f| f.t_ms).unwrap_or(0.0);
+    let n = (end / 50.0) as u32;
+    tl.dpc = Some(dpc_trace(
+        (0..n)
+            .map(|i| stall(f64::from(i) * 50.0, 900.0, 0))
+            .collect(),
+    ));
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert!(find(&d, "stutter.found").is_none());
+    let f = find(&d, "stutter.unknown").expect("причину не знайдено");
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.label.key == "diag.cause_name.dpc" && e.value.key == "diag.ev.as_usual"));
+    assert!(!f
+        .evidence
+        .iter()
+        .any(|e| e.label.key == "diag.ev.dpc_driver"));
 }
 
 #[test]

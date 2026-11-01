@@ -15,7 +15,8 @@
 
   // «Щойно лагнуло»: стеження з кільцевим буфером. Буфер, знімки й аналіз — на бекенді;
   // тут лише кнопки, стан і показ знімків.
-  let { game }: { game: string } = $props();
+  // `heading` — заголовок картки (на окремій вкладці його дає сторінка).
+  let { game, heading = true }: { game: string; heading?: boolean } = $props();
 
   let view = $state<LagView | null>(null);
   let status = $state<WatchStatus | null>(null);
@@ -104,7 +105,7 @@
   const fps = (v: number | undefined) => (v == null ? "—" : v.toFixed(1));
 </script>
 
-<Card title={tk("ui.lag.title")} subtitle={tk("ui.lag.subtitle")}>
+<Card title={heading ? tk("ui.lag.title") : undefined} subtitle={heading ? tk("ui.lag.subtitle") : undefined}>
   {#if !view || (!watching && view.captures.length === 0 && !view.ended)}
     <p class="small muted">{tk("ui.lag.how", { s: windowS })}</p>
   {:else if watching}
@@ -151,12 +152,14 @@
             </div>
             {#if opened === c.id}
               <div class="detail">
+                {#each d.verdicts.slice(1) as v, i (`${c.id}-${i}`)}
+                  <FindingCard finding={v.finding} collapsible expanded={i === 0} />
+                {:else}
+                  <p class="small muted">{tk("ui.diag.no_more")}</p>
+                {/each}
                 {#if d.chart}
                   <FrametimeChart chart={d.chart} />
                 {/if}
-                {#each d.verdicts.slice(1) as v, i (i)}
-                  <FindingCard finding={v.finding} />
-                {/each}
               </div>
             {/if}
           </li>

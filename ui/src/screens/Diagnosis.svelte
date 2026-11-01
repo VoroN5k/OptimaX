@@ -9,6 +9,7 @@
   import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
   import FindingCard from "../components/FindingCard.svelte";
+  import Fold from "../components/Fold.svelte";
   import FrametimeChart from "../components/FrametimeChart.svelte";
   import CrashView from "../components/CrashView.svelte";
   import Page from "../components/Page.svelte";
@@ -20,8 +21,17 @@
   import Segmented from "../components/Segmented.svelte";
   import StateView from "../components/StateView.svelte";
 
-  /** Вкладка: «Чому лагає?» (запис гри) чи «Чому вилітає?» (журнал подій). */
-  let tab = $state<"lag" | "crash">("lag");
+  /** Вкладка: «Чому лагає?» (запис гри), «Щойно лагнуло?» (стеження з буфером) чи «Чому вилітає?». */
+  let tab = $state<"lag" | "watch" | "crash">("lag");
+  /** Налаштування запису згортаються, коли є результат: зверху має бути відповідь. */
+  let setupOpen = $state(true);
+  let chartOpen = $state(false);
+  let resOpen = $state(false);
+  let resActive = $state(false);
+  // Тест роздільності, що вже йде або має підсумок, не ховаємо.
+  $effect(() => {
+    if (resActive) resOpen = true;
+  });
   let exe = $state("");
   let seconds = $state(60);
   let recording = $state(false);
@@ -40,6 +50,7 @@
         }
         if (s.last && !result) {
           result = s.last;
+          setupOpen = false;
           if (!exe) exe = s.last.diagnosis.game;
         }
       })
@@ -48,6 +59,7 @@
       on("diag-progress", (p) => (progress = p)),
       on("diag-done", (r) => {
         result = r;
+        setupOpen = false;
         recording = false;
         ui.measuring = false;
         const actionable = r.diagnosis.verdicts.some((v) => v.finding.impact !== "info");
@@ -99,6 +111,8 @@
     (result?.diagnosis.verdicts.slice(1) ?? []).filter((v) => !(resShown && v.finding.id.startsWith("res."))),
   );
   /** Тест роздільності має сенс, коли вузьке місце — GPU чи CPU (а не ліміт кадрів). */
+  const modeLabel = $derived(tk(ui.settings.record_start === "hotkey" ? "ui.rec.mode.hotkey" : "ui.rec.mode.auto"));
+  const setupSummary = $derived(`${exe.trim() || tk("ui.diag.no_game")} · ${seconds} с · ${modeLabel}`);
   const resTestable = $derived(
     !recording && (result?.diagnosis.bottleneck === "gpu" || result?.diagnosis.bottleneck === "cpu"),
   );
@@ -109,8 +123,8 @@
 {/snippet}
 
 <Page
-  title={tab === "lag" ? tk("ui.diag.title") : tk("ui.crash.title")}
-  subtitle={tab === "lag" ? tk("ui.diag.subtitle") : tk("ui.crash.subtitle")}
+  title={tab === "crash" ? tk("ui.crash.title") : tab === "watch" ? tk("ui.lag.title") : tk("ui.diag.title")}
+  subtitle={tab === "crash" ? tk("ui.crash.subtitle") : tab === "watch" ? tk("ui.lag.subtitle") : tk("ui.diag.subtitle")}
 >
   <div class="tabs">
     <Segmented
@@ -118,101 +132,133 @@
       bind:value={tab}
       options={[
         { value: "lag", label: tk("ui.crash.tab_lag") },
+        { value: "watch", label: tk("ui.crash.tab_watch") },
         { value: "crash", label: tk("ui.crash.tab_crash") },
       ]}
     />
   </div>
   {#if tab === "crash"}
     <CrashView />
-  {:else}
-  <Card title={tk("ui.diag.setup")} subtitle={tk("ui.diag.setup_hint")}>
-    <div class="setup">
-      <ProcessPicker bind:value={exe} label={tk("ui.diag.game")} />
-      <div class="duration">
-        <span class="small muted">{tk("ui.diag.duration")}</span>
-        <Segmented
-          label={tk("ui.diag.duration")}
-          bind:value={seconds}
-          options={[
-            { value: 30, label: "30 с" },
-            { value: 60, label: "60 с" },
-            { value: 120, label: "120 с" },
-          ]}
-        />
-      </div>
-    </div>
-    <div class="mode"><StartModePicker /></div>
-  </Card>
-  <LagWatch game={exe} />
-
-  {#if recording}
-    <Card><RecordStatus {progress} game={exe} /></Card>
-  {:else if error?.kind === "no_frames"}
-    <Card>
-      <StateView kind="error" title={tk("ui.diag.no_frames_title")} text={tk("ui.diag.no_frames_text")} />
-      {#if error.message}
-        <details class="pm small muted"><summary>{tk("ui.diag.pm_messages")}</summary><pre class="mono">{error.message}</pre></details>
-      {/if}
-    </Card>
-  {:else if error?.kind === "not_started"}
-    <Card>
-      <StateView kind="error" title={tk("ui.rec.not_started_title")} text={tk(`ui.rec.not_started.${error.message || "wait_timeout"}`)} />
-    </Card>
-  {:else if error}
-    <Card><StateView kind="error" title={tk("ui.common.error")} text={error.message} /></Card>
-  {:else if !result}
-    <Card><StateView kind="empty" title={tk("ui.diag.empty_title")} text={tk("ui.diag.empty_text")} /></Card>
-  {/if}
-
-  {#if result && summary}
-    <Card title={t(summary.title)} subtitle={t(summary.detail)}>
-      {#if stats}
-        <div class="stats">
-          <div><strong>{stats.avg_fps.toFixed(1)}</strong><span>{tk("ui.diag.avg")}</span></div>
-          <div><strong>{stats.low_1pct_fps.toFixed(1)}</strong><span>1% low</span></div>
-          <div><strong>{stats.low_01pct_fps.toFixed(1)}</strong><span>0.1% low</span></div>
-          <div><strong>{stats.p99_frametime_ms.toFixed(2)}</strong><span>{tk("ui.diag.p99")}</span></div>
-        </div>
-      {/if}
-      {#if extra.length}
-        <p class="small muted load-title">{tk("ui.diag.load")}</p>
-        <dl class="load">
-          {#each extra as e, i (i)}
-            <dt>{t(e.label)}</dt>
-            <dd class="mono">{t(e.value)}</dd>
-          {/each}
-        </dl>
-      {/if}
-      <p class="small dim">
-        {tk("ui.diag.confidence", { v: summary.confidence })}
-        {#if result.display_hz} · {tk("ui.diag.hz", { hz: result.display_hz })}{/if}
-        · {tk("ui.rec.counted_total", { s: Math.round(result.counted_s) })}
-        {#if result.end_reason !== "completed"} · {tk(`ui.rec.end.${result.end_reason}`)}{/if}
-      </p>
-    </Card>
-    {#if resTestable && result}
-      <ResolutionTest game={result.diagnosis.game} bind:hasReport={resShown} onupdated={reloadResult} />
-    {/if}
-    {#if result.diagnosis.chart}
-      <Card title={tk("ui.chart.title")} subtitle={tk("ui.chart.subtitle")}>
-        <FrametimeChart chart={result.diagnosis.chart} />
+  {:else if tab === "watch"}
+    <div class="stack">
+      <Card>
+        <ProcessPicker bind:value={exe} label={tk("ui.diag.game")} />
       </Card>
-    {/if}
-    <div class="list">
-      {#each rest as v, i (i)}
-        <FindingCard finding={v.finding} action={v.finding.id === "upscale.helps" ? openUpscale : undefined} />
-      {/each}
+      <LagWatch game={exe} heading={false} />
     </div>
-    {#if rest.length === 0}
-      <p class="none small muted">{tk("ui.diag.no_more")}</p>
-    {/if}
-    {#if result.presentmon_messages.length}
-      <details class="pm small muted">
-        <summary>{tk("ui.diag.pm_messages")}</summary>
-        <pre class="mono">{result.presentmon_messages.join("\n")}</pre>
-      </details>
-    {/if}
-  {/if}
+  {:else}
+    <div class="stack">
+      <Fold title={tk("ui.diag.setup")} summary={setupOpen ? tk("ui.diag.setup_hint") : setupSummary} bind:open={setupOpen}>
+        <div class="setup">
+          <ProcessPicker bind:value={exe} label={tk("ui.diag.game")} />
+          <div class="duration">
+            <span class="small muted">{tk("ui.diag.duration")}</span>
+            <Segmented
+              label={tk("ui.diag.duration")}
+              bind:value={seconds}
+              options={[
+                { value: 30, label: "30 с" },
+                { value: 60, label: "60 с" },
+                { value: 120, label: "120 с" },
+              ]}
+            />
+          </div>
+        </div>
+        <div class="mode"><StartModePicker /></div>
+      </Fold>
+
+      {#if recording}
+        <Card><RecordStatus {progress} game={exe} /></Card>
+      {:else if error?.kind === "no_frames"}
+        <Card>
+          <StateView kind="error" title={tk("ui.diag.no_frames_title")} text={tk("ui.diag.no_frames_text")} />
+          {#if error.message}
+            <details class="pm small muted"><summary>{tk("ui.diag.pm_messages")}</summary><pre class="mono">{error.message}</pre></details>
+          {/if}
+        </Card>
+      {:else if error?.kind === "not_started"}
+        <Card>
+          <StateView kind="error" title={tk("ui.rec.not_started_title")} text={tk(`ui.rec.not_started.${error.message || "wait_timeout"}`)} />
+        </Card>
+      {:else if error}
+        <Card><StateView kind="error" title={tk("ui.common.error")} text={error.message} /></Card>
+      {:else if !result}
+        <Card><StateView kind="empty" title={tk("ui.diag.empty_title")} text={tk("ui.diag.empty_text")} /></Card>
+      {/if}
+
+      {#if result && summary}
+        <Card title={t(summary.title)} subtitle={t(summary.detail)}>
+          {#if stats}
+            <div class="stats">
+              <div><strong>{stats.avg_fps.toFixed(1)}</strong><span>{tk("ui.diag.avg")}</span></div>
+              <div><strong>{stats.low_1pct_fps.toFixed(1)}</strong><span>1% low</span></div>
+              <div><strong>{stats.low_01pct_fps.toFixed(1)}</strong><span>0.1% low</span></div>
+              <div><strong>{stats.p99_frametime_ms.toFixed(2)}</strong><span>{tk("ui.diag.p99")}</span></div>
+            </div>
+          {/if}
+          {#if extra.length}
+            <p class="small muted load-title">{tk("ui.diag.load")}</p>
+            <dl class="load">
+              {#each extra as e, i (i)}
+                <dt>{t(e.label)}</dt>
+                <dd class="mono">{t(e.value)}</dd>
+              {/each}
+            </dl>
+          {/if}
+          <p class="small dim">
+            {tk("ui.diag.confidence", { v: summary.confidence })}
+            {#if result.display_hz} · {tk("ui.diag.hz", { hz: result.display_hz })}{/if}
+            · {tk("ui.rec.counted_total", { s: Math.round(result.counted_s) })}
+            {#if result.end_reason !== "completed"} · {tk(`ui.rec.end.${result.end_reason}`)}{/if}
+          </p>
+        </Card>
+
+        <section class="findings" aria-label={tk("ui.diag.findings")}>
+          <h2 class="section muted">{tk("ui.diag.findings_n", { n: rest.length })}</h2>
+          {#if rest.length}
+            <div class="list">
+              {#each rest as v, i (`${result.diagnosis.game}-${i}-${v.finding.id}`)}
+                <FindingCard
+                  finding={v.finding}
+                  collapsible
+                  expanded={i === 0}
+                  action={v.finding.id === "upscale.helps" ? openUpscale : undefined}
+                />
+              {/each}
+            </div>
+          {:else}
+            <p class="none small muted">{tk("ui.diag.no_more")}</p>
+          {/if}
+        </section>
+
+        {#if result.diagnosis.chart}
+          <Fold
+            title={tk("ui.chart.title")}
+            summary={tk("ui.chart.spikes", { n: result.diagnosis.chart.spikes_total })}
+            bind:open={chartOpen}
+          >
+            <p class="small muted fold-hint">{tk("ui.chart.subtitle")}</p>
+            <FrametimeChart chart={result.diagnosis.chart} />
+          </Fold>
+        {/if}
+        {#if resTestable && result}
+          <Fold title={tk("ui.res.title")} summary={tk("ui.res.subtitle")} bind:open={resOpen} keep>
+            <ResolutionTest
+              game={result.diagnosis.game}
+              bind:hasReport={resShown}
+              bind:active={resActive}
+              onupdated={reloadResult}
+            />
+          </Fold>
+        {/if}
+        {#if result.presentmon_messages.length}
+          <details class="pm small muted">
+            <summary>{tk("ui.diag.pm_messages")}</summary>
+            <pre class="mono">{result.presentmon_messages.join("\n")}</pre>
+          </details>
+        {/if}
+      {/if}
+    </div>
   {/if}
 
   {#snippet secondary()}
@@ -232,6 +278,25 @@
 <style>
   .tabs {
     margin-bottom: calc(var(--space) * 4);
+  }
+  .stack {
+    display: grid;
+    gap: calc(var(--space) * 4);
+  }
+  .findings {
+    display: grid;
+    gap: calc(var(--space) * 2);
+  }
+  .section {
+    margin: calc(var(--space) * 1) 0 0;
+    padding: 0 calc(var(--space) * 1);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 11px;
+  }
+  .fold-hint {
+    margin: 0 0 calc(var(--space) * 3);
   }
   .setup {
     display: grid;

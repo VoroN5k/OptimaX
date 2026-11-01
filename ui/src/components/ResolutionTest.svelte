@@ -7,7 +7,6 @@
   import { tk } from "../lib/i18n";
   import { flashBg, logLocal, ui } from "../lib/state.svelte";
   import Button from "./Button.svelte";
-  import Card from "./Card.svelte";
   import FindingCard from "./FindingCard.svelte";
   import RecordStatus from "./RecordStatus.svelte";
   import Segmented from "./Segmented.svelte";
@@ -15,11 +14,13 @@
 
   // Тест чутливості до роздільності: 2 прогони на рідній, 2 на зниженій (AABB).
   // Уся оцінка — на бекенді; тут лише кроки, хід запису й показ підсумку.
+  // Заголовок і рамку дає батьківський блок (розкривна картка на екрані діагностики).
   let {
     game,
     hasReport = $bindable(false),
+    active = $bindable(false),
     onupdated,
-  }: { game: string; hasReport?: boolean; onupdated: () => void } = $props();
+  }: { game: string; hasReport?: boolean; active?: boolean; onupdated: () => void } = $props();
 
   let view = $state<ResView | null>(null);
   let seconds = $state(30);
@@ -35,6 +36,7 @@
 
   $effect(() => {
     hasReport = view?.report != null;
+    active = view != null;
   });
 
   onMount(() => {
@@ -95,7 +97,7 @@
   const fps = (v: number) => v.toFixed(1);
 </script>
 
-<Card title={tk("ui.res.title")} subtitle={tk("ui.res.subtitle")}>
+<div class="res">
   {#if !view}
     <div class="setup">
       <p class="small muted">{tk("ui.res.how")}</p>
@@ -151,7 +153,7 @@
       {/if}
     </div>
   {/if}
-</Card>
+</div>
 
 <style>
   .setup {

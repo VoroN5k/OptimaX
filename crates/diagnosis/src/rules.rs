@@ -441,12 +441,37 @@ pub fn throttling(a: &Analysis<'_>) -> Option<Finding> {
         .iter()
         .filter_map(|s| s.gpu.as_ref()?.temperature_c)
         .max();
-    let (at_spikes, _) = a.coincidence(&active);
-    let mut d = draft("throttling", Category::Throttling, Impact::High, 80)
+    let (at_spikes, usual) = a.coincidence(&active);
+    let loss = clock_loss(a, &active);
+    // Вплив — за виміряною втратою частоти; не виміряно — помірний, а не «найгірший».
+    let impact = match loss {
+        Some(l) if l.fraction >= CLOCK_LOSS_HIGH => Impact::High,
+        Some(l) if l.fraction < CLOCK_LOSS_MODERATE => Impact::Info,
+        _ => Impact::Moderate,
+    };
+    let mut d = draft("throttling", Category::Throttling, impact, 80)
         .arg("share", format!("{:.0}", share * 100.0))
         .advice()
         .evidence(Text::new("diag.ev.throttle_share"), pct(share))
-        .evidence(Text::new("diag.ev.spikes_with_factor"), pct(at_spikes));
+        .evidence(
+            Text::new("diag.ev.spikes_with_factor"),
+            Text::new("diag.ev.spikes_vs_usual")
+                .arg("pct", format!("{:.0}", at_spikes * 100.0))
+                .arg("usual", format!("{:.0}", usual * 100.0)),
+        );
+    d = match loss {
+        Some(l) => d.evidence(
+            Text::new("diag.ev.throttle_clock"),
+            Text::new("diag.ev.throttle_clock_value")
+                .arg("on", l.throttled_mhz)
+                .arg("off", l.free_mhz)
+                .arg("pct", format!("{:.0}", l.fraction * 100.0)),
+        ),
+        None => d.evidence(
+            Text::new("diag.ev.throttle_clock"),
+            Text::new("diag.ev.throttle_clock_unknown"),
+        ),
+    };
     if let Some(t) = max_temp {
         d = d.evidence(
             Text::new("diag.ev.gpu_max_temp"),
@@ -456,7 +481,96 @@ pub fn throttling(a: &Analysis<'_>) -> Option<Finding> {
     for r in reasons {
         d = d.evidence(Text::new("diag.ev.reason"), Text::new(r));
     }
+    // Оберти під час тротлінгу: низькі при високій температурі — ручні оберти або несправний
+    // вентилятор, а не «слабке охолодження».
+    let fan = median(
+        a.samples()
+            .iter()
+            .filter(|s| active(s))
+            .filter_map(|s| s.gpu.as_ref()?.fan_pct.map(f64::from))
+            .collect(),
+    );
+    if let Some(f) = fan {
+        d = d.evidence(
+            Text::new("diag.ev.gpu_fan"),
+            Text::new("value.pct").arg("v", format!("{f:.0}")),
+        );
+        if f <= FAN_LOW_PCT && max_temp.is_some_and(|t| t >= FAN_HOT_C) {
+            d = d.evidence(
+                Text::new("diag.ev.what_to_do"),
+                Text::new("diag.advice.fan_low")
+                    .arg("fan", format!("{f:.0}"))
+                    .arg("temp", max_temp.unwrap_or_default()),
+            );
+        }
+    }
+    // Ліміт живлення понад заводський (розгін): більше тепла, ніж розраховане охолодження.
+    let limits = a.samples().iter().rev().find_map(|s| {
+        let g = s.gpu.as_ref()?;
+        Some((g.power_limit_w?, g.default_power_limit_w?))
+    });
+    if let Some((limit, default)) = limits.filter(|(l, d)| *d > 0.0 && *l > *d * POWER_RAISED) {
+        d = d
+            .evidence(
+                Text::new("diag.ev.power_limit"),
+                Text::new("diag.ev.power_limit_value")
+                    .arg("w", format!("{limit:.0}"))
+                    .arg("pct", format!("{:.0}", limit / default * 100.0))
+                    .arg("default", format!("{default:.0}")),
+            )
+            .evidence(
+                Text::new("diag.ev.what_to_do"),
+                Text::new("diag.advice.power_raised"),
+            );
+    }
     Some(d.build())
+}
+
+/// Втрата частоти GPU через тротлінг: від цієї частки вплив високий.
+pub const CLOCK_LOSS_HIGH: f64 = 0.08;
+/// Нижче цієї частки частоту знижено ледь помітно.
+pub const CLOCK_LOSS_MODERATE: f64 = 0.03;
+/// Мінімум знімків під навантаженням у кожній групі (з тротлінгом і без) для порівняння.
+const CLOCK_GROUP_MIN: usize = 5;
+/// Оберти вентиляторів вважаються низькими до цього значення…
+pub const FAN_LOW_PCT: f64 = 50.0;
+/// …якщо при цьому GPU гріється щонайменше до цієї температури.
+pub const FAN_HOT_C: u32 = 80;
+/// Діючий ліміт живлення вважається піднятим понад заводський від цього множника.
+const POWER_RAISED: f32 = 1.02;
+
+/// Виміряна втрата частоти.
+#[derive(Debug, Clone, Copy)]
+struct ClockLoss {
+    throttled_mhz: u32,
+    free_mhz: u32,
+    fraction: f64,
+}
+
+/// Медіанна частота GPU під навантаженням з тротлінгом і без. `None` — замало знімків
+/// у якійсь групі (напр. тротлінг майже весь час), тоді втрату чесно не оцінюємо.
+fn clock_loss(a: &Analysis<'_>, active: &dyn Fn(&SamplePoint) -> bool) -> Option<ClockLoss> {
+    let (mut on, mut off) = (Vec::new(), Vec::new());
+    for s in a.samples() {
+        let Some(g) = s.gpu.as_ref() else { continue };
+        let (Some(clock), true) = (g.clock_mhz, g.util.is_some_and(|u| u >= 90)) else {
+            continue;
+        };
+        if active(s) {
+            on.push(f64::from(clock));
+        } else {
+            off.push(f64::from(clock));
+        }
+    }
+    if on.len() < CLOCK_GROUP_MIN || off.len() < CLOCK_GROUP_MIN {
+        return None;
+    }
+    let (throttled, free) = (median(on)?, median(off)?);
+    (free > 0.0).then(|| ClockLoss {
+        throttled_mhz: throttled.round() as u32,
+        free_mhz: free.round() as u32,
+        fraction: ((free - throttled) / free).max(0.0),
+    })
 }
 
 /// Можлива причина ривка frametime.

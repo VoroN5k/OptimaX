@@ -50,6 +50,14 @@ power_w: number | null,
  */
 power_limit_w: number | null, 
 /**
+ * Заводський ліміт потужності, Вт (вищий діючий — розгін, напр. Power Limit 115%).
+ */
+default_power_limit_w: number | null, 
+/**
+ * Оберти вентиляторів, % від максимуму (середнє по вентиляторах; цільове значення драйвера).
+ */
+fan_percent: number | null, 
+/**
  * Активні причини зниження частоти.
  */
 throttle: Array<ThrottleReason>, };

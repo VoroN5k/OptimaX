@@ -45,6 +45,15 @@ pub struct GpuPoint {
     pub temperature_c: Option<u32>,
     /// Причини зниження частоти.
     pub throttle: Vec<ThrottleReason>,
+    /// Оберти вентиляторів, %.
+    #[serde(default)]
+    pub fan_pct: Option<u32>,
+    /// Діючий ліміт потужності, Вт.
+    #[serde(default)]
+    pub power_limit_w: Option<f32>,
+    /// Заводський ліміт потужності, Вт.
+    #[serde(default)]
+    pub default_power_limit_w: Option<f32>,
 }
 
 impl GpuPoint {
@@ -204,6 +213,9 @@ impl Timeline {
                             vram_total: g.vram_total_bytes,
                             temperature_c: g.temperature_c,
                             throttle: g.throttle.clone(),
+                            fan_pct: g.fan_percent,
+                            power_limit_w: g.power_limit_w,
+                            default_power_limit_w: g.default_power_limit_w,
                         }),
                     disk_bytes_per_sec: s
                         .disk

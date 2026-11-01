@@ -33,6 +33,9 @@ fn base_sample() -> SamplePoint {
             vram_total: Some(12 << 30),
             temperature_c: Some(65),
             throttle: vec![],
+            fan_pct: Some(55),
+            power_limit_w: Some(220.0),
+            default_power_limit_w: Some(220.0),
         }),
         disk_bytes_per_sec: 1 << 20,
         background: HashMap::new(),
@@ -582,13 +585,19 @@ fn thermal_throttling_detected() {
             g.temperature_c = Some(88);
             if i % 2 == 0 {
                 g.throttle = vec![ThrottleReason::HwThermal];
+                g.clock_mhz = Some(2300);
             }
         }
         s
     });
     let d = diagnose_timeline(&tl, &Context::default());
     let f = find(&d, "throttling").unwrap();
+    // 2300 замість 2600 МГц — втрата ~12 %, виміряна: високий вплив.
     assert_eq!(f.impact, Impact::High);
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.value.key == "diag.ev.throttle_clock_value"));
     assert!(f
         .evidence
         .iter()
@@ -1249,4 +1258,56 @@ fn constant_disk_activity_is_background_not_cause() {
     let disk = chart.summary.iter().find(|c| c.code == "disk").unwrap();
     assert!(!disk.above_usual);
     assert!(disk.usual > 0.5);
+}
+
+fn throttled(clock_on: u32, fan: u32, limit: f32, every: usize) -> Diagnosis {
+    let tl = timeline(&jittery(8.0, 3000), |_, i| {
+        let mut s = base_sample();
+        if let Some(g) = s.gpu.as_mut() {
+            g.util = Some(98);
+            g.temperature_c = Some(89);
+            g.fan_pct = Some(fan);
+            g.power_limit_w = Some(limit);
+            if i % every != 0 {
+                g.throttle = vec![ThrottleReason::SwThermal];
+                g.clock_mhz = Some(clock_on);
+            }
+        }
+        s
+    });
+    diagnose_timeline(&tl, &Context::default())
+}
+
+#[test]
+fn throttling_impact_follows_measured_clock_loss() {
+    // Частота майже та сама — тротлінг є, але майже нічого не забирає.
+    let small = throttled(2580, 60, 220.0, 3);
+    assert_eq!(find(&small, "throttling").unwrap().impact, Impact::Info);
+    // Тротлінг майже весь час — порівняти нема з чим: помірний вплив і чесне «не виміряно».
+    let always = throttled(2300, 60, 220.0, usize::MAX);
+    let f = find(&always, "throttling").unwrap();
+    assert_eq!(f.impact, Impact::Moderate);
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.value.key == "diag.ev.throttle_clock_unknown"));
+}
+
+#[test]
+fn throttling_explains_low_fan_and_raised_power_limit() {
+    let d = throttled(2400, 30, 253.0, 3);
+    let f = find(&d, "throttling").unwrap();
+    let values: Vec<&str> = f.evidence.iter().map(|e| e.value.key.as_str()).collect();
+    assert!(values.contains(&"diag.advice.fan_low"));
+    assert!(values.contains(&"diag.ev.power_limit_value"));
+    assert!(values.contains(&"diag.advice.power_raised"));
+    // Звичайні оберти й заводський ліміт — без цих порад.
+    let d = throttled(2400, 70, 220.0, 3);
+    let f = find(&d, "throttling").unwrap();
+    assert!(
+        !f.evidence
+            .iter()
+            .any(|e| e.value.key == "diag.advice.fan_low"
+                || e.value.key == "diag.advice.power_raised")
+    );
 }

@@ -73,6 +73,15 @@ pub(crate) fn map_throttle(reasons: ThrottleReasons) -> Vec<ThrottleReason> {
         .collect()
 }
 
+/// Середні оберти вентиляторів, %. `None` — вентиляторів немає (ноутбук, пасивне охолодження)
+/// або драйвер не віддає оберти.
+fn fan_percent(dev: &nvml_wrapper::Device<'_>) -> Option<u32> {
+    let n = dev.num_fans().ok().filter(|n| *n > 0)?;
+    let speeds: Vec<u32> = (0..n).filter_map(|i| dev.fan_speed(i).ok()).collect();
+    let count = u32::try_from(speeds.len()).ok().filter(|c| *c > 0)?;
+    Some(speeds.iter().sum::<u32>() / count)
+}
+
 /// NVIDIA GPU через NVML.
 pub struct NvmlGpu {
     nvml: Nvml,
@@ -116,6 +125,11 @@ impl GpuApi for NvmlGpu {
                     // NVML віддає мілівати.
                     power_w: dev.power_usage().ok().map(|mw| mw as f32 / 1000.0),
                     power_limit_w: dev.enforced_power_limit().ok().map(|mw| mw as f32 / 1000.0),
+                    default_power_limit_w: dev
+                        .power_management_limit_default()
+                        .ok()
+                        .map(|mw| mw as f32 / 1000.0),
+                    fan_percent: fan_percent(&dev),
                     throttle: dev
                         .current_throttle_reasons()
                         .map(map_throttle)

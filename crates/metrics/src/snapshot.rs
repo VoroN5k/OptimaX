@@ -128,6 +128,12 @@ pub struct GpuSnapshot {
     pub power_w: Option<f32>,
     /// Діючий ліміт потужності, Вт.
     pub power_limit_w: Option<f32>,
+    /// Заводський ліміт потужності, Вт (вищий діючий — розгін, напр. Power Limit 115%).
+    #[serde(default)]
+    pub default_power_limit_w: Option<f32>,
+    /// Оберти вентиляторів, % від максимуму (середнє по вентиляторах; цільове значення драйвера).
+    #[serde(default)]
+    pub fan_percent: Option<u32>,
     /// Активні причини зниження частоти.
     pub throttle: Vec<ThrottleReason>,
 }

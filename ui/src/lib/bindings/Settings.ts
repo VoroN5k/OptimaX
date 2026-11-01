@@ -44,4 +44,8 @@ update_check_on_start: boolean,
  * Користувач вимикає ПК утриманням кнопки живлення: раптові вимкнення без синього екрана
  * в «Чому вилітає?» для нього звичайні (Windows не відрізняє їх від зникнення живлення).
  */
-power_off_by_button: boolean, };
+power_off_by_button: boolean, 
+/**
+ * Оверлей у грі (FPS, 1% low, CPU/GPU); за замовчуванням вимкнено.
+ */
+overlay: boolean, };

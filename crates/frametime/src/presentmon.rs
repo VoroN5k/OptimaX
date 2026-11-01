@@ -27,6 +27,9 @@ pub const PRESENTMON_SHA256: &str =
     "b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af";
 /// Ім'я ETW-сесії, щоб не заважати іншим копіям PresentMon (RTSS, FrameView тощо).
 pub const SESSION_NAME: &str = "OptimaX";
+/// Окрема ETW-сесія живих даних для оверлею: працює паралельно із записом і не зупиняє його
+/// (`--stop_existing_session` зупиняє лише сесію з тим самим ім'ям).
+pub const LIVE_SESSION_NAME: &str = "OptimaX Live";
 
 const EMBEDDED: &[u8] = include_bytes!("../bin/PresentMon-2.6.0-x64.exe");
 
@@ -116,11 +119,36 @@ pub fn capture_args(target: &Target, duration: Duration, terminate_on_exit: bool
     args
 }
 
+/// Аргументи для живих даних оверлею: усі процеси (фільтр — за грою у фокусі на нашому боці),
+/// окрема сесія [`LIVE_SESSION_NAME`].
+pub fn live_args(duration: Duration) -> Vec<String> {
+    let secs = duration
+        .clamp(Duration::from_secs(1), MAX_CAPTURE)
+        .as_secs();
+    [
+        "--output_stdout",
+        "--no_console_stats",
+        "--qpc_time",
+        "--session_name",
+        LIVE_SESSION_NAME,
+        "--stop_existing_session",
+        "--timed",
+    ]
+    .map(String::from)
+    .into_iter()
+    .chain([secs.to_string(), "--terminate_after_timed".into()])
+    .collect()
+}
+
 /// Аргументи для зупинки нашої ETW-сесії.
 pub fn stop_args() -> Vec<String> {
+    stop_args_for(SESSION_NAME)
+}
+
+fn stop_args_for(session: &str) -> Vec<String> {
     vec![
         "--session_name".into(),
-        SESSION_NAME.into(),
+        session.into(),
         "--terminate_existing_session".into(),
     ]
 }
@@ -240,8 +268,25 @@ impl BundledPresentMon {
 
     /// Зупиняє нашу ETW-сесію (якщо вона лишилася після збою). Хеш перевіряється так само.
     pub fn stop_session(&self) -> Result<(), FrametimeError> {
+        self.stop_named(SESSION_NAME)
+    }
+
+    /// Запускає живі дані для оверлею (усі процеси, [`live_args`]). Хеш — перед стартом.
+    pub fn spawn_live(&self, duration: Duration) -> Result<Child, FrametimeError> {
         let lock = self.verified_handle()?;
-        let mut child = self.command(&stop_args()).spawn()?;
+        let child = self.command(&live_args(duration)).spawn()?;
+        drop(lock);
+        Ok(child)
+    }
+
+    /// Зупиняє сесію живих даних оверлею.
+    pub fn stop_live_session(&self) -> Result<(), FrametimeError> {
+        self.stop_named(LIVE_SESSION_NAME)
+    }
+
+    fn stop_named(&self, session: &str) -> Result<(), FrametimeError> {
+        let lock = self.verified_handle()?;
+        let mut child = self.command(&stop_args_for(session)).spawn()?;
         drop(lock);
         child.wait()?;
         Ok(())
@@ -290,6 +335,20 @@ mod tests {
         assert!(!a.contains(&"--terminate_on_proc_exit".to_string()));
         let timed = a.iter().position(|s| s == "--timed").unwrap();
         assert_eq!(a[timed + 1], "2700");
+    }
+
+    #[test]
+    fn live_args_capture_all_processes_in_own_session() {
+        let a = live_args(Duration::from_secs(60));
+        assert!(!a
+            .iter()
+            .any(|s| s == "--process_name" || s == "--process_id"));
+        let s = a.iter().position(|s| s == "--session_name").unwrap();
+        assert_eq!(a[s + 1], LIVE_SESSION_NAME);
+        assert_ne!(LIVE_SESSION_NAME, SESSION_NAME);
+        let t = a.iter().position(|s| s == "--timed").unwrap();
+        assert_eq!(a[t + 1], "60");
+        assert_eq!(stop_args_for(LIVE_SESSION_NAME)[1], LIVE_SESSION_NAME);
     }
 
     #[test]

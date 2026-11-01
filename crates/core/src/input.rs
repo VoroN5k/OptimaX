@@ -27,9 +27,11 @@ pub enum FunctionKey {
     F10,
     /// F11 — зберегти останні секунди гри («Щойно лагнуло»).
     F11,
+    /// F12 — показати/сховати оверлей у грі.
+    F12,
 }
 
-/// Глобальна гаряча клавіша `Ctrl+Shift+F9/F10/F11`. Працює й поверх повноекранних ігор.
+/// Глобальна гаряча клавіша `Ctrl+Shift+F9…F12`. Працює й поверх повноекранних ігор.
 /// Натискання накопичуються в каналі й читаються [`GlobalHotkey::pressed`]; знімається при знищенні.
 pub struct GlobalHotkey {
     inner: imp::Hotkey,
@@ -82,7 +84,7 @@ mod imp {
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
-        VIRTUAL_KEY, VK_CONTROL, VK_F10, VK_F11, VK_F9, VK_SHIFT,
+        VIRTUAL_KEY, VK_CONTROL, VK_F10, VK_F11, VK_F12, VK_F9, VK_SHIFT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetForegroundWindow, GetWindowThreadProcessId, PeekMessageW, PostThreadMessageW, MSG,
@@ -146,6 +148,7 @@ mod imp {
                 FunctionKey::F9 => VK_F9,
                 FunctionKey::F10 => VK_F10,
                 FunctionKey::F11 => VK_F11,
+                FunctionKey::F12 => VK_F12,
             };
             // Ідентифікатор у межах потоку; кожна клавіша має власний потік, тож достатньо коду клавіші.
             let id = i32::from(vk.0);

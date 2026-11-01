@@ -49,6 +49,9 @@ pub struct Settings {
     /// в «Чому вилітає?» для нього звичайні (Windows не відрізняє їх від зникнення живлення).
     #[serde(default)]
     pub power_off_by_button: bool,
+    /// Оверлей у грі (FPS, 1% low, CPU/GPU); за замовчуванням вимкнено.
+    #[serde(default)]
+    pub overlay: bool,
 }
 
 /// Налаштування очищення.
@@ -96,6 +99,7 @@ impl Default for Settings {
             cleanup: CleanupSettings::default(),
             update_check_on_start: false,
             power_off_by_button: false,
+            overlay: false,
         }
     }
 }

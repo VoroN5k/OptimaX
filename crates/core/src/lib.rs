@@ -12,6 +12,7 @@ pub mod finding;
 pub mod i18n;
 pub mod input;
 pub mod memory;
+pub mod overlay;
 pub mod perf;
 pub mod power;
 pub mod process;

@@ -10,6 +10,7 @@ pub mod lag;
 pub mod laptop;
 pub mod metrics;
 pub mod network;
+pub mod overlay;
 pub mod resolution;
 pub mod startup;
 pub mod system;

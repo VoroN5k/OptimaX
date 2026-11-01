@@ -5,6 +5,7 @@
 //! - [`stats`]: avg FPS, 1% / 0.1% low, перцентилі, піки frametime.
 //! - [`presentmon`]: вбудований бінарник із перевіркою SHA-256 перед **кожним** запуском.
 //! - [`recording`]: одночасний запис кадрів і системних метрик на спільній шкалі QPC.
+//! - [`live`]: живі дані для оверлею в грі (гра у фокусі, окрема сесія PresentMon).
 //! - [`watch`]: «Щойно лагнуло» — кільцевий буфер останніх секунд гри за гарячою клавішею.
 //!
 //! Без `unsafe`: права на каталог PresentMon встановлює `optimax_core::datadir`.
@@ -12,6 +13,7 @@
 pub mod csv;
 pub mod frame;
 pub mod gate;
+pub mod live;
 pub mod presentmon;
 pub mod recording;
 pub mod stats;

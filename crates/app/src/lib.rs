@@ -34,7 +34,7 @@ pub fn run() -> anyhow::Result<()> {
 #[cfg(windows)]
 mod app {
     use crate::commands::{
-        ab, audit, cleanup, diagnosis, feedback, gamemode, lag, laptop, metrics, network,
+        ab, audit, cleanup, diagnosis, feedback, gamemode, lag, laptop, metrics, network, overlay,
         resolution, startup, system, tweaks, update, upscale,
     };
     use crate::dto::StartupReport;
@@ -86,6 +86,7 @@ mod app {
         cleanup::cancel_all(&lock(&state.cleanup));
         resolution::cancel_session(state);
         lag::stop_session(state);
+        overlay::stop(state);
         if let Err(e) = ab::cancel_session(state) {
             tracing::error!("не вдалося відкотити зміну A/B-тесту при виході: {e:?}");
         }
@@ -194,6 +195,12 @@ mod app {
                 match upscale::Controller::spawn(app.handle().clone(), up, hotkey) {
                     Ok(c) => *lock(&state.upscale) = Some(c),
                     Err(e) => tracing::error!("апскейл недоступний: {e:?}"),
+                }
+                if lock(&state.settings).overlay {
+                    let handle = app.handle().clone();
+                    std::thread::Builder::new()
+                        .name("optimax-overlay-apply".into())
+                        .spawn(move || overlay::apply(&handle, true))?;
                 }
                 let handle = app.handle().clone();
                 std::thread::Builder::new()

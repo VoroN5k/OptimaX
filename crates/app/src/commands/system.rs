@@ -38,11 +38,20 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 
 /// Зберігає налаштування.
 #[tauri::command]
-pub fn set_settings(state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {
+pub fn set_settings(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> CmdResult<()> {
     settings.save()?;
     if let Some(c) = lock(&state.upscale).as_ref() {
         c.apply_settings(settings.upscale, settings.upscale_hotkey);
     }
+    let overlay = settings.overlay;
     *lock(&state.settings) = settings;
+    // Запуск / зупинка оверлею — поза потоком UI (зупинка чекає завершення PresentMon).
+    std::thread::Builder::new()
+        .name("optimax-overlay-apply".into())
+        .spawn(move || super::overlay::apply(&app, overlay))?;
     Ok(())
 }

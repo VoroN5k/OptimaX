@@ -78,6 +78,8 @@ pub struct AppState {
     pub res_test: Mutex<Option<crate::commands::resolution::ResSession>>,
     /// «Щойно лагнуло»: стеження з кільцевим буфером.
     pub lag: Mutex<Option<crate::commands::lag::LagSession>>,
+    /// Оверлей у грі (є, поки ввімкнений у налаштуваннях).
+    pub overlay: Mutex<Option<crate::commands::overlay::Controller>>,
     /// Режим гри.
     pub gamemode: Mutex<Option<crate::commands::gamemode::Watcher>>,
     /// Користувач дозволив режиму гри працювати без точки відновлення (до кінця сеансу).
@@ -124,6 +126,7 @@ impl AppState {
             ab: Mutex::new(None),
             res_test: Mutex::new(None),
             lag: Mutex::new(None),
+            overlay: Mutex::new(None),
             gamemode: Mutex::new(None),
             gamemode_allow_without_restore: Arc::new(Mutex::new(false)),
             settings: Mutex::new(Settings::load()),

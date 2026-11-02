@@ -7,6 +7,7 @@
   import Card from "./Card.svelte";
   import FindingCard from "./FindingCard.svelte";
   import Fold from "./Fold.svelte";
+  import FrameAnatomy from "./FrameAnatomy.svelte";
   import FrametimeChart from "./FrametimeChart.svelte";
 
   // Результат запису: підсумок, знахідки, радар. Спільний для «Чому лагає?» та «Історії».
@@ -105,6 +106,15 @@
         <FrametimeChart chart={result.diagnosis.chart} />
       </Fold>
     </div>
+  {/if}
+  {#if result.diagnosis.anatomy}
+    {@const an = result.diagnosis.anatomy}
+    <Fold
+      title={tk("ui.anatomy.title")}
+      summary={tk("ui.anatomy.summary", { ms: an.typical.frame_ms.toFixed(1), n: an.spikes.length })}
+    >
+      <FrameAnatomy anatomy={an} />
+    </Fold>
   {/if}
   {@render after?.()}
   {#if result.presentmon_messages.length}

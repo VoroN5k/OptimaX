@@ -470,6 +470,7 @@ mod tests {
             verdicts,
             chart: None,
             frame_gen: None,
+            anatomy: None,
         }
     }
 

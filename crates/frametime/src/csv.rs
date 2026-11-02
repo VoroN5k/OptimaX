@@ -3,7 +3,7 @@
 //! Перевірено на реальному виводі PresentMon 2.6.0 (`TimeInQPC`, `TimeInMs`) і на форматі 1.x
 //! (`TimeInSeconds`, `msBetweenPresents`). Значення `NA` означає «немає даних».
 
-use crate::frame::{FrameRecord, FrameTimestamp};
+use crate::frame::{FramePipeline, FrameRecord, FrameTimestamp};
 use crate::FrametimeError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +29,11 @@ pub struct CsvFrameParser {
     gpu_busy: Option<usize>,
     sync_interval: Option<usize>,
     allows_tearing: Option<usize>,
+    cpu_wait: Option<usize>,
+    gpu_latency: Option<usize>,
+    gpu_wait: Option<usize>,
+    until_displayed: Option<usize>,
+    in_present: Option<usize>,
 }
 
 /// Ділить рядок CSV на поля з підтримкою лапок і `""` всередині них.
@@ -98,6 +103,11 @@ impl CsvFrameParser {
             gpu_busy: find(&header, &["MsGPUBusy"]),
             sync_interval: find(&header, &["SyncInterval"]),
             allows_tearing: find(&header, &["AllowsTearing"]),
+            cpu_wait: find(&header, &["MsCPUWait"]),
+            gpu_latency: find(&header, &["MsGPULatency"]),
+            gpu_wait: find(&header, &["MsGPUWait"]),
+            until_displayed: find(&header, &["MsUntilDisplayed"]),
+            in_present: find(&header, &["MsInPresentAPI"]),
         })
     }
 
@@ -152,6 +162,13 @@ impl CsvFrameParser {
                 .filter(|v| v.fract() == 0.0 && v.abs() <= 16.0)
                 .map(|v| v as i32),
             allows_tearing: opt_f64(&f, self.allows_tearing).map(|v| v != 0.0),
+            pipeline: FramePipeline {
+                cpu_wait: opt_f64(&f, self.cpu_wait),
+                gpu_latency: opt_f64(&f, self.gpu_latency),
+                gpu_wait: opt_f64(&f, self.gpu_wait),
+                until_displayed: opt_f64(&f, self.until_displayed),
+                in_present: opt_f64(&f, self.in_present),
+            },
         }))
     }
 }
@@ -233,6 +250,29 @@ mod tests {
             })
             .collect();
         assert!(qpc.windows(2).all(|w| w[0] <= w[1]));
+    }
+
+    #[test]
+    fn real_output_has_frame_pipeline_that_adds_up() {
+        let (frames, _) = parse_csv(REAL_V2_QPC).unwrap();
+        let p = &frames[0].pipeline;
+        assert_eq!(p.cpu_wait, Some(0.0741));
+        assert_eq!(p.gpu_latency, Some(0.7724));
+        assert_eq!(p.gpu_wait, Some(15.0327));
+        assert_eq!(p.until_displayed, Some(3.8580));
+        // Інтервал між Present = очікування CPU після попереднього кадру + робота CPU над цим.
+        let mut checked = 0;
+        for w in frames.windows(2) {
+            let (prev, cur) = (&w[0], &w[1]);
+            if prev.swap_chain != cur.swap_chain || prev.process_id != cur.process_id {
+                continue;
+            }
+            if let (Some(wait), Some(busy)) = (prev.pipeline.cpu_wait, cur.ms_cpu_busy) {
+                assert!((wait + busy - cur.ms_between_presents).abs() < 0.01);
+                checked += 1;
+            }
+        }
+        assert!(checked > 100);
     }
 
     #[test]

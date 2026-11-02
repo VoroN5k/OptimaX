@@ -372,6 +372,7 @@ mod tests {
                 .into()],
                 chart: None,
                 frame_gen: None,
+                anatomy: None,
             },
             display_hz: Some(200),
             presentmon_messages: vec![],

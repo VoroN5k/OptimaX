@@ -65,4 +65,16 @@ test.describe("Діагностика", () => {
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
   });
+  test("анатомія кадру: типовий кадр, черга і що розтягнуло ривки", async ({ page }) => {
+    await mockBackend(page, { diag_state: { recording: false, last: structuredClone(gpuResult) } });
+    await page.goto("/");
+    await page.getByRole("button", { name: tk("ui.nav.diagnosis") }).click();
+    const fold = page.getByRole("button", { name: new RegExp(tk("ui.anatomy.title")) });
+    await expect(fold).toContainText(tk("ui.anatomy.summary", { ms: "8.0", n: 1 }));
+    await fold.click();
+    await expect(page.getByText(tk("ui.anatomy.queued", { pct: 34 }))).toBeVisible();
+    await expect(page.getByText(`${tk("ui.anatomy.stall.cpu_busy")} · 1`)).toBeVisible();
+    await expect(page.locator("table.spikes tbody tr")).toHaveCount(1);
+    await expect(page.locator("table.spikes tbody tr")).toContainText("55.2");
+  });
 });

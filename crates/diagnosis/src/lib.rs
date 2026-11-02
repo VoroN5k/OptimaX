@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod anatomy;
 pub mod chart;
 pub mod drivers;
 pub mod framegen;
@@ -100,6 +101,9 @@ pub struct Diagnosis {
     /// Виявлена генерація кадрів (тоді діагностика йде за шкалою, яку бачить око).
     #[serde(default)]
     pub frame_gen: Option<FrameGenInfo>,
+    /// Анатомія кадру: типовий кадр і де виникла затримка в найгірших ривках (PresentMon 2.x).
+    #[serde(default)]
+    pub anatomy: Option<anatomy::FrameAnatomy>,
 }
 
 /// Файл кешу шейдерів, змінений під час запису (за годинником, бо так його бачить ФС).
@@ -227,6 +231,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
             stats,
             chart,
             frame_gen: None,
+            anatomy: None,
         };
     };
 
@@ -305,6 +310,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
     }
     let mut verdicts: Vec<Verdict> = vec![head.into()];
     verdicts.extend(found.into_iter().map(Verdict::from));
+    let anatomy = anatomy::frame_anatomy(&a);
     Diagnosis {
         game: tl.game_name.clone(),
         stats: Some(a.stats),
@@ -312,6 +318,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
         verdicts,
         chart,
         frame_gen: None,
+        anatomy,
     }
 }
 
@@ -389,6 +396,7 @@ pub fn diagnose(rec: &Recording, ctx: &Context) -> Diagnosis {
             verdicts: vec![summary("summary.insufficient", 100, None, "", 0.0).into()],
             chart: None,
             frame_gen: None,
+            anatomy: None,
         },
     }
 }

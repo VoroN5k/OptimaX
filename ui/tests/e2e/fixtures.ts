@@ -176,6 +176,20 @@ export const gpuResult: DiagnosisResult = {
     ],
     chart: null,
     frame_gen: null,
+    anatomy: {
+      typical: { frame_ms: 8.0, cpu_busy: 6.1, cpu_wait: 1.9, gpu_latency: 3.2, gpu_busy: 7.4, gpu_wait: 0.3, until_displayed: 4.0 },
+      frames: 3751,
+      queued_share: 0.34,
+      spikes: [
+        {
+          t_ms: 12500,
+          parts: { frame_ms: 60, cpu_busy: 55.2, cpu_wait: 1.1, gpu_latency: 50.0, gpu_busy: 7.0, gpu_wait: 0.5, until_displayed: 5.0 },
+          prev_gpu_busy: 7.2,
+          stall: "cpu_busy",
+        },
+      ],
+      stall_counts: [1, 0, 0],
+    },
   },
   display_hz: 200,
   presentmon_messages: [],

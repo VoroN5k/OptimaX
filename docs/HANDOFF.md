@@ -209,8 +209,22 @@ Actions (`.github/workflows/release.yml`) збирає zip, інсталятор
   зарахованій грі, ≥ 5 с), `rules::cpu_main_thread` (≥ 90 % роботи, сну < 5 %, GPU < 90 %,
   впевненість 70–85), `rules::thread_evidence` (додається до `cpu_bound` і до «не ясно»).
   CLAUDE.md §9 оновлено.
-- Не перевірено в програмі: запис «Чому лагає?» з трасуванням потоків; вердикт у грі, що
-  впирається в CPU.
+- Перевірено в програмі (RE9, DLSS Quality): `Recording.threads` є — 141 потік гри, 7,06 млн
+  перемикань, 0 запізнілих, 0 втрачених; рендер-потік 3939 Present. Вердикт у грі, що
+  впирається в CPU, ще не перевірено.
+- **Етап 2 (зроблено, 2026-11-03): власна сесія DxgKrnl не потрібна.** PresentMon 2.6.0 уже
+  дає розклад кадру з DxgKrnl: заголовок звірено з `tests/data/presentmon-2.6.0-qpc.csv`
+  (`MsCPUBusy`, `MsCPUWait`, `MsGPULatency`, `MsGPUTime`, `MsGPUBusy`, `MsGPUWait`,
+  `MsUntilDisplayed`, `MsInPresentAPI`), визначення — `README-ConsoleApplication.md`. На цих
+  даних тест перевіряє `MsBetweenPresents(i) = MsCPUWait(i−1) + MsCPUBusy(i)`.
+  `FrameRecord.pipeline` / `FramePoint.pipeline` (`FramePipeline`, `#[serde(default)]`).
+  `diagnosis/anatomy.rs`: `frame_anatomy` → `Diagnosis.anatomy` (типовий кадр — медіани,
+  `queued_share` — частка кадрів з `MsGPULatency` > тривалості кадру, до 20 найгірших ривків зі
+  `Stall {cpu_busy, wait_gpu, wait}`: більша з частин інтервалу; «чекав на GPU», якщо GPU
+  цього чи попереднього кадру ≥ 50 % ривка). Це опис вимірів, не вердикт (правила не змінено).
+  UI: `FrameAnatomy.svelte` — згортка «Анатомія кадру» в `ResultView`.
+- Далі (етап 3): анатомія фризу з потоками (що робив головний потік під час ривка: працював /
+  блокувався й на що), диск і page faults; вбудувати в чорну скриньку.
 
 ## 2p. Чорна скринька — пункт 7, етап 1 (не закомічено)
 

@@ -28,6 +28,9 @@ pub struct FramePoint {
     /// не показано). Для генерації кадрів це і є те, що бачить око.
     #[serde(default)]
     pub display_ms: Option<f64>,
+    /// Решта розкладу кадру від PresentMon 2.x.
+    #[serde(default)]
+    pub pipeline: optimax_frametime::FramePipeline,
 }
 
 /// Стан відеокарти в момент знімка.
@@ -320,6 +323,7 @@ impl Timeline {
                 sync_interval: f.sync_interval,
                 allows_tearing: f.allows_tearing,
                 display_ms: f.ms_between_display_change,
+                pipeline: f.pipeline,
             })
             .collect();
         frames.sort_by(|a, b| a.t_ms.total_cmp(&b.t_ms));

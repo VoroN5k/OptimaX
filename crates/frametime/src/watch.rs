@@ -960,6 +960,7 @@ mod tests {
             ms_gpu_busy: None,
             sync_interval: None,
             allows_tearing: None,
+            pipeline: Default::default(),
         }
     }
 

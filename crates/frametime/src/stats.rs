@@ -217,6 +217,7 @@ mod tests {
             ms_gpu_busy: None,
             sync_interval: None,
             allows_tearing: None,
+            pipeline: Default::default(),
         };
         let frames = vec![f(1, "a"), f(2, "b"), f(2, "b"), f(2, "c")];
         assert_eq!(main_swap_chain(&frames), Some((2, "b".into())));

@@ -234,6 +234,7 @@ mod tests {
                 verdicts: verdicts.into_iter().map(Into::into).collect(),
                 chart: None,
                 frame_gen: None,
+                anatomy: None,
             },
             display_hz: Some(200),
             presentmon_messages: vec![],

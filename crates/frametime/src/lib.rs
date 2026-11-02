@@ -19,7 +19,7 @@ pub mod recording;
 pub mod stats;
 pub mod watch;
 
-pub use frame::{FrameRecord, FrameTimestamp, PresentMode};
+pub use frame::{FramePipeline, FrameRecord, FrameTimestamp, PresentMode};
 pub use gate::{EndReason, Gate, Observation, Phase, StartMode};
 pub use presentmon::{BundledPresentMon, Target};
 pub use recording::{

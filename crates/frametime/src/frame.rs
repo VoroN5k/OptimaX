@@ -37,6 +37,32 @@ pub struct FrameRecord {
     pub sync_interval: Option<i32>,
     /// Чи дозволено розриви кадру (`AllowsTearing`).
     pub allows_tearing: Option<bool>,
+    /// Розклад кадру від PresentMon 2.x (решта стовпців часу).
+    #[serde(default)]
+    pub pipeline: FramePipeline,
+}
+
+/// Розклад кадру зі стовпців PresentMon 2.x, мс. Визначення — з
+/// `README-ConsoleApplication.md` PresentMon; заголовок звірено з виводом 2.6.0
+/// (`tests/data/presentmon-2.6.0-qpc.csv`). На тих самих даних
+/// `MsBetweenPresents(i) = MsCPUWait(i−1) + MsCPUBusy(i)` і `MsGPUTime = MsGPUBusy + MsGPUWait`.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct FramePipeline {
+    /// `MsCPUWait`: скільки CPU чекав після Present, перш ніж почати наступний кадр.
+    #[serde(default)]
+    pub cpu_wait: Option<f64>,
+    /// `MsGPULatency`: від початку кадру на CPU до початку роботи GPU над ним.
+    #[serde(default)]
+    pub gpu_latency: Option<f64>,
+    /// `MsGPUWait`: скільки GPU простоював посеред роботи над кадром.
+    #[serde(default)]
+    pub gpu_wait: Option<f64>,
+    /// `MsUntilDisplayed`: від Present до показу на екрані (`None` — не показано).
+    #[serde(default)]
+    pub until_displayed: Option<f64>,
+    /// `MsInPresentAPI`: скільки тривав сам виклик Present.
+    #[serde(default)]
+    pub in_present: Option<f64>,
 }
 
 /// Шлях кадру на екран — значення колонки `PresentMode`.

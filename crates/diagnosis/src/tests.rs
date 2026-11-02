@@ -60,6 +60,7 @@ fn timeline(frametimes: &[f64], sample: impl Fn(f64, usize) -> SamplePoint) -> T
                 present_mode: PresentMode::HardwareIndependentFlip,
                 sync_interval: Some(0),
                 allows_tearing: Some(true),
+                pipeline: Default::default(),
                 display_ms: None,
             }
         })
@@ -1056,6 +1057,7 @@ fn frame(pid: u32, sc: &str, app: &str, qpc: i64, ft: f64) -> FrameRecord {
         ms_gpu_busy: Some(ft * 0.9),
         sync_interval: None,
         allows_tearing: None,
+        pipeline: Default::default(),
     }
 }
 
@@ -1692,4 +1694,59 @@ fn thread_load_counts_only_counted_play() {
     let mut short = rec.clone();
     short.segments = vec![(1000, 3000)];
     assert!(crate::timeline::threads_timeline(&short).is_none());
+}
+
+// ---- Анатомія кадру (стовпці PresentMon 2.x) ----
+
+#[test]
+fn frame_anatomy_splits_spikes_into_cpu_work_and_waiting_for_gpu() {
+    let ft = spiky();
+    let mut tl = timeline(&ft, |_, _| base_sample());
+    let spike_idx: Vec<usize> = (100..3000).step_by(250).collect();
+    let n = tl.frames.len();
+    for i in 0..n {
+        let f = tl.frames[i].frametime_ms;
+        // Звичайний кадр: CPU готує 6 мс, чекає решту; GPU працює 5 мс.
+        tl.frames[i].cpu_busy_ms = Some(f.min(6.0));
+        tl.frames[i].gpu_busy_ms = Some(5.0);
+        tl.frames[i].pipeline.gpu_latency = Some(3.0);
+        tl.frames[i].pipeline.until_displayed = Some(4.0);
+    }
+    for i in 0..n {
+        // Очікування після кадру i доповнює наступний кадр до його тривалості.
+        let next = tl.frames.get(i + 1).map_or(8.0, |f| f.frametime_ms);
+        let next_busy = tl
+            .frames
+            .get(i + 1)
+            .and_then(|f| f.cpu_busy_ms)
+            .unwrap_or(6.0);
+        tl.frames[i].pipeline.cpu_wait = Some((next - next_busy).max(0.0));
+    }
+    // Парні ривки — CPU довше готував кадр (40 мс із 40), непарні — CPU чекав, а GPU
+    // попереднього кадру працював 34 мс.
+    for (k, &i) in spike_idx.iter().enumerate() {
+        if k % 2 == 0 {
+            tl.frames[i].cpu_busy_ms = Some(39.0);
+            tl.frames[i - 1].pipeline.cpu_wait = Some(1.0);
+        } else {
+            tl.frames[i].cpu_busy_ms = Some(4.0);
+            tl.frames[i - 1].pipeline.cpu_wait = Some(36.0);
+            tl.frames[i - 1].gpu_busy_ms = Some(34.0);
+        }
+    }
+    let d = diagnose_timeline(&tl, &Context::default());
+    let a = d.anatomy.expect("анатомія");
+    assert_eq!(a.frames as usize, n);
+    assert_eq!(a.typical.gpu_busy, Some(5.0));
+    assert_eq!(a.typical.until_displayed, Some(4.0));
+    assert_eq!(a.queued_share, Some(0.0));
+    let even = spike_idx.len().div_ceil(2) as u32;
+    let odd = spike_idx.len() as u32 / 2;
+    assert_eq!(a.stall_counts, [even, odd, 0]);
+    assert!(a.spikes.iter().all(|s| s.parts.frame_ms >= 39.0));
+    // Без стовпців PresentMon 2.x — без анатомії.
+    let plain = timeline(&ft, |_, _| base_sample());
+    assert!(diagnose_timeline(&plain, &Context::default())
+        .anatomy
+        .is_none());
 }

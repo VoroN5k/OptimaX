@@ -5,6 +5,7 @@ pub mod audit;
 pub mod cleanup;
 pub mod dashboard;
 pub mod diagnosis;
+pub mod driver_online;
 pub mod feedback;
 pub mod gamemode;
 pub mod history;

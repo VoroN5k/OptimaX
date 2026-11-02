@@ -34,8 +34,8 @@ pub fn run() -> anyhow::Result<()> {
 #[cfg(windows)]
 mod app {
     use crate::commands::{
-        ab, audit, cleanup, dashboard, diagnosis, feedback, gamemode, history, lag, laptop,
-        metrics, network, overlay, resolution, startup, system, tweaks, update, upscale,
+        ab, audit, cleanup, dashboard, diagnosis, driver_online, feedback, gamemode, history, lag,
+        laptop, metrics, network, overlay, resolution, startup, system, tweaks, update, upscale,
     };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
@@ -290,6 +290,9 @@ mod app {
                 history::history_delete,
                 history::history_clear,
                 history::history_regressions,
+                history::history_driver_effects,
+                driver_online::driver_check,
+                driver_online::driver_open_page,
             ])
             .build(tauri::generate_context!())?;
         app.run(|handle, event| {

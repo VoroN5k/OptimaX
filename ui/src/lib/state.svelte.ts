@@ -1,5 +1,6 @@
 // Глобальний стан інтерфейсу (руни Svelte 5).
 import type { UpdateStatus } from "./bindings/UpdateStatus";
+import type { DriverCheck } from "./bindings/DriverCheck";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { ExecProgress } from "./bindings/ExecProgress";
 import type { ExecView } from "./bindings/ExecView";
@@ -36,6 +37,8 @@ export const ui = $state({
   measuring: false,
   /** Результат останньої перевірки оновлень (за кнопкою або при запуску, якщо дозволено). */
   update: null as UpdateStatus | null,
+  /** Результат перевірки драйвера на nvidia.com (за кнопкою або при запуску, якщо дозволено). */
+  driverCheck: null as DriverCheck | null,
   /** Мітка сцени для наступного запису (живе, поки відкрита програма). */
   scene: "",
   /** Порівняти ці записи історії, щойно відкриється вкладка «Історія» (з «Головної»). */

@@ -221,6 +221,68 @@ pub fn regressions(entries: &[HistoryEntry]) -> Vec<Regression> {
     out
 }
 
+/// Ефект оновлення драйвера на одну гру: останній запис на старому драйвері проти першого
+/// порівнянного запису на новому.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct DriverEffect {
+    /// Попередня версія драйвера.
+    pub from: String,
+    /// Поточна версія драйвера (з найсвіжішого запису історії).
+    pub to: String,
+    /// Порівняння (тренд з урахуванням похибки; `changes` показує, що ще змінилося).
+    pub comparison: RecordComparison,
+}
+
+/// Ефект останнього оновлення драйвера по іграх. Поточний драйвер — з найсвіжішого запису
+/// історії; для кожної гри береться перший запис на ньому і найближчий порівнянний запис
+/// до нього на іншому драйвері. Ігри без запису до чи після оновлення пропускаються.
+pub fn driver_effects(entries: &[HistoryEntry]) -> Vec<DriverEffect> {
+    let mut sorted: Vec<&HistoryEntry> = entries.iter().collect();
+    sorted.sort_by_key(|e| e.at_unix_ms);
+    let Some(current) = sorted.last().and_then(|e| e.state.driver.clone()) else {
+        return Vec::new();
+    };
+    let mut games: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for e in sorted.iter().rev() {
+        let game = e.game.to_ascii_lowercase();
+        if !games.contains(&game) {
+            games.push(game);
+        }
+    }
+    for game in games {
+        let of_game: Vec<&HistoryEntry> = sorted
+            .iter()
+            .copied()
+            .filter(|e| e.game.eq_ignore_ascii_case(&game))
+            .collect();
+        // Перший запис гри на поточному драйвері, після якого немає записів на іншому
+        // (інакше драйвер повертали — це не «оновлення»).
+        let Some(start) = of_game
+            .iter()
+            .rposition(|e| e.state.driver.as_deref() != Some(current.as_str()))
+            .map(|i| i + 1)
+        else {
+            continue;
+        };
+        let Some(after) = of_game.get(start) else {
+            continue;
+        };
+        let before = of_game[..start].iter().rev().find(|b| {
+            b.state.driver.is_some() && b.state.driver != after.state.driver && comparable(b, after)
+        });
+        if let (Some(before), Some(from)) = (before, before.and_then(|b| b.state.driver.clone())) {
+            out.push(DriverEffect {
+                from,
+                to: current.clone(),
+                comparison: compare(before, after),
+            });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -326,6 +388,40 @@ pub(crate) mod tests {
         assert!(regressions(&[a, other_display]).is_empty());
         // Без попереднього запису — нічого.
         assert!(regressions(&[cs]).is_empty());
+    }
+
+    #[test]
+    fn driver_effect_compares_last_old_with_first_new_record() {
+        let old_a = entry(1, 100.0, Some(1.0));
+        let old_b = entry(2, 101.0, Some(1.0));
+        let mut new_a = entry(3, 104.0, Some(1.0));
+        new_a.state.driver = Some("621.01".into());
+        let mut new_b = new_a.clone();
+        new_b.at_unix_ms = 4;
+        new_b.avg_fps = Some(150.0);
+        let mut cs = entry(2, 300.0, Some(1.0));
+        cs.game = "cs2.exe".into();
+        let r = driver_effects(&[new_b.clone(), old_a.clone(), new_a.clone(), old_b, cs]);
+        // cs2 немає запису на новому драйвері — пропущено.
+        assert_eq!(r.len(), 1);
+        let e = &r[0];
+        assert_eq!((e.from.as_str(), e.to.as_str()), ("566.36", "621.01"));
+        assert_eq!(
+            (e.comparison.older.at_unix_ms, e.comparison.newer.at_unix_ms),
+            (2, 3)
+        );
+        assert_eq!(e.comparison.trend, Trend::Same);
+        // Інший режим монітора до оновлення — не порівнюємо.
+        let mut other = entry(2, 90.0, Some(1.0));
+        other.state.display = None;
+        assert!(driver_effects(&[other, new_a.clone()]).is_empty());
+        // Повернення на старий драйвер — теж зміна: 621.01 → 566.36.
+        let mut back = entry(5, 100.0, Some(1.0));
+        back.state.driver = Some("566.36".into());
+        let r = driver_effects(&[old_a, new_a, back]);
+        assert_eq!(r.len(), 1);
+        assert_eq!((r[0].from.as_str(), r[0].to.as_str()), ("621.01", "566.36"));
+        assert!(driver_effects(&[]).is_empty());
     }
 
     #[test]

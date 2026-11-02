@@ -170,6 +170,13 @@
         </div>
         <Toggle label={tk("ui.update.auto")} bind:checked={ui.settings.update_check_on_start} onchange={() => save()} />
       </div>
+      <div class="row">
+        <div>
+          <strong>{tk("ui.driver_online.auto")}</strong>
+          <p class="small muted">{tk("ui.driver_online.auto_hint")}</p>
+        </div>
+        <Toggle label={tk("ui.driver_online.auto")} bind:checked={ui.settings.driver_check_on_start} onchange={() => save()} />
+      </div>
       <div class="actions">
         <Button variant="secondary" icon="refresh" loading={checking} disabled={installing} onclick={checkUpdate}>{tk("ui.update.check")}</Button>
         {#if ui.update?.available}

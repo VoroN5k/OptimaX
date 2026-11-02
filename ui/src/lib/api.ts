@@ -13,6 +13,8 @@ import type { DiskSummary } from "./bindings/DiskSummary";
 import type { HistoryView } from "./bindings/HistoryView";
 import type { RecordComparison } from "./bindings/RecordComparison";
 import type { Regression } from "./bindings/Regression";
+import type { DriverCheck } from "./bindings/DriverCheck";
+import type { DriverEffect } from "./bindings/DriverEffect";
 import type { LastGame } from "./bindings/LastGame";
 import type { DriveView } from "./bindings/DriveView";
 import type { DryRunView } from "./bindings/DryRunView";
@@ -87,6 +89,9 @@ export const api = {
   historyDelete: (id: string) => invoke<void>("history_delete", { id }),
   historyClear: () => invoke<number>("history_clear"),
   historyRegressions: () => invoke<Regression[]>("history_regressions"),
+  historyDriverEffects: () => invoke<DriverEffect[]>("history_driver_effects"),
+  driverCheck: () => invoke<DriverCheck>("driver_check"),
+  driverOpenPage: (url: string) => invoke<void>("driver_open_page", { url }),
   crashReport: () => invoke<CrashReport>("crash_report"),
   hardwareInfo: () => invoke<HardwareInfo>("hardware_info"),
   metricsStart: (intervalMs: number) => invoke<void>("metrics_start", { intervalMs }),

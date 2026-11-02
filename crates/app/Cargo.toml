@@ -33,6 +33,8 @@ optimax-network.workspace = true
 optimax-cleanup.workspace = true
 optimax-history.workspace = true
 flate2.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
 tauri = { workspace = true, features = [] }
 tauri-plugin-updater.workspace = true
 serde.workspace = true

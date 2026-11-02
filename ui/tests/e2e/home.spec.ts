@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { calls, mockBackend, unmocked } from "./mock";
+import { comparison, driverCheck } from "./fixtures";
 import { tk } from "./text";
 
 test.describe("Головна", () => {
@@ -7,7 +8,7 @@ test.describe("Головна", () => {
     await mockBackend(page);
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1, name: tk("ui.home.title") })).toBeVisible();
-    const tiles = page.locator("[data-tour=home-state] button");
+    const tiles = page.locator("[data-tour=home-state] button.tile");
     await expect(tiles).toHaveCount(4);
     await expect(tiles.nth(0)).toContainText(tk("diag.summary.gpu.title", { game: "re9.exe" }));
     await expect(tiles.nth(0)).toContainText(tk("ui.ago.day", { n: 2 }));
@@ -33,7 +34,7 @@ test.describe("Головна", () => {
   test("без записів — пропозиція записати гру, плитка веде в діагностику", async ({ page }) => {
     await mockBackend(page, { dashboard_last_game: null });
     await page.goto("/");
-    const tile = page.locator("[data-tour=home-state] button").first();
+    const tile = page.locator("[data-tour=home-state] button.tile").first();
     await expect(tile).toContainText(tk("ui.home.game_none"));
     await tile.click();
     await expect(page.getByRole("heading", { level: 1, name: tk("ui.diag.title") })).toBeVisible();
@@ -46,5 +47,38 @@ test.describe("Головна", () => {
     const driverDetail = tk("audit.driver.aging.detail", { gpu: "GeForce RTX 4070", version: "566.36", date: "2026-04-26" });
     // Опис драйвера видно лише на плитці (у згорнутій картці його немає).
     await expect(page.locator(".list").getByText(driverDetail)).toHaveCount(0);
+  });
+  test("драйвер: перевірка на nvidia.com лише за кнопкою, сторінка — з відповіді", async ({ page }) => {
+    await mockBackend(page);
+    await page.goto("/");
+    await expect(page.getByText(tk("ui.driver_online.hint"))).toBeVisible();
+    expect((await calls(page)).some((c) => c.cmd === "driver_check")).toBe(false);
+    await page.getByRole("button", { name: tk("ui.driver_online.check") }).click();
+    await expect(page.getByText(tk("ui.driver_online.newer", { v: "621.01", date: "2026-10-21", current: "566.36" }))).toBeVisible();
+    await page.getByRole("button", { name: tk("ui.driver_online.open_page") }).click();
+    await expect
+      .poll(async () => (await calls(page)).find((c) => c.cmd === "driver_open_page")?.args)
+      .toEqual({ url: driverCheck.page });
+  });
+
+  test("драйвер: встановлено останній — без кнопки сторінки", async ({ page }) => {
+    await mockBackend(page, { driver_check: { ...driverCheck, installed: "621.01", newer: false } });
+    await page.goto("/");
+    await page.getByRole("button", { name: tk("ui.driver_online.check") }).click();
+    await expect(page.getByText(tk("ui.driver_online.latest", { v: "621.01" }))).toBeVisible();
+    await expect(page.getByRole("button", { name: tk("ui.driver_online.open_page") })).toHaveCount(0);
+  });
+
+  test("ефект оновлення драйвера з історії веде до порівняння", async ({ page }) => {
+    const c = structuredClone(comparison);
+    c.trend = "better";
+    c.avg_fps_change_pct = 3.2;
+    await mockBackend(page, { history_driver_effects: [{ from: "566.36", to: "572.16", comparison: c }] });
+    await page.goto("/");
+    await expect(page.getByText(tk("ui.driver_online.effect", { from: "566.36", to: "572.16" }))).toBeVisible();
+    await page.getByRole("button", { name: "re9.exe +3 %" }).click();
+    await expect
+      .poll(async () => (await calls(page)).find((x) => x.cmd === "history_compare")?.args)
+      .toEqual({ a: c.older.id, b: c.newer.id });
   });
 });

@@ -10,6 +10,8 @@ import type { HistoryEntry } from "../../src/lib/bindings/HistoryEntry";
 import type { HistoryView } from "../../src/lib/bindings/HistoryView";
 import type { RecordComparison } from "../../src/lib/bindings/RecordComparison";
 import type { Regression } from "../../src/lib/bindings/Regression";
+import type { DriverCheck } from "../../src/lib/bindings/DriverCheck";
+import type { DriverEffect } from "../../src/lib/bindings/DriverEffect";
 import type { LagView } from "../../src/lib/bindings/LagView";
 import type { LastGame } from "../../src/lib/bindings/LastGame";
 import type { ProcessEntry } from "../../src/lib/bindings/ProcessEntry";
@@ -43,6 +45,9 @@ export interface Responses {
   history_delete: null;
   history_clear: number;
   history_regressions: Regression[];
+  history_driver_effects: DriverEffect[];
+  driver_check: DriverCheck;
+  driver_open_page: null;
 }
 
 const GIB = 1073741824;
@@ -60,6 +65,7 @@ export const settings: Settings = {
   upscale_hotkey: false,
   cleanup: { quarantine_days: 7, quarantine_drive: null, auto_purge: false },
   update_check_on_start: false,
+  driver_check_on_start: false,
   power_off_by_button: false,
   overlay: false,
   onboarded: true,
@@ -235,6 +241,16 @@ export const comparison: RecordComparison = {
   changes: [{ field: "driver", from: "566.36", to: "572.16" }],
 };
 
+export const driverCheck: Extract<DriverCheck, { kind: "checked" }> = {
+  kind: "checked",
+  gpu: "NVIDIA GeForce RTX 4070 SUPER",
+  installed: "566.36",
+  latest: "621.01",
+  released: "2026-10-21",
+  page: "https://www.nvidia.com/en-us/drivers/details/282412/",
+  newer: true,
+};
+
 export function defaults(): Responses {
   return {
     app_info: { version: "0.0.0-test", elevated: true, presentmon_version: "2.6.0" },
@@ -259,5 +275,8 @@ export function defaults(): Responses {
     history_delete: null,
     history_clear: 3,
     history_regressions: [],
+    history_driver_effects: [],
+    driver_check: structuredClone(driverCheck),
+    driver_open_page: null,
   };
 }

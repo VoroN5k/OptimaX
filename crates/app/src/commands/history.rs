@@ -14,9 +14,9 @@ use optimax_diagnosis::timeline::Timeline;
 use optimax_diagnosis::{diagnose, Bottleneck, Context};
 use optimax_frametime::Recording;
 use optimax_history::{
-    compare, diff, entry_id, fps_noise_pct, regressions, DisplayState, FileStamp, HistoryEntry,
-    RecordComparison, Regression, StateChange, StdDir, Store, SystemState,
-    KEEP_RECORDINGS_PER_GAME,
+    compare, diff, driver_effects, entry_id, fps_noise_pct, regressions, DisplayState,
+    DriverEffect, FileStamp, HistoryEntry, RecordComparison, Regression, StateChange, StdDir,
+    Store, SystemState, KEEP_RECORDINGS_PER_GAME,
 };
 use serde::Serialize;
 use std::io::{Read, Write};
@@ -291,6 +291,17 @@ pub async fn history_regressions() -> CmdResult<Vec<Regression>> {
         let files = dir()?;
         let (entries, _) = Store::new(&files).list().map_err(failed)?;
         Ok(regressions(&entries))
+    })
+    .await
+}
+
+/// Ефект останнього оновлення драйвера по іграх (без мережі — лише записи історії).
+#[tauri::command]
+pub async fn history_driver_effects() -> CmdResult<Vec<DriverEffect>> {
+    blocking(|| {
+        let files = dir()?;
+        let (entries, _) = Store::new(&files).list().map_err(failed)?;
+        Ok(driver_effects(&entries))
     })
     .await
 }

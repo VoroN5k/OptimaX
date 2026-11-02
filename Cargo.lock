@@ -2404,6 +2404,8 @@ dependencies = [
  "optimax-network",
  "optimax-tweaks",
  "optimax-upscale",
+ "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "sysinfo",

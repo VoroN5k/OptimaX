@@ -38,6 +38,16 @@
         })
         .catch((e) => logLocal("warn", tk("ui.update.check_failed", { message: asCmdError(e).message })));
     }
+    // Перевірка драйвера NVIDIA при запуску — теж лише якщо користувач її ввімкнув.
+    if (ui.settings.driver_check_on_start) {
+      void api
+        .driverCheck()
+        .then((c) => {
+          ui.driverCheck = c;
+          if (c.kind === "checked" && c.newer) logLocal("info", tk("ui.driver_online.newer_log", { v: c.latest }));
+        })
+        .catch((e) => logLocal("warn", tk("ui.driver_online.failed", { message: asCmdError(e).message })));
+    }
     void api.upscaleState().then((v) => {
       up.view = v;
     });

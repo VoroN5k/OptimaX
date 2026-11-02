@@ -12,6 +12,7 @@
   import { flashBg, ui } from "../lib/state.svelte";
   import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
+  import DriverOnline from "../components/DriverOnline.svelte";
   import FindingCard from "../components/FindingCard.svelte";
   import Page from "../components/Page.svelte";
   import Ring from "../components/Ring.svelte";
@@ -215,6 +216,7 @@
         {@render tile("dim", tk("ui.home.driver"), tk("ui.home.driver_none"), tk("ui.home.driver_none_sub"), config.loading, () => (ui.screen = "hardware"))}
       {/if}
     </div>
+    <DriverOnline />
   </Card>
   </div>
 

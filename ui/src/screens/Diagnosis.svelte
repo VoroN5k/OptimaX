@@ -20,6 +20,9 @@
   import StartModePicker from "../components/StartModePicker.svelte";
   import Segmented from "../components/Segmented.svelte";
   import StateView from "../components/StateView.svelte";
+  import VerdictGuide from "../components/VerdictGuide.svelte";
+  import { currentStep, wantsExample } from "../lib/tour.svelte";
+  import { EXAMPLE_RESULT } from "../lib/tourExample";
 
   /** Вкладка: «Чому лагає?» (запис гри), «Щойно лагнуло?» (стеження з буфером) чи «Чому вилітає?». */
   let tab = $state<"lag" | "watch" | "crash">("lag");
@@ -102,19 +105,32 @@
     }
   }
 
-  const stats = $derived(result?.diagnosis.stats ?? null);
-  const summary = $derived(result?.diagnosis.verdicts[0]?.finding ?? null);
+  /** Знайомство (розділ 3) без власного запису — позначений приклад, нікуди не зберігається. */
+  const example = $derived(wantsExample() && !result && !recording);
+  const shown = $derived(result ?? (example ? EXAMPLE_RESULT : null));
+  let guideOpen = $state(false);
+
+  // Знайомство веде сюди: розділ 2 — розгорнуті налаштування запису, розділ 3 — результат.
+  $effect(() => {
+    const s = currentStep();
+    if (!s || s.screen !== "diagnosis") return;
+    tab = "lag";
+    setupOpen = s.chapter === 2;
+  });
+
+  const stats = $derived(shown?.diagnosis.stats ?? null);
+  const summary = $derived(shown?.diagnosis.verdicts[0]?.finding ?? null);
   /** Цифри, що вже стоять плитками вище, — у списку доказів підсумку не повторюємо. */
   const TILE_KEYS = new Set(["diag.ev.avg_fps", "diag.ev.low1", "diag.ev.low01", "diag.ev.p99"]);
   const extra = $derived((summary?.evidence ?? []).filter((e) => !TILE_KEYS.has(e.label.key)));
   const rest = $derived(
-    (result?.diagnosis.verdicts.slice(1) ?? []).filter((v) => !(resShown && v.finding.id.startsWith("res."))),
+    (shown?.diagnosis.verdicts.slice(1) ?? []).filter((v) => !(resShown && v.finding.id.startsWith("res."))),
   );
   /** Тест роздільності має сенс, коли вузьке місце — GPU чи CPU (а не ліміт кадрів). */
   const modeLabel = $derived(tk(ui.settings.record_start === "hotkey" ? "ui.rec.mode.hotkey" : "ui.rec.mode.auto"));
   const setupSummary = $derived(`${exe.trim() || tk("ui.diag.no_game")} · ${seconds} с · ${modeLabel}`);
   const resTestable = $derived(
-    !recording && (result?.diagnosis.bottleneck === "gpu" || result?.diagnosis.bottleneck === "cpu"),
+    !recording && !!result && (result.diagnosis.bottleneck === "gpu" || result.diagnosis.bottleneck === "cpu"),
   );
 </script>
 
@@ -136,6 +152,9 @@
         { value: "crash", label: tk("ui.crash.tab_crash") },
       ]}
     />
+    <span data-tour="diag-help">
+      <Button small variant="secondary" icon="help" onclick={() => (guideOpen = true)}>{tk("ui.guide.open")}</Button>
+    </span>
   </div>
   {#if tab === "crash"}
     <CrashView />
@@ -150,8 +169,8 @@
     <div class="stack">
       <Fold title={tk("ui.diag.setup")} summary={setupOpen ? tk("ui.diag.setup_hint") : setupSummary} bind:open={setupOpen}>
         <div class="setup">
-          <ProcessPicker bind:value={exe} label={tk("ui.diag.game")} />
-          <div class="duration">
+          <div data-tour="diag-game"><ProcessPicker bind:value={exe} label={tk("ui.diag.game")} /></div>
+          <div class="duration" data-tour="diag-duration">
             <span class="small muted">{tk("ui.diag.duration")}</span>
             <Segmented
               label={tk("ui.diag.duration")}
@@ -164,7 +183,7 @@
             />
           </div>
         </div>
-        <div class="mode"><StartModePicker /></div>
+        <div class="mode" data-tour="diag-start-mode"><StartModePicker /></div>
       </Fold>
 
       {#if recording}
@@ -182,14 +201,21 @@
         </Card>
       {:else if error}
         <Card><StateView kind="error" title={tk("ui.common.error")} text={error.message} /></Card>
-      {:else if !result}
+      {:else if !shown}
         <Card><StateView kind="empty" title={tk("ui.diag.empty_title")} text={tk("ui.diag.empty_text")} /></Card>
       {/if}
 
-      {#if result && summary}
+      {#if shown && summary}
+        {#if example}
+          <div class="example" role="note">
+            <strong>{tk("ui.tour.example_title")}</strong>
+            <span>{tk("ui.tour.example_text")}</span>
+          </div>
+        {/if}
+        <div data-tour="diag-summary">
         <Card title={t(summary.title)} subtitle={t(summary.detail)}>
           {#if stats}
-            <div class="stats">
+            <div class="stats" data-tour="diag-stats">
               <div><strong>{stats.avg_fps.toFixed(1)}</strong><span>{tk("ui.diag.avg")}</span></div>
               <div><strong>{stats.low_1pct_fps.toFixed(1)}</strong><span>1% low</span></div>
               <div><strong>{stats.low_01pct_fps.toFixed(1)}</strong><span>0.1% low</span></div>
@@ -207,17 +233,18 @@
           {/if}
           <p class="small dim">
             {tk("ui.diag.confidence", { v: summary.confidence })}
-            {#if result.display_hz} · {tk("ui.diag.hz", { hz: result.display_hz })}{/if}
-            · {tk("ui.rec.counted_total", { s: Math.round(result.counted_s) })}
-            {#if result.end_reason !== "completed"} · {tk(`ui.rec.end.${result.end_reason}`)}{/if}
+            {#if shown.display_hz} · {tk("ui.diag.hz", { hz: shown.display_hz })}{/if}
+            · {tk("ui.rec.counted_total", { s: Math.round(shown.counted_s) })}
+            {#if shown.end_reason !== "completed"} · {tk(`ui.rec.end.${shown.end_reason}`)}{/if}
           </p>
         </Card>
+        </div>
 
-        <section class="findings" aria-label={tk("ui.diag.findings")}>
+        <section class="findings" data-tour="diag-findings" aria-label={tk("ui.diag.findings")}>
           <h2 class="section muted">{tk("ui.diag.findings_n", { n: rest.length })}</h2>
           {#if rest.length}
             <div class="list">
-              {#each rest as v, i (`${result.diagnosis.game}-${i}-${v.finding.id}`)}
+              {#each rest as v, i (`${shown.diagnosis.game}-${i}-${v.finding.id}`)}
                 <FindingCard
                   finding={v.finding}
                   collapsible
@@ -231,30 +258,32 @@
           {/if}
         </section>
 
-        {#if result.diagnosis.chart}
+        {#if shown.diagnosis.chart}
+          <div data-tour="diag-radar">
           <Fold
             title={tk("ui.chart.title")}
-            summary={tk("ui.chart.spikes", { n: result.diagnosis.chart.spikes_total })}
+            summary={tk("ui.chart.spikes", { n: shown.diagnosis.chart.spikes_total })}
             bind:open={chartOpen}
           >
             <p class="small muted fold-hint">{tk("ui.chart.subtitle")}</p>
-            <FrametimeChart chart={result.diagnosis.chart} />
+            <FrametimeChart chart={shown.diagnosis.chart} />
           </Fold>
+          </div>
         {/if}
-        {#if resTestable && result}
+        {#if resTestable && shown}
           <Fold title={tk("ui.res.title")} summary={tk("ui.res.subtitle")} bind:open={resOpen} keep>
             <ResolutionTest
-              game={result.diagnosis.game}
+              game={shown.diagnosis.game}
               bind:hasReport={resShown}
               bind:active={resActive}
               onupdated={reloadResult}
             />
           </Fold>
         {/if}
-        {#if result.presentmon_messages.length}
+        {#if shown.presentmon_messages.length}
           <details class="pm small muted">
             <summary>{tk("ui.diag.pm_messages")}</summary>
-            <pre class="mono">{result.presentmon_messages.join("\n")}</pre>
+            <pre class="mono">{shown.presentmon_messages.join("\n")}</pre>
           </details>
         {/if}
       {/if}
@@ -268,16 +297,39 @@
   {/snippet}
   {#snippet primary()}
     {#if tab === "lag"}
-      <Button variant="primary" icon="play" disabled={!exe.trim() || recording} loading={recording} onclick={start}>
+      <span data-tour="diag-start"><Button variant="primary" icon="play" disabled={!exe.trim() || recording} loading={recording} onclick={start}>
         {tk("ui.diag.start")}
-      </Button>
+      </Button></span>
     {/if}
   {/snippet}
 </Page>
 
+{#if guideOpen}
+  <VerdictGuide onclose={() => (guideOpen = false)} />
+{/if}
+
 <style>
   .tabs {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(var(--space) * 3);
     margin-bottom: calc(var(--space) * 4);
+  }
+  .example {
+    display: grid;
+    gap: 2px;
+    padding: calc(var(--space) * 3) calc(var(--space) * 4);
+    border: 1px dashed var(--warn);
+    border-radius: var(--radius-md);
+    background: var(--bg-input);
+    font-size: 13px;
+  }
+  .example strong {
+    color: var(--warn);
+  }
+  .example span {
+    color: var(--text-muted);
   }
   .stack {
     display: grid;

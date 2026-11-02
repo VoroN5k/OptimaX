@@ -8,6 +8,8 @@
   import BackgroundDots from "./components/BackgroundDots.svelte";
   import LogPanel from "./components/LogPanel.svelte";
   import Sidebar from "./components/Sidebar.svelte";
+  import Tour from "./components/Tour.svelte";
+  import { startTour } from "./lib/tour.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
   import Analysis from "./screens/Analysis.svelte";
   import Backups from "./screens/Backups.svelte";
@@ -94,7 +96,19 @@
         }
       }),
     ];
-    return () => subs.forEach((p) => void p.then((u) => u()));
+    // Перший запуск: знайомство після заставки (вона ховає вміст, поки грає).
+    let tourTimer: ReturnType<typeof setTimeout> | undefined;
+    if (!ui.settings.onboarded) {
+      const wait = () => {
+        if (document.documentElement.classList.contains("splashing")) tourTimer = setTimeout(wait, 200);
+        else startTour();
+      };
+      wait();
+    }
+    return () => {
+      clearTimeout(tourTimer);
+      subs.forEach((p) => void p.then((u) => u()));
+    };
   });
 
   // Фон — лише на «Аналізі» й «Діагностиці»; вимикається в режимі гри, під час вимірювань,
@@ -155,6 +169,7 @@
     <LogPanel />
   </main>
 </div>
+<Tour />
 
 <style>
   .shell {

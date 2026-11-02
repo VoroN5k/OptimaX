@@ -48,4 +48,8 @@ power_off_by_button: boolean,
 /**
  * Оверлей у грі (FPS, 1% low, CPU/GPU); за замовчуванням вимкнено.
  */
-overlay: boolean, };
+overlay: boolean, 
+/**
+ * Знайомство з програмою пройдено або пропущено (більше не показується саме).
+ */
+onboarded: boolean, };

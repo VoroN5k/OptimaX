@@ -108,6 +108,7 @@
 {/snippet}
 
 <Page title={tk("ui.home.title")} subtitle={tk("ui.home.subtitle")}>
+  <div data-tour="home-state">
   <Card title={tk("ui.home.state")}>
     <div class="tiles">
       {#if game.data}
@@ -175,6 +176,7 @@
       {/if}
     </div>
   </Card>
+  </div>
 
   <section class="config" bind:this={configEl} aria-label={tk("ui.analysis.title")}>
     <h2 class="section muted">{tk("ui.home.config_section")}</h2>

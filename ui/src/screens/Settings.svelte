@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { startTour } from "../lib/tour.svelte";
   import { api, asCmdError } from "../lib/api";
   import type { AnimationLevel } from "../lib/bindings/AnimationLevel";
   import type { DotsStats } from "../lib/dots";
@@ -137,6 +138,13 @@
           <p class="small muted">{tk("ui.settings.record_sound_hint")}</p>
         </div>
         <Toggle label={tk("ui.settings.record_sound")} bind:checked={ui.settings.record_sound} onchange={() => save()} />
+      </div>
+      <div class="row">
+        <div>
+          <strong>{tk("ui.settings.tour")}</strong>
+          <p class="small muted">{tk("ui.settings.tour_hint")}</p>
+        </div>
+        <Button small variant="secondary" onclick={startTour}>{tk("ui.settings.tour_run")}</Button>
       </div>
       <div class="row">
         <div>

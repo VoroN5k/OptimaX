@@ -98,6 +98,8 @@ pub struct AppState {
     pub net_test: Mutex<Option<optimax_network::CancelToken>>,
     /// Очищення диска: скан, план, точка відновлення сесії.
     pub cleanup: Mutex<crate::commands::cleanup::CleanupState>,
+    /// Кеш головного екрана (аудит і скан диска — раз за запуск).
+    pub dashboard: Mutex<crate::commands::dashboard::DashCache>,
     /// Останній результат діагностики (для звіту для відгуку).
     pub last_diagnosis: Mutex<Option<crate::dto::DiagnosisResult>>,
     /// Останні рядки журналу дій (для звіту для відгуку), не більше [`LOG_TAIL`].
@@ -138,6 +140,7 @@ impl AppState {
             upscale: Mutex::new(None),
             net_test: Mutex::new(None),
             cleanup: Mutex::new(Default::default()),
+            dashboard: Mutex::new(Default::default()),
             last_diagnosis: Mutex::new(None),
             log_tail: Mutex::new(VecDeque::with_capacity(LOG_TAIL)),
             processes: Mutex::new(None),

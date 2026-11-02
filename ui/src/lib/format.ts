@@ -41,6 +41,15 @@ export function size(bytes: number | null | undefined): string {
   return `${v.toFixed(i >= 3 ? 1 : 0)} ${units[i]}`;
 }
 
+/** «щойно», «5 хв тому», «2 дні тому» (тексти — з каталогу). */
+export function ago(unixSec: number, tk: (key: string, args?: Record<string, string | number>) => string): string {
+  const s = Math.max(0, Date.now() / 1000 - unixSec);
+  if (s < 60) return tk("ui.ago.now");
+  if (s < 3600) return tk("ui.ago.min", { n: Math.floor(s / 60) });
+  if (s < 86400) return tk("ui.ago.hour", { n: Math.floor(s / 3600) });
+  return tk("ui.ago.day", { n: Math.floor(s / 86400) });
+}
+
 export function date(unixSec: number): string {
   return new Date(unixSec * 1000).toLocaleDateString("uk-UA");
 }

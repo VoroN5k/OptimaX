@@ -8,6 +8,9 @@ import type { AppInfo } from "./bindings/AppInfo";
 import type { ApplyResult } from "./bindings/ApplyResult";
 import type { AuditReport } from "./bindings/AuditReport";
 import type { CmdError } from "./bindings/CmdError";
+import type { ConfigSummary } from "./bindings/ConfigSummary";
+import type { DiskSummary } from "./bindings/DiskSummary";
+import type { LastGame } from "./bindings/LastGame";
 import type { DriveView } from "./bindings/DriveView";
 import type { DryRunView } from "./bindings/DryRunView";
 import type { ExecProgress } from "./bindings/ExecProgress";
@@ -72,6 +75,9 @@ export const api = {
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
 
   runAudit: () => invoke<AuditReport>("run_audit"),
+  dashboardLastGame: () => invoke<LastGame | null>("dashboard_last_game"),
+  dashboardConfig: (refresh: boolean) => invoke<ConfigSummary>("dashboard_config", { refresh }),
+  dashboardDisk: (refresh: boolean) => invoke<DiskSummary>("dashboard_disk", { refresh }),
   crashReport: () => invoke<CrashReport>("crash_report"),
   hardwareInfo: () => invoke<HardwareInfo>("hardware_info"),
   metricsStart: (intervalMs: number) => invoke<void>("metrics_start", { intervalMs }),

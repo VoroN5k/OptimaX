@@ -227,6 +227,7 @@ pub fn diag_start(
             *lock(&app.state::<AppState>().recording) = None;
             let _ = match result {
                 Ok(r) => {
+                    super::dashboard::remember_last_game(&r);
                     *lock(&app.state::<AppState>().last_diagnosis) = Some(r.clone());
                     app.emit("diag-done", r)
                 }

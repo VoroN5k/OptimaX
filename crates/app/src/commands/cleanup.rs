@@ -449,67 +449,122 @@ pub fn cleanup_scan_start(
         let rules = c.rules();
         (t, rules, c.rule_issues.clone())
     };
-    let threads = std::thread::available_parallelism()
-        .map(|n| (n.get() / 2).clamp(1, 6))
-        .unwrap_or(2);
     let spawned = std::thread::Builder::new()
         .name("optimax-cleanup-scan".into())
         .spawn(move || {
-            tracing::info!(
-                "скан {root} ({})",
-                if full {
-                    "повний"
-                } else {
-                    "за правилами"
-                }
-            );
-            let opts = ScanOptions {
-                drive: root.clone(),
-                full,
-                now_unix: now_unix(),
-                threads,
-            };
-            // Проміжний звіт лише для показу: вибір і сухий прогін ідуть за остаточним.
-            let report = scan(
-                &StdFs,
-                &rules,
-                &opts,
-                &cancel,
-                &|p| {
-                    let _ = app.emit("cleanup-progress", p);
-                },
-                &|r| {
-                    let _ = app.emit("cleanup-scan-partial", make_view(r.clone(), issues.clone()));
-                },
-            );
-            if !report.cancelled {
-                save_snapshot(&report);
-            }
-            tracing::info!(
-                "скан {root}: {} об'єктів за правилами, {} невідомих, {} мс{}",
-                report.items.len(),
-                report.unknown.len(),
-                report.duration_ms,
-                if report.cancelled {
-                    " (скасовано)"
-                } else {
-                    ""
-                }
-            );
-            let state = app.state::<AppState>();
-            let issues = {
-                let mut c = lock(&state.cleanup);
-                c.report = Some(report.clone());
-                c.scan = None;
-                c.rule_issues.clone()
-            };
-            let _ = app.emit("cleanup-scan-done", make_view(report, issues));
+            run_scan(&app, &root, full, &cancel, &rules, issues, true);
         });
     if let Err(e) = spawned {
         lock(&state.cleanup).scan = None;
         return Err(failed(e));
     }
     Ok(())
+}
+
+/// Сканує диск (блокує потік). `cancel` уже стоїть у `CleanupState::scan` — тут знімається.
+/// `keep` — запам'ятати звіт для екрана «Очищення» (інакше лише повернути).
+fn run_scan(
+    app: &AppHandle,
+    root: &str,
+    full: bool,
+    cancel: &CancelToken,
+    rules: &RuleSet,
+    issues: Vec<String>,
+    keep: bool,
+) -> ScanView {
+    let threads = std::thread::available_parallelism()
+        .map(|n| (n.get() / 2).clamp(1, 6))
+        .unwrap_or(2);
+    tracing::info!(
+        "скан {root} ({})",
+        if full {
+            "повний"
+        } else {
+            "за правилами"
+        }
+    );
+    let opts = ScanOptions {
+        drive: root.to_string(),
+        full,
+        now_unix: now_unix(),
+        threads,
+    };
+    // Проміжний звіт лише для показу: вибір і сухий прогін ідуть за остаточним.
+    let report = scan(
+        &StdFs,
+        rules,
+        &opts,
+        cancel,
+        &|p| {
+            let _ = app.emit("cleanup-progress", p);
+        },
+        &|r| {
+            if keep {
+                let _ = app.emit("cleanup-scan-partial", make_view(r.clone(), issues.clone()));
+            }
+        },
+    );
+    if !report.cancelled {
+        save_snapshot(&report);
+    }
+    tracing::info!(
+        "скан {root}: {} об'єктів за правилами, {} невідомих, {} мс{}",
+        report.items.len(),
+        report.unknown.len(),
+        report.duration_ms,
+        if report.cancelled {
+            " (скасовано)"
+        } else {
+            ""
+        }
+    );
+    let state = app.state::<AppState>();
+    let issues = {
+        let mut c = lock(&state.cleanup);
+        if keep {
+            c.report = Some(report.clone());
+        }
+        c.scan = None;
+        c.rule_issues.clone()
+    };
+    let view = make_view(report, issues);
+    if keep {
+        let _ = app.emit("cleanup-scan-done", view.clone());
+    }
+    view
+}
+
+/// Швидкий скан системного диска за правилами для головного екрана (блокує потік; лише
+/// метадані, нічого не видаляє). Звіт стає й звітом екрана «Очищення», якщо там ще порожньо.
+pub(crate) fn scan_system_drive(app: &AppHandle) -> CmdResult<ScanView> {
+    let root = system_drive();
+    let state = app.state::<AppState>();
+    let (cancel, rules, issues, keep) = {
+        let mut c = lock(&state.cleanup);
+        if let Some(why) = c.busy() {
+            return Err(failed(why));
+        }
+        let t = CancelToken::new();
+        c.scan = Some(t.clone());
+        let keep = c.report.is_none();
+        let rules = c.rules();
+        (t, rules, c.rule_issues.clone(), keep)
+    };
+    Ok(run_scan(app, &root, false, &cancel, &rules, issues, keep))
+}
+
+/// Останній завершений скан системного диска цієї сесії (з екрана «Очищення» чи головного).
+pub(crate) fn last_system_scan(state: &AppState) -> Option<ScanView> {
+    let root = system_drive();
+    let c = lock(&state.cleanup);
+    let report = c
+        .report
+        .as_ref()
+        .filter(|r| !r.cancelled && path::eq_ci(&r.drive, &root))?
+        .clone();
+    let issues = c.rule_issues.clone();
+    drop(c);
+    Some(make_view(report, issues))
 }
 
 fn save_snapshot(report: &ScanReport) {

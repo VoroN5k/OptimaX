@@ -2,6 +2,7 @@
 
 pub mod ab;
 pub mod audit;
+pub mod blackbox;
 pub mod cleanup;
 pub mod dashboard;
 pub mod diagnosis;
@@ -45,6 +46,8 @@ pub(crate) fn record_game(
     event: &'static str,
 ) -> CmdResult<Recording> {
     let state = app.state::<AppState>();
+    // Чорна скринька чекає до кінця запису (одна сесія PresentMon і DPC).
+    let _pause = blackbox::Pause::new(app);
     let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
     let mut options = RecordOptions::new(
         Target::ProcessName(game),

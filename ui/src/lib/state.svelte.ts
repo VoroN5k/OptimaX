@@ -43,6 +43,8 @@ export const ui = $state({
   scene: "",
   /** Порівняти ці записи історії, щойно відкриється вкладка «Історія» (з «Головної»). */
   pendingCompare: null as [string, string] | null,
+  /** Підсумок цієї сесії чорної скриньки сховано (до перезапуску програми). */
+  blackboxHidden: null as string | null,
 });
 
 export const log = $state({ lines: [] as LogLine[] });

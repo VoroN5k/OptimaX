@@ -240,6 +240,9 @@ fn watch_loop(
                                 skipped: report.skipped.clone(),
                             },
                         );
+                        if profile.black_box {
+                            super::blackbox::start(app, &game.name);
+                        }
                         session = Some(report);
                         state = WatchState::Active { profile_exe, game };
                     }
@@ -261,6 +264,7 @@ fn watch_loop(
                 }
             }
             Some(WatchEvent::GameExited) => {
+                super::blackbox::finish(app);
                 if let (Some(report), WatchState::Active { game, .. }) = (session.take(), &state) {
                     finish(app, engine, &game.name, &report);
                 }
@@ -273,6 +277,7 @@ fn watch_loop(
             }
         }
     }
+    super::blackbox::finish(app);
     if let (Some(report), WatchState::Active { game, .. }) = (session.take(), &state) {
         finish(app, engine, &game.name, &report);
     }

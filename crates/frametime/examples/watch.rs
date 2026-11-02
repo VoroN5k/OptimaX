@@ -4,6 +4,9 @@
 //! адміністратора (потрібно для PresentMon і трасування DPC). Грайте; `Ctrl+Shift+F11` зберігає
 //! останні 30 с — приклад друкує, що потрапило в знімок. Раз на 10 с і в кінці — CPU (% усього
 //! процесора) і пам'ять цього процесу (семплер + ETW + буфер) і PresentMon.
+//!
+//! Третій аргумент — поріг фризу в мс (чорна скринька, напр. `100`): кадри, довші за поріг,
+//! зберігаються самі, приклад друкує кожен фриз і що потрапило в знімок навколо нього.
 
 use optimax_frametime::watch::{WatchEvent, WatchOptions, Watcher};
 use optimax_frametime::{BundledPresentMon, Target};
@@ -34,15 +37,13 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("вкажіть exe гри: --example watch -- game.exe [секунди]");
     };
     let seconds: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(120);
+    let freeze_ms: Option<f64> = args.next().and_then(|s| s.parse().ok());
 
     let pm = BundledPresentMon::install_default()?;
     let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
-    let (watcher, events) = Watcher::start(
-        &pm,
-        WatchOptions::new(Target::ProcessName(game.clone())),
-        Box::new(SysinfoSource::new()),
-        gpu,
-    )?;
+    let mut options = WatchOptions::new(Target::ProcessName(game.clone()));
+    options.freeze_ms = freeze_ms;
+    let (watcher, events) = Watcher::start(&pm, options, Box::new(SysinfoSource::new()), gpu)?;
     println!("Стежу за {game} {seconds} с. Ctrl+Shift+F11 у грі — зберегти останні 30 с.");
 
     let own = std::env::current_exe()?
@@ -71,6 +72,28 @@ fn main() -> anyhow::Result<()> {
                     dpc.map_or(0, |t| t.long.len()),
                 );
             }
+            Ok(WatchEvent::Freezes {
+                recording,
+                freezes,
+                failure,
+            }) => {
+                for f in &freezes {
+                    println!(
+                        "фриз: {:.0} мс на {:.1} с знімка",
+                        f.frame_ms,
+                        f.t_ms / 1000.0
+                    );
+                }
+                match (recording, failure) {
+                    (Some(r), _) => println!(
+                        "  знімок фризів: {} кадрів, гри {:.1} с, DPC подій {}",
+                        r.frames.len(),
+                        r.counted_seconds(),
+                        r.dpc_trace.as_ref().map_or(0, |t| t.events)
+                    ),
+                    (None, f) => println!("  знімок фризів не вдався: {f:?}"),
+                }
+            }
             Ok(WatchEvent::CaptureFailed { reason, .. }) => {
                 println!("знімок не вдався: {reason:?}")
             }
@@ -93,7 +116,7 @@ fn main() -> anyhow::Result<()> {
             println!("CPU: OptimaX {oc:.2} % ({om} МіБ), PresentMon {pc:.2} % ({pmm} МіБ)");
             match status {
                 Some(s) => println!(
-                    "буфер: гра {} · у фокусі {} · {:.0} с гри · DPC {}",
+                    "буфер: гра {} · у фокусі {} · {:.0} с гри (усього {:.0} с) · DPC {}",
                     if s.game_running {
                         "запущена"
                     } else {
@@ -101,6 +124,7 @@ fn main() -> anyhow::Result<()> {
                     },
                     if s.in_game { "так" } else { "ні" },
                     s.buffered_s,
+                    s.played_s,
                     if s.dpc { "є" } else { "немає" }
                 ),
                 None => println!("буфер: стану ще немає (цикл стеження не відповідає?)"),

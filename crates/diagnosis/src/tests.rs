@@ -247,6 +247,29 @@ fn stutter_attributed_to_disk() {
 }
 
 #[test]
+fn freeze_causes_are_per_moment_and_honest() {
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    let (first, second) = (spikes[0], spikes[1]);
+    // Диск — лише біля першого піку.
+    let tl = timeline(&ft, |t, _| {
+        let mut s = base_sample();
+        if (first - t).abs() <= 150.0 {
+            s.disk_bytes_per_sec = 150 << 20;
+        }
+        s
+    });
+    let c = freeze_causes_timeline(&tl, None, &[first, second]);
+    assert_eq!(c, vec![vec![rules::CauseKind::Disk], vec![]]);
+    // Без кадрів — по порожньому списку на кожен момент, без вигадок.
+    let empty = timeline(&[], |_, _| base_sample());
+    assert_eq!(
+        freeze_causes_timeline(&empty, None, &[1.0]),
+        vec![Vec::<rules::CauseKind>::new()]
+    );
+}
+
+#[test]
 fn stutter_without_cause_is_honest() {
     let tl = timeline(&spiky(), |_, _| base_sample());
     let d = diagnose_timeline(&tl, &Context::default());

@@ -15,6 +15,7 @@ import type { RecordComparison } from "./bindings/RecordComparison";
 import type { Regression } from "./bindings/Regression";
 import type { DriverCheck } from "./bindings/DriverCheck";
 import type { DriverEffect } from "./bindings/DriverEffect";
+import type { BlackBoxView } from "./bindings/BlackBoxView";
 import type { LastGame } from "./bindings/LastGame";
 import type { DriveView } from "./bindings/DriveView";
 import type { DryRunView } from "./bindings/DryRunView";
@@ -92,6 +93,7 @@ export const api = {
   historyDriverEffects: () => invoke<DriverEffect[]>("history_driver_effects"),
   driverCheck: () => invoke<DriverCheck>("driver_check"),
   driverOpenPage: (url: string) => invoke<void>("driver_open_page", { url }),
+  blackboxState: () => invoke<BlackBoxView>("blackbox_state"),
   crashReport: () => invoke<CrashReport>("crash_report"),
   hardwareInfo: () => invoke<HardwareInfo>("hardware_info"),
   metricsStart: (intervalMs: number) => invoke<void>("metrics_start", { intervalMs }),
@@ -186,6 +188,7 @@ type Events = {
   "cleanup-progress": ScanProgress;
   "cleanup-scan-partial": ScanView;
   "update-progress": UpdateProgress;
+  blackbox: BlackBoxView;
   "cleanup-scan-done": ScanView;
   "cleanup-exec-progress": ExecProgress;
   "cleanup-exec-done": ExecView;

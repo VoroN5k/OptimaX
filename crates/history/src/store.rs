@@ -135,7 +135,7 @@ pub fn entry_id(game: &str, at_unix_ms: i64) -> String {
 }
 
 /// Ідентифікатор із інтерфейсу: лише те, що могла створити [`entry_id`].
-fn checked(id: &str) -> Result<&str, HistoryError> {
+pub(crate) fn checked(id: &str) -> Result<&str, HistoryError> {
     let ok = !id.is_empty()
         && id.len() <= 100
         && !id.starts_with('.')

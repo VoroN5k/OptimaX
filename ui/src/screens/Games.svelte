@@ -50,6 +50,7 @@
       gpu: null,
       exe_path: null,
       last_test: null,
+      black_box: false,
     };
   }
 
@@ -218,6 +219,8 @@
             <dd>{p.stop_services.join(", ") || "—"}</dd>
             <dt>{tk("ui.games.purge")}</dt>
             <dd>{p.purge_standby_when_low ? tk("ui.common.yes") : tk("ui.common.no")}</dd>
+            <dt>{tk("ui.games.black_box")}</dt>
+            <dd>{p.black_box ? tk("ui.common.yes") : tk("ui.common.no")}</dd>
             <dt>{tk("ui.games.upscale")}</dt>
             <dd>{p.upscale ? tk(`upscale.filter.${p.upscale.filter}`) : tk("ui.games.upscale_global")}</dd>
             <dt>{tk("ui.games.gpu")}</dt>
@@ -290,6 +293,10 @@
           <span>{tk("ui.games.purge")}<br /><span class="small dim">{t({ key: "tweak.standby_purge.performance", args: {} })}</span></span>
           <Toggle label={tk("ui.games.purge")} bind:checked={editing.purge_standby_when_low} />
         </div>
+        <div class="toggle-row">
+          <span>{tk("ui.games.black_box")}<br /><span class="small dim">{tk("ui.games.black_box_hint")}</span></span>
+          <Toggle label={tk("ui.games.black_box")} bind:checked={editing.black_box} />
+        </div>
         <div class="field">
           <div class="toggle-row">
             <span>{tk("ui.games.upscale_own")}<br /><span class="small dim">{tk("ui.games.upscale_own_hint")}</span></span>
@@ -339,6 +346,8 @@
       <dd class="mono">{preview.profile.stop_services.join(", ") || "—"}</dd>
       <dt>{tk("ui.games.purge")}</dt>
       <dd>{preview.profile.purge_standby_when_low ? tk("ui.common.yes") : tk("ui.common.no")}</dd>
+      <dt>{tk("ui.games.black_box")}</dt>
+      <dd>{preview.profile.black_box ? tk("ui.common.yes") : tk("ui.common.no")}</dd>
       <dt>{tk("ui.games.upscale")}</dt>
       <dd>{preview.profile.upscale ? tk(`upscale.filter.${preview.profile.upscale.filter}`) : tk("ui.games.upscale_global")}</dd>
     </dl>

@@ -80,6 +80,10 @@ pub struct AppState {
     pub res_test: Mutex<Option<crate::commands::resolution::ResSession>>,
     /// «Щойно лагнуло»: стеження з кільцевим буфером.
     pub lag: Mutex<Option<crate::commands::lag::LagSession>>,
+    /// Чорна скринька (сесія режиму гри з автоматичними знімками фризів).
+    pub blackbox: Mutex<Option<crate::commands::blackbox::BlackBox>>,
+    /// Лічильник сесій чорної скриньки.
+    pub blackbox_seq: Mutex<u64>,
     /// Оверлей у грі (є, поки ввімкнений у налаштуваннях).
     pub overlay: Mutex<Option<crate::commands::overlay::Controller>>,
     /// Режим гри.
@@ -131,6 +135,8 @@ impl AppState {
             ab: Mutex::new(None),
             res_test: Mutex::new(None),
             lag: Mutex::new(None),
+            blackbox: Mutex::new(None),
+            blackbox_seq: Mutex::new(0),
             overlay: Mutex::new(None),
             gamemode: Mutex::new(None),
             gamemode_allow_without_restore: Arc::new(Mutex::new(false)),

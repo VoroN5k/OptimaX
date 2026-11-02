@@ -193,6 +193,8 @@ pub fn diag_start(
         .spawn(move || {
             let result = (|| -> CmdResult<DiagnosisResult> {
                 let state = app.state::<AppState>();
+                // Чорна скринька чекає до кінця запису (одна сесія PresentMon і DPC).
+                let _pause = super::blackbox::Pause::new(&app);
                 let pm = state.presentmon()?;
                 let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
                 let mut options = RecordOptions::new(target, Duration::from_secs(u64::from(total)))

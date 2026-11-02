@@ -71,6 +71,10 @@ pub struct GameProfile {
     /// Результат останньої перевірки профілю A/B-тестом.
     #[serde(default)]
     pub last_test: Option<ProfileTest>,
+    /// Чорна скринька: поки йде сесія режиму гри, фризи зберігаються самі (стеження кадрів і
+    /// метрик, ≈0,5 % CPU). Систему не змінює.
+    #[serde(default)]
+    pub black_box: bool,
 }
 
 /// Чим закінчилась перевірка профілю A/B-тестом.
@@ -112,6 +116,7 @@ impl GameProfile {
             gpu: None,
             exe_path: None,
             last_test: None,
+            black_box: false,
         }
     }
 
@@ -180,6 +185,7 @@ impl GameProfile {
                         .then(|| p.to_string())
                 }),
                 last_test: self.last_test.clone(),
+                black_box: self.black_box,
             },
             warnings,
         ))
@@ -308,6 +314,7 @@ mod tests {
             gpu: None,
             exe_path: None,
             last_test: None,
+            black_box: false,
         };
         let (clean, warnings) = p.sanitized().unwrap();
         assert_eq!(clean.lower_background, vec!["chrome.exe"]);

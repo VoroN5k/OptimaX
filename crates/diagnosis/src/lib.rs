@@ -324,6 +324,45 @@ pub fn upscale_advice(bottleneck: Bottleneck, confidence: u8) -> Option<Finding>
     Some(b.build())
 }
 
+/// Причини окремих фризів (чорна скринька) за шкалою: для кожного моменту `times_ms` — ознаки,
+/// що були поруч (±[`rules::WINDOW_MS`]), у порядку [`rules::CauseKind::ALL`] (конкретніші
+/// раніше). Порожній список — збігу ні з чим немає. Це збіг у часі, а не доведена причина.
+pub fn freeze_causes_timeline(
+    tl: &Timeline,
+    display_hz: Option<u32>,
+    times_ms: &[f64],
+) -> Vec<Vec<rules::CauseKind>> {
+    let Some(a) = Analysis::new(tl, display_hz) else {
+        return vec![Vec::new(); times_ms.len()];
+    };
+    let ctx = rules::CauseContext::new(&a);
+    times_ms
+        .iter()
+        .map(|&t| {
+            rules::CauseKind::ALL
+                .into_iter()
+                .filter(|&k| ctx.hit_near(&a, k, t))
+                .collect()
+        })
+        .collect()
+}
+
+/// Те саме для знімка (з записами кешу шейдерів з `ctx`).
+pub fn freeze_causes(
+    rec: &Recording,
+    ctx: &Context,
+    times_ms: &[f64],
+) -> Vec<Vec<rules::CauseKind>> {
+    let Some(mut tl) = Timeline::from_recording(rec) else {
+        return vec![Vec::new(); times_ms.len()];
+    };
+    if let Some(start) = rec.start_unix_ms {
+        let end_ms = tl.frames.last().map_or(0.0, |f| f.t_ms);
+        tl.shader_writes = shader_writes(&ctx.shader_cache_files, start, end_ms);
+    }
+    freeze_causes_timeline(&tl, ctx.display_hz, times_ms)
+}
+
 /// Діагностика запису. Якщо кадрів гри немає — «недостатньо даних».
 pub fn diagnose(rec: &Recording, ctx: &Context) -> Diagnosis {
     match Timeline::from_recording(rec) {

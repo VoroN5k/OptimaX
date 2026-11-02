@@ -8,6 +8,11 @@
 //!
 //! Зараховується лише час, коли гра на передньому плані й малює кадри, після [`RESUME_WARMUP`]
 //! (як у звичайному записі: перші секунди після Alt+Tab — не гра). Нічого в системі не змінює.
+//!
+//! «Чорна скринька» ([`WatchOptions::freeze_ms`]): кадр головного swap chain гри, довший за
+//! поріг, у зарахованій грі — фриз. Через [`DRAIN`] після [`FREEZE_AFTER`] від першого фризу
+//! вирізається вікно [`FREEZE_WINDOW`] навколо нього (фризи, що в нього потрапили, — разом);
+//! знімки не частіше за [`FREEZE_COOLDOWN`] ([`FreezeTracker`] — чиста логіка).
 
 use crate::csv::CsvFrameParser;
 use crate::frame::{FrameRecord, FrameTimestamp};
@@ -36,6 +41,14 @@ pub const KEEP: Duration = Duration::from_secs(40);
 pub const DRAIN: Duration = Duration::from_millis(2500);
 /// Найменше зарахованої гри у вікні, з якого ще є сенс робити висновки.
 pub const MIN_GAME: Duration = Duration::from_secs(5);
+/// Вікно знімка навколо фризу.
+pub const FREEZE_WINDOW: Duration = Duration::from_secs(20);
+/// Скільки секунд після фризу потрапляє в знімок.
+pub const FREEZE_AFTER: Duration = Duration::from_secs(2);
+/// Найменший проміжок між кінцями знімків фризів.
+pub const FREEZE_COOLDOWN: Duration = Duration::from_secs(10);
+/// Як часто перераховувати головний swap chain гри.
+const MAIN_CHAIN_EVERY: Duration = Duration::from_secs(1);
 /// Такт основного циклу.
 const TICK: Duration = Duration::from_millis(100);
 /// Як часто перевіряти, чи процес гри ще живий.
@@ -66,6 +79,10 @@ pub struct WatchOptions {
     pub sound: bool,
     /// Повідомлення поверх гри; `None` — без них.
     pub notices: Option<WatchNotices>,
+    /// Знімок за гарячою клавішею Ctrl+Shift+F11.
+    pub hotkey: bool,
+    /// Чорна скринька: кадр від стількох мс — фриз, знімок навколо нього робиться сам.
+    pub freeze_ms: Option<f64>,
 }
 
 impl WatchOptions {
@@ -81,6 +98,8 @@ impl WatchOptions {
             },
             sound: false,
             notices: None,
+            hotkey: true,
+            freeze_ms: None,
         }
     }
 
@@ -111,6 +130,20 @@ pub struct WatchStatus {
     pub buffered_s: f64,
     /// Трасування драйверів (DPC) працює.
     pub dpc: bool,
+    /// Скільки секунд зарахованої гри від початку стеження.
+    pub played_s: f64,
+}
+
+/// Фриз, який помітила чорна скринька.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct FreezeMark {
+    /// Час кадру від початку знімка, мс (шкала [`Recording::frame_ms`]).
+    pub t_ms: f64,
+    /// Тривалість кадру, мс.
+    pub frame_ms: f64,
+    /// Unix-час кадру, мс.
+    pub at_unix_ms: Option<i64>,
 }
 
 /// Чому знімок не вдався.
@@ -158,8 +191,74 @@ pub enum WatchEvent {
         /// Unix-час натискання, мс.
         at_unix_ms: Option<i64>,
     },
+    /// Чорна скринька: фризи й знімок навколо них.
+    Freezes {
+        /// Знімок (`None` — не вдався, причина в `failure`).
+        recording: Option<Box<Recording>>,
+        /// Фризи у вікні знімка.
+        freezes: Vec<FreezeMark>,
+        /// Чому знімка немає.
+        failure: Option<CaptureFailure>,
+    },
     /// Стеження завершилось (подій більше не буде).
     Ended(WatchEnd),
+}
+
+/// Чиста логіка чорної скриньки: які кадри — фризи і коли робити знімок (тики QPC).
+#[derive(Debug)]
+pub struct FreezeTracker {
+    threshold_ms: f64,
+    after: i64,
+    cooldown: i64,
+    pending: Vec<(i64, f64)>,
+    last_capture: Option<i64>,
+}
+
+impl FreezeTracker {
+    /// Поріг фризу `threshold_ms` для частоти QPC `freq`.
+    pub fn new(freq: i64, threshold_ms: f64) -> Self {
+        Self {
+            threshold_ms,
+            after: dur_ticks(FREEZE_AFTER, freq),
+            cooldown: dur_ticks(FREEZE_COOLDOWN, freq),
+            pending: Vec::new(),
+            last_capture: None,
+        }
+    }
+
+    /// Кадр головного swap chain у момент `qpc` тривалістю `frame_ms`; `counted` — гра
+    /// зарахована (у фокусі, після прогріву). Кадри вже знятого відрізка не повторюються.
+    pub fn observe(&mut self, qpc: i64, frame_ms: f64, counted: bool) {
+        if counted
+            && frame_ms >= self.threshold_ms
+            && self.last_capture.is_none_or(|c| qpc > c)
+            && !self.pending.iter().any(|(q, _)| *q == qpc)
+        {
+            self.pending.push((qpc, frame_ms));
+        }
+    }
+
+    /// Кінець вікна наступного знімка (`None` — фризів немає).
+    pub fn capture_at(&self) -> Option<i64> {
+        let first = self.pending.iter().map(|(q, _)| *q).min()?;
+        let at = first + self.after;
+        Some(self.last_capture.map_or(at, |c| at.max(c + self.cooldown)))
+    }
+
+    /// Забирає фризи до `at` включно для знімка, що закінчується в `at`.
+    pub fn take(&mut self, at: i64) -> Vec<(i64, f64)> {
+        self.last_capture = Some(at);
+        let (mut taken, rest): (Vec<_>, Vec<_>) =
+            self.pending.drain(..).partition(|(q, _)| *q <= at);
+        self.pending = rest;
+        taken.sort_by_key(|(q, _)| *q);
+        taken
+    }
+
+    /// Чи є фризи, що чекають знімка.
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
 }
 
 /// Кільцевий буфер: кадри, знімки метрик і відрізки зарахованої гри (усе — у тиках QPC).
@@ -258,6 +357,27 @@ impl Ring {
             .collect()
     }
 
+    /// Чи момент `qpc` — у зарахованій грі.
+    pub fn counted_at(&self, qpc: i64) -> bool {
+        self.segments.iter().any(|(a, b)| (*a..=*b).contains(&qpc))
+            || self.open.is_some_and(|a| qpc >= a)
+    }
+
+    /// Головний swap chain гри — той, що має найбільше кадрів у буфері.
+    pub fn main_swap_chain(&self) -> Option<(u32, String)> {
+        let mut counts: std::collections::HashMap<(u32, &str), usize> =
+            std::collections::HashMap::new();
+        for f in &self.frames {
+            *counts
+                .entry((f.process_id, f.swap_chain.as_str()))
+                .or_default() += 1;
+        }
+        counts
+            .into_iter()
+            .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
+            .map(|((pid, chain), _)| (pid, chain.to_string()))
+    }
+
     /// Скільки зарахованої гри у вікні `[to − window, to]`, с.
     pub fn counted_s(&self, to: i64, window: Duration) -> f64 {
         let from = to - dur_ticks(window, self.freq);
@@ -343,8 +463,9 @@ impl std::fmt::Debug for Watcher {
 }
 
 impl Watcher {
-    /// Починає стеження: реєструє `Ctrl+Shift+F11` (помилка, якщо клавіша зайнята), запускає
-    /// семплер, трасування DPC і PresentMon. Події — у повернутому каналі.
+    /// Починає стеження: реєструє `Ctrl+Shift+F11`, якщо [`WatchOptions::hotkey`] (помилка, якщо
+    /// клавіша зайнята), запускає семплер, трасування DPC і PresentMon. Події — у повернутому
+    /// каналі.
     pub fn start(
         presentmon: &BundledPresentMon,
         options: WatchOptions,
@@ -352,9 +473,16 @@ impl Watcher {
         gpu: Option<Box<dyn GpuApi>>,
     ) -> Result<(Self, Receiver<WatchEvent>), FrametimeError> {
         options.target.validate()?;
-        let hotkey =
-            optimax_core::input::GlobalHotkey::ctrl_shift(optimax_core::input::FunctionKey::F11)
-                .map_err(|e| FrametimeError::Hotkey(format!("Ctrl+Shift+F11: {e}")))?;
+        let hotkey = if options.hotkey {
+            Some(
+                optimax_core::input::GlobalHotkey::ctrl_shift(
+                    optimax_core::input::FunctionKey::F11,
+                )
+                .map_err(|e| FrametimeError::Hotkey(format!("Ctrl+Shift+F11: {e}")))?,
+            )
+        } else {
+            None
+        };
         let freq = qpc_frequency();
         let keep_secs = u32::try_from(KEEP.as_secs()).unwrap_or(40);
         let dpc = match optimax_core::etw::DpcTracer::start_ring(freq, keep_secs) {
@@ -524,7 +652,7 @@ struct Loop {
     presentmon: BundledPresentMon,
     options: WatchOptions,
     freq: i64,
-    hotkey: optimax_core::input::GlobalHotkey,
+    hotkey: Option<optimax_core::input::GlobalHotkey>,
     dpc: Option<optimax_core::etw::DpcTracer>,
     sampler: Option<Sampler>,
     snapshots: Receiver<Snapshot>,
@@ -585,9 +713,20 @@ impl Loop {
         let mut last_status: Option<Instant> = None;
         let mut pending: Option<(i64, Instant, Option<i64>)> = None;
         let mut quick_exits = 0u32;
+        let mut freezes = self
+            .options
+            .freeze_ms
+            .map(|ms| FreezeTracker::new(self.freq, ms));
+        let mut main_chain: Option<(u32, String)> = None;
+        let mut last_chain_check: Option<Instant> = None;
+        let mut fresh: Vec<FrameRecord> = Vec::new();
+        let mut played_ticks: i64 = 0;
+        let mut last_tick = qpc_now();
+        let drain_ticks = dur_ticks(DRAIN, self.freq);
 
         loop {
             if self.stop.load(Ordering::SeqCst) {
+                self.flush_freezes(&ring, freezes.as_mut(), qpc_now());
                 return WatchEnd::Stopped;
             }
             if let Ok(s) = self.snapshots.recv_timeout(TICK) {
@@ -596,7 +735,11 @@ impl Loop {
             let Some(pm) = self.pm.as_mut() else {
                 return WatchEnd::Stopped;
             };
+            fresh.clear();
             for f in pm.frames.try_iter() {
+                if freezes.is_some() {
+                    fresh.push(f.clone());
+                }
                 ring.push_frame(f);
             }
             // PresentMon завершився (MAX_CAPTURE або збій) — перезапускаємо.
@@ -629,10 +772,36 @@ impl Loop {
             let last = pm.last_frame.load(Ordering::Relaxed);
             let presenting = last > 0 && now - last <= presenting_ticks;
             ring.mark(now, running && focused && presenting);
+            if ring.in_game() {
+                played_ticks += now - last_tick;
+            }
+            last_tick = now;
 
-            if (self.hotkey.pressed() || self.capture.swap(false, Ordering::SeqCst))
-                && pending.is_none()
-            {
+            if let Some(tracker) = freezes.as_mut() {
+                if last_chain_check.is_none_or(|t| t.elapsed() >= MAIN_CHAIN_EVERY) {
+                    last_chain_check = Some(Instant::now());
+                    main_chain = ring.main_swap_chain();
+                }
+                if let Some((pid, chain)) = &main_chain {
+                    for f in &fresh {
+                        if f.process_id == *pid && &f.swap_chain == chain {
+                            let q = qpc_of(f);
+                            tracker.observe(q, f.ms_between_presents, ring.counted_at(q));
+                        }
+                    }
+                }
+                if let Some(at) = tracker.capture_at() {
+                    if now - at >= drain_ticks {
+                        let event = self.freeze_event(&ring, tracker, at);
+                        if self.tx.send(event).is_err() {
+                            return WatchEnd::Stopped;
+                        }
+                    }
+                }
+            }
+
+            let hotkey = self.hotkey.as_ref().is_some_and(|h| h.pressed());
+            if (hotkey || self.capture.swap(false, Ordering::SeqCst)) && pending.is_none() {
                 if self.options.sound {
                     optimax_core::input::beep_start();
                 }
@@ -682,6 +851,7 @@ impl Loop {
             if running {
                 seen_running = true;
             } else if seen_running && pending.is_none() {
+                self.flush_freezes(&ring, freezes.as_mut(), now);
                 return WatchEnd::GameExited;
             }
             if last_status.is_none_or(|t| t.elapsed() >= STATUS_EVERY) {
@@ -691,11 +861,63 @@ impl Loop {
                     in_game: ring.in_game(),
                     buffered_s: ring.counted_s(now, window),
                     dpc: self.dpc.is_some(),
+                    played_s: ticks_to_ms(played_ticks, self.freq) / 1000.0,
                 };
                 if self.tx.send(WatchEvent::Status(status)).is_err() {
                     return WatchEnd::Stopped;
                 }
             }
+        }
+    }
+}
+
+impl Loop {
+    /// Знімок навколо фризів, що закінчується в `at`.
+    fn freeze_event(&self, ring: &Ring, tracker: &mut FreezeTracker, at: i64) -> WatchEvent {
+        let taken = tracker.take(at);
+        let from = at - dur_ticks(FREEZE_WINDOW, self.freq);
+        let marks = taken
+            .iter()
+            .map(|(q, ms)| FreezeMark {
+                t_ms: ticks_to_ms(q - from, self.freq),
+                frame_ms: *ms,
+                at_unix_ms: unix_ms_at(*q, self.freq),
+            })
+            .collect();
+        let dpc = self.dpc.as_ref().and_then(|t| t.window(from, at));
+        let start_unix_ms = unix_ms_at(from, self.freq);
+        let messages = self
+            .pm
+            .as_ref()
+            .map(PmProcess::messages)
+            .unwrap_or_default();
+        tracing::info!("чорна скринька: фризів у знімку — {}", taken.len());
+        match ring.slice(
+            &self.options.target,
+            at,
+            FREEZE_WINDOW,
+            start_unix_ms,
+            dpc,
+            messages,
+        ) {
+            Ok(rec) => WatchEvent::Freezes {
+                recording: Some(Box::new(rec)),
+                freezes: marks,
+                failure: None,
+            },
+            Err(reason) => WatchEvent::Freezes {
+                recording: None,
+                freezes: marks,
+                failure: Some(reason),
+            },
+        }
+    }
+
+    /// Наприкінці стеження: знімок для фризів, що ще чекали (кадри вже не допишуться).
+    fn flush_freezes(&self, ring: &Ring, tracker: Option<&mut FreezeTracker>, now: i64) {
+        if let Some(tracker) = tracker.filter(|t| t.has_pending()) {
+            let at = tracker.capture_at().map_or(now, |a| a.min(now));
+            let _ = self.tx.send(self.freeze_event(ring, tracker, at));
         }
     }
 }
@@ -855,5 +1077,47 @@ mod tests {
         assert_eq!(o.window(), MIN_GAME);
         o.window = Duration::from_secs(600);
         assert_eq!(o.window(), Duration::from_secs(35));
+    }
+
+    #[test]
+    fn freeze_tracker_groups_freezes_and_respects_cooldown() {
+        // F = 1000 тиків/с: після 2 с від першого фризу, наступний знімок — не раніше 10 с.
+        let mut t = FreezeTracker::new(F, 100.0);
+        t.observe(5 * F, 40.0, true); // не фриз
+        t.observe(6 * F, 150.0, false); // поза зарахованою грою
+        assert_eq!(t.capture_at(), None);
+        t.observe(10 * F, 120.0, true);
+        t.observe(11 * F, 300.0, true);
+        t.observe(11 * F, 300.0, true); // той самий кадр удруге (PresentMon) — один раз
+        assert_eq!(t.capture_at(), Some(12 * F));
+        assert_eq!(t.take(12 * F), vec![(10 * F, 120.0), (11 * F, 300.0)]);
+        assert!(!t.has_pending());
+        // Кадр уже знятого відрізка не повторюється.
+        t.observe(11 * F, 300.0, true);
+        assert_eq!(t.capture_at(), None);
+        // Новий фриз одразу після знімка — чекає паузи між знімками.
+        t.observe(13 * F, 200.0, true);
+        assert_eq!(t.capture_at(), Some(22 * F));
+        t.observe(25 * F, 200.0, true); // пізніший за кінець вікна — у наступний знімок
+        assert_eq!(t.take(22 * F), vec![(13 * F, 200.0)]);
+        assert_eq!(t.capture_at(), Some(32 * F));
+    }
+
+    #[test]
+    fn counted_moments_and_main_swap_chain() {
+        let mut ring = Ring::new(F, KEEP);
+        play(&mut ring, 0, 10);
+        ring.mark(10 * F, false);
+        assert!(!ring.counted_at(F)); // прогрів
+        assert!(ring.counted_at(5 * F));
+        assert!(!ring.counted_at(15 * F));
+        // Другий swap chain (лаунчер, оверлей) з рідкими кадрами — не головний.
+        for t in (0..10 * F).step_by(500) {
+            let mut f = frame(t);
+            f.swap_chain = "0x2".into();
+            f.ms_between_presents = 500.0;
+            ring.push_frame(f);
+        }
+        assert_eq!(ring.main_swap_chain(), Some((1, "0x1".to_string())));
     }
 }

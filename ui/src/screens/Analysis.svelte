@@ -12,6 +12,7 @@
   import { flashBg, ui } from "../lib/state.svelte";
   import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
+  import BlackBoxNote from "../components/BlackBoxNote.svelte";
   import DriverOnline from "../components/DriverOnline.svelte";
   import FindingCard from "../components/FindingCard.svelte";
   import Page from "../components/Page.svelte";
@@ -148,6 +149,8 @@
       >
     </div>
   {/each}
+
+  <BlackBoxNote />
 
   <div data-tour="home-state">
   <Card title={tk("ui.home.state")}>

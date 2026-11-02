@@ -173,7 +173,7 @@ pub fn entry_from(
     })
 }
 
-fn compress(rec: &Recording) -> CmdResult<Vec<u8>> {
+pub(crate) fn compress(rec: &Recording) -> CmdResult<Vec<u8>> {
     let mut gz = GzEncoder::new(Vec::new(), Compression::default());
     gz.write_all(&serde_json::to_vec(rec).map_err(failed)?)
         .map_err(failed)?;

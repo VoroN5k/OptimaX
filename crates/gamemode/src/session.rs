@@ -324,6 +324,7 @@ mod tests {
             gpu: None,
             exe_path: None,
             last_test: None,
+            black_box: false,
         }
     }
 
@@ -559,6 +560,7 @@ mod localization {
                 gpu: None,
                 exe_path: None,
                 last_test: None,
+                black_box: false,
             };
             let r = start_session(&mut engine, &procs, &mem, &profile, &game, &Yes).unwrap();
             texts.extend(r.applied);

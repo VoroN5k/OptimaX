@@ -12,6 +12,7 @@ import type { RecordComparison } from "../../src/lib/bindings/RecordComparison";
 import type { Regression } from "../../src/lib/bindings/Regression";
 import type { DriverCheck } from "../../src/lib/bindings/DriverCheck";
 import type { DriverEffect } from "../../src/lib/bindings/DriverEffect";
+import type { BlackBoxView } from "../../src/lib/bindings/BlackBoxView";
 import type { LagView } from "../../src/lib/bindings/LagView";
 import type { LastGame } from "../../src/lib/bindings/LastGame";
 import type { ProcessEntry } from "../../src/lib/bindings/ProcessEntry";
@@ -48,6 +49,7 @@ export interface Responses {
   history_driver_effects: DriverEffect[];
   driver_check: DriverCheck;
   driver_open_page: null;
+  blackbox_state: BlackBoxView;
 }
 
 const GIB = 1073741824;
@@ -278,5 +280,6 @@ export function defaults(): Responses {
     history_driver_effects: [],
     driver_check: structuredClone(driverCheck),
     driver_open_page: null,
+    blackbox_state: { active: null, last: null },
   };
 }

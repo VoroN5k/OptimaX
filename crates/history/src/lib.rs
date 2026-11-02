@@ -9,6 +9,7 @@
 
 mod compare;
 mod model;
+mod session;
 mod store;
 
 pub use compare::{
@@ -18,5 +19,9 @@ pub use compare::{
 pub use model::{
     clean_scene, scene_match, DisplayState, FileStamp, HistoryEntry, SceneMatch, StateChange,
     StateField, SystemState,
+};
+pub use session::{
+    cause_summary, keep_worst, FreezeCauseCount, FreezeEntry, SessionEntry, SessionStore,
+    KEEP_FREEZE_RECORDINGS, KEEP_SESSIONS, UNKNOWN_CAUSE,
 };
 pub use store::{entry_id, Files, HistoryError, MemFiles, StdDir, Store, KEEP_RECORDINGS_PER_GAME};

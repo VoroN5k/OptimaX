@@ -27,6 +27,8 @@ pub struct LagSession {
     game: String,
     window_s: u32,
     watcher: Option<Watcher>,
+    /// Чорна скринька на паузі, поки йде стеження.
+    pause: Option<super::blackbox::Pause>,
     status: Option<WatchStatus>,
     captures: Vec<LagCapture>,
     next_capture: u32,
@@ -79,6 +81,8 @@ pub fn lag_start(app: AppHandle, state: State<'_, AppState>, exe: String) -> Cmd
     }
     // Попередня (зупинена) сесія закривається разом зі знімками.
     stop_session(&state);
+    // Одна сесія PresentMon і DPC на систему — чорна скринька чекає.
+    let pause = super::blackbox::Pause::new(&app);
 
     let sound = lock(&state.settings).record_sound;
     let mut options = WatchOptions::new(target);
@@ -106,6 +110,7 @@ pub fn lag_start(app: AppHandle, state: State<'_, AppState>, exe: String) -> Cmd
         game: exe,
         window_s,
         watcher: Some(watcher),
+        pause: Some(pause),
         status: None,
         captures: Vec::new(),
         next_capture: 1,
@@ -186,6 +191,7 @@ fn pump(app: &AppHandle, id: u64, events: &Receiver<WatchEvent>) {
                     let _ = app.emit("lag-update", s.view());
                 }
             }
+            WatchEvent::Freezes { .. } => {}
             WatchEvent::Ended(end) => {
                 let mut slot = lock(&state.lag);
                 if let Some(s) = slot.as_mut().filter(|s| s.id == id) {
@@ -195,9 +201,11 @@ fn pump(app: &AppHandle, id: u64, events: &Receiver<WatchEvent>) {
                     s.ended = Some(end);
                     // Потік стеження вже завершився — звільняємо його без очікування.
                     let watcher = s.watcher.take();
+                    let pause = s.pause.take();
                     let _ = app.emit("lag-update", s.view());
                     drop(slot);
                     drop(watcher);
+                    drop(pause);
                 }
                 return;
             }
@@ -228,10 +236,13 @@ pub fn lag_capture(state: State<'_, AppState>) -> CmdResult<()> {
 pub async fn lag_stop(app: AppHandle) -> CmdResult<Option<LagView>> {
     super::blocking(move || {
         let state = app.state::<AppState>();
-        let watcher = lock(&state.lag).as_mut().and_then(|s| s.watcher.take());
+        let (watcher, pause) = lock(&state.lag)
+            .as_mut()
+            .map_or((None, None), |s| (s.watcher.take(), s.pause.take()));
         if let Some(w) = watcher {
             w.stop();
         }
+        drop(pause);
         let mut slot = lock(&state.lag);
         if let Some(s) = slot.as_mut() {
             if s.ended.is_none() {
@@ -256,7 +267,11 @@ pub async fn lag_close(app: AppHandle) -> CmdResult<()> {
 /// Зупиняє стеження й прибирає сесію (виклик із коду: новий старт, вихід із програми).
 pub fn stop_session(state: &AppState) {
     let session = lock(&state.lag).take();
-    if let Some(w) = session.and_then(|mut s| s.watcher.take()) {
-        w.stop();
+    if let Some(mut s) = session {
+        if let Some(w) = s.watcher.take() {
+            w.stop();
+        }
+        // Пауза чорної скриньки знімається разом із сесією.
+        drop(s);
     }
 }

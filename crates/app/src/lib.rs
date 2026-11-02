@@ -34,8 +34,9 @@ pub fn run() -> anyhow::Result<()> {
 #[cfg(windows)]
 mod app {
     use crate::commands::{
-        ab, audit, cleanup, dashboard, diagnosis, driver_online, feedback, gamemode, history, lag,
-        laptop, metrics, network, overlay, resolution, startup, system, tweaks, update, upscale,
+        ab, audit, blackbox, cleanup, dashboard, diagnosis, driver_online, feedback, gamemode,
+        history, lag, laptop, metrics, network, overlay, resolution, startup, system, tweaks,
+        update, upscale,
     };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
@@ -86,6 +87,7 @@ mod app {
         cleanup::cancel_all(&lock(&state.cleanup));
         resolution::cancel_session(state);
         lag::stop_session(state);
+        blackbox::finish_state(state);
         overlay::stop(state);
         if let Err(e) = ab::cancel_session(state) {
             tracing::error!("не вдалося відкотити зміну A/B-тесту при виході: {e:?}");
@@ -293,6 +295,7 @@ mod app {
                 history::history_driver_effects,
                 driver_online::driver_check,
                 driver_online::driver_open_page,
+                blackbox::blackbox_state,
             ])
             .build(tauri::generate_context!())?;
         app.run(|handle, event| {

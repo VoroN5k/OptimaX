@@ -459,6 +459,66 @@ pub fn cpu_bound(a: &Analysis<'_>) -> Option<Finding> {
     Some(d.build())
 }
 
+/// Головний потік у стелі: з якої частки часу роботи він обмежує гру
+/// (погоджено користувачем 2026-11-03).
+pub const MAIN_THREAD_BUSY: f64 = 0.90;
+/// Сну в головного потоку менше за це — ліміт FPS не працює.
+pub const MAIN_THREAD_SLEEP_MAX: f64 = 0.05;
+
+/// Докази про потоки гри (з трасування): головний потік — скільки працював, чекав на ядро,
+/// спав; рендер-потік (Present) — скільки працював. Порожньо без трасування.
+pub fn thread_evidence(a: &Analysis<'_>) -> Vec<Evidence> {
+    let Some(t) = a.timeline.threads.as_ref() else {
+        return Vec::new();
+    };
+    let m = t.main;
+    let mut out = vec![
+        Evidence::new(Text::new("diag.ev.main_thread_busy"), pct(m.running)),
+        Evidence::new(Text::new("diag.ev.main_thread_ready"), pct(m.ready)),
+        Evidence::new(Text::new("diag.ev.main_thread_sleep"), pct(m.sleep)),
+    ];
+    if let Some(r) = t.render {
+        out.push(Evidence::new(
+            Text::new("diag.ev.render_thread_busy"),
+            pct(r.running),
+        ));
+    }
+    out
+}
+
+/// CPU-bound за головним потоком (трасування потоків): GPU < 90 %, а найзавантаженіший потік
+/// гри працює ≥ [`MAIN_THREAD_BUSY`] часу й майже не спить (< [`MAIN_THREAD_SLEEP_MAX`]).
+/// Ловить випадок, коли потік мігрує між ядрами й жодне ядро окремо не «в стелі».
+pub fn cpu_main_thread(a: &Analysis<'_>) -> Option<Finding> {
+    let t = a.timeline.threads.as_ref()?;
+    let gpu_avg = a.gpu_avg_util()?;
+    let m = t.main;
+    if gpu_avg >= GPU_NOT_BOUND_AVG
+        || m.running < MAIN_THREAD_BUSY
+        || m.sleep >= MAIN_THREAD_SLEEP_MAX
+    {
+        return None;
+    }
+    let confidence = (70.0 + (m.running - MAIN_THREAD_BUSY) * 150.0).min(85.0);
+    let mut d = draft(
+        "cpu_bound.main_thread",
+        Category::Cpu,
+        Impact::Moderate,
+        conf(confidence),
+    )
+    .arg("busy", format!("{:.0}", m.running * 100.0))
+    .arg("gpu", format!("{gpu_avg:.0}"))
+    .advice();
+    for e in thread_evidence(a) {
+        d = d.evidence(e.label, e.value);
+    }
+    d = d.evidence(
+        Text::new("diag.ev.gpu_avg"),
+        Text::new("value.pct").arg("v", format!("{gpu_avg:.0}")),
+    );
+    Some(d.build())
+}
+
 /// Відеопам'ять майже заповнена. Shared-пам'ять (вихід за VRAM у RAM) поки не вимірюється,
 /// тому сильний висновок — лише якщо піки збігаються з моментами заповнення.
 pub fn vram_pressure(a: &Analysis<'_>) -> Option<Finding> {

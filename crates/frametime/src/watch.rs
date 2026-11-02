@@ -431,6 +431,7 @@ impl Ring {
             end_reason: EndReason::Completed,
             start_unix_ms,
             dpc_trace: dpc,
+            threads: None,
         })
     }
 }

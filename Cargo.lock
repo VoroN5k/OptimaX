@@ -2468,6 +2468,7 @@ dependencies = [
  "optimax-core",
  "optimax-frametime",
  "optimax-metrics",
+ "optimax-trace",
  "serde",
  "serde_json",
  "toml 1.1.8+spec-1.1.0",
@@ -2481,6 +2482,7 @@ dependencies = [
  "anyhow",
  "optimax-core",
  "optimax-metrics",
+ "optimax-trace",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -2542,6 +2544,21 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "ts-rs",
+ "windows",
+]
+
+[[package]]
+name = "optimax-trace"
+version = "0.1.6"
+dependencies = [
+ "anyhow",
+ "optimax-core",
+ "optimax-frametime",
+ "optimax-metrics",
+ "serde",
+ "sysinfo",
+ "thiserror 2.0.21",
+ "tracing",
  "windows",
 ]
 

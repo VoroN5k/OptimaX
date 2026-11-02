@@ -80,6 +80,7 @@ fn timeline(frametimes: &[f64], sample: impl Fn(f64, usize) -> SamplePoint) -> T
         samples,
         shader_writes: Vec::new(),
         dpc: None,
+        threads: None,
     }
 }
 
@@ -1136,6 +1137,7 @@ fn timeline_from_recording_sorts_filters_and_aligns() {
         end_reason: optimax_frametime::EndReason::Completed,
         start_unix_ms: None,
         dpc_trace: None,
+        threads: None,
     };
     let tl = Timeline::from_recording(&rec).unwrap();
     assert_eq!(tl.game_pid, 100);
@@ -1171,6 +1173,7 @@ fn empty_recording_is_insufficient() {
         end_reason: optimax_frametime::EndReason::Completed,
         start_unix_ms: None,
         dpc_trace: None,
+        threads: None,
     };
     assert_eq!(
         diagnose(&rec, &Context::default()).bottleneck,
@@ -1207,6 +1210,7 @@ fn frames_outside_counted_segments_are_ignored() {
         end_reason: optimax_frametime::EndReason::Completed,
         start_unix_ms: None,
         dpc_trace: None,
+        threads: None,
     };
     let tl = Timeline::from_recording(&rec).unwrap();
     assert_eq!(tl.frames.len(), 2500);
@@ -1521,4 +1525,171 @@ fn throttling_explains_low_fan_and_raised_power_limit() {
             .any(|e| e.value.key == "diag.advice.fan_low"
                 || e.value.key == "diag.advice.power_raised")
     );
+}
+
+// ---- Потоки гри (трасування): вердикт «процесор» за головним потоком ----
+
+fn threads(main_running: f64, main_sleep: f64) -> crate::timeline::ThreadsTimeline {
+    use crate::timeline::{ThreadLoad, ThreadsTimeline};
+    let load = |tid, running, sleep| ThreadLoad {
+        tid,
+        running,
+        ready: 0.02,
+        sync: 1.0 - running - sleep - 0.02,
+        sleep,
+        page_in: 0.0,
+    };
+    ThreadsTimeline {
+        main: load(1, main_running, main_sleep),
+        render: Some(load(2, 0.36, 0.0)),
+        game_threads: 144,
+        counted_ms: 30_000.0,
+    }
+}
+
+/// GPU недовантажений, ядра не «в стелі» (потік мігрує).
+fn cpu_hidden_timeline() -> Timeline {
+    timeline(&jittery(8.0, 3000), |_, _| {
+        let mut s = base_sample();
+        s.busiest_core_pct = 70.0;
+        if let Some(g) = s.gpu.as_mut() {
+            g.util = Some(60);
+        }
+        s
+    })
+}
+
+#[test]
+fn main_thread_at_ceiling_is_cpu_bound_even_when_no_core_is() {
+    let mut tl = cpu_hidden_timeline();
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert_eq!(d.bottleneck, Bottleneck::Unclear);
+    tl.threads = Some(threads(0.96, 0.01));
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert_eq!(d.bottleneck, Bottleneck::Cpu);
+    let f = find(&d, "cpu_bound.main_thread").expect("вердикт за головним потоком");
+    assert!(f.confidence.percent() >= 70 && f.confidence.percent() <= 85);
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.label.key == "diag.ev.main_thread_busy"));
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.label.key == "diag.ev.render_thread_busy"));
+}
+
+#[test]
+fn main_thread_with_headroom_or_sleeping_is_not_cpu_bound() {
+    // RE9 2026-11-03: головний потік 83 % + сон 13 % — запас є, вердикту немає, але
+    // в «не ясно» видно цифри потоків.
+    let mut tl = cpu_hidden_timeline();
+    tl.threads = Some(threads(0.83, 0.13));
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert_eq!(d.bottleneck, Bottleneck::Unclear);
+    assert!(d.verdicts[0]
+        .finding
+        .evidence
+        .iter()
+        .any(|e| e.label.key == "diag.ev.main_thread_sleep"));
+    // Зайнятий, але спить ≥ 5 % (ліміт FPS) — теж ні.
+    tl.threads = Some(threads(0.92, 0.06));
+    assert_ne!(
+        diagnose_timeline(&tl, &Context::default()).bottleneck,
+        Bottleneck::Cpu
+    );
+    // Відеокарта завантажена — не процесор.
+    let mut busy_gpu = timeline(&jittery(8.0, 3000), |_, _| base_sample());
+    for s in &mut busy_gpu.samples {
+        if let Some(g) = s.gpu.as_mut() {
+            g.util = Some(93);
+        }
+    }
+    busy_gpu.threads = Some(threads(0.97, 0.0));
+    assert!(find(
+        &diagnose_timeline(&busy_gpu, &Context::default()),
+        "cpu_bound.main_thread"
+    )
+    .is_none());
+}
+
+#[test]
+fn core_rule_gets_thread_evidence_when_traced() {
+    let mut tl = timeline(&jittery(8.0, 3000), |_, _| {
+        let mut s = base_sample();
+        s.busiest_core_pct = 99.0;
+        s
+    });
+    tl.threads = Some(threads(0.97, 0.0));
+    let d = diagnose_timeline(&tl, &Context::default());
+    let f = find(&d, "cpu_bound").expect("процесор за ядрами");
+    assert!(f
+        .evidence
+        .iter()
+        .any(|e| e.label.key == "diag.ev.main_thread_busy"));
+    assert!(find(&d, "cpu_bound.main_thread").is_none());
+}
+
+#[test]
+fn thread_load_counts_only_counted_play() {
+    use optimax_trace::threads::{slot, ThreadSeries, ThreadTrace};
+    let freq = 1000; // 1 тик = 1 мс
+    let bucket = |running: f32, sleep: f32| {
+        let mut b = [0.0f32; slot::COUNT];
+        b[slot::RUNNING] = running;
+        b[slot::SLEEP] = sleep;
+        b
+    };
+    // 40 кошиків по 250 мс = 10 с. Перші 4 (1 с) — меню: потік спить; далі — у стелі.
+    let mut buckets = vec![bucket(10.0, 240.0); 4];
+    buckets.extend(vec![bucket(245.0, 0.0); 36]);
+    let series = |tid, presents, buckets: Vec<[f32; slot::COUNT]>| ThreadSeries {
+        tid,
+        name: None,
+        presents,
+        totals_ms: [0.0; slot::COUNT],
+        buckets,
+        runs: 0,
+        migrations: 0,
+        preempted: 0,
+        top_preemptor: None,
+    };
+    let rec = Recording {
+        target: Target::ProcessName("game.exe".into()),
+        qpc_frequency: freq,
+        start_qpc: 0,
+        frames: vec![],
+        snapshots: vec![],
+        skipped_lines: 0,
+        presentmon_messages: vec![],
+        cancelled: false,
+        segments: vec![(1000, 10_000)],
+        end_reason: optimax_frametime::EndReason::Completed,
+        start_unix_ms: None,
+        dpc_trace: None,
+        threads: Some(ThreadTrace {
+            qpc_frequency: freq,
+            start_qpc: 0,
+            bucket_ms: 250.0,
+            threads: vec![
+                series(1, 0, buckets),
+                series(2, 300, vec![bucket(90.0, 0.0); 40]),
+                series(0, 0, vec![bucket(500.0, 0.0); 40]),
+            ],
+            game_threads: 50,
+            switches: 0,
+            late: 0,
+            lost: 0,
+        }),
+    };
+    let t = crate::timeline::threads_timeline(&rec).expect("потоки");
+    assert!((t.counted_ms - 9000.0).abs() < 1e-9);
+    assert_eq!(t.main.tid, 1); // сума решти (tid 0) не вважається головним потоком
+    assert!((t.main.running - 0.98).abs() < 1e-9);
+    assert!(t.main.sleep.abs() < 1e-9);
+    assert_eq!(t.render.map(|r| r.tid), Some(2));
+    // Замало зарахованої гри — без висновків про потоки.
+    let mut short = rec.clone();
+    short.segments = vec![(1000, 3000)];
+    assert!(crate::timeline::threads_timeline(&short).is_none());
 }

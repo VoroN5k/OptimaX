@@ -74,6 +74,7 @@ fn harness_roundtrip_and_check() -> anyhow::Result<()> {
         end_reason: EndReason::Completed,
         start_unix_ms: None,
         dpc_trace: None,
+        threads: None,
     };
     let path = std::env::temp_dir().join(format!("optimax-fixture-{}.json.gz", std::process::id()));
     fixture::write_recording_at(&path, &rec)?;

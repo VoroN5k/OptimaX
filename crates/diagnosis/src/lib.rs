@@ -235,7 +235,15 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
     let (gpu, cpu) = if cap.is_some() {
         (None, None)
     } else {
-        (rules::gpu_bound(&a), rules::cpu_bound(&a))
+        // «Процесор» за ядрами — з доказами про потоки, якщо є трасування; інакше — за
+        // головним потоком (потік мігрує між ядрами, і жодне ядро окремо не «в стелі»).
+        let cpu = rules::cpu_bound(&a)
+            .map(|mut f| {
+                f.evidence.extend(rules::thread_evidence(&a));
+                f
+            })
+            .or_else(|| rules::cpu_main_thread(&a));
+        (rules::gpu_bound(&a), cpu)
     };
 
     let (bottleneck, primary_conf) = match (&cap, &gpu, &cpu) {
@@ -293,6 +301,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
     if bottleneck == Bottleneck::Unclear {
         // Без цифр «не ясно» виглядає як збій: показуємо, наскільки далеко до порогів.
         head.evidence.extend(rules::load_evidence(&a));
+        head.evidence.extend(rules::thread_evidence(&a));
     }
     let mut verdicts: Vec<Verdict> = vec![head.into()];
     verdicts.extend(found.into_iter().map(Verdict::from));

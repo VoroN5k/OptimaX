@@ -351,6 +351,7 @@ mod tests {
             end_reason: EndReason::Completed,
             start_unix_ms: None,
             dpc_trace: None,
+            threads: None,
         }
     }
 

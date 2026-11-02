@@ -170,6 +170,102 @@ pub struct Timeline {
     /// DPC і переривання драйверів (ETW). `None` — не вимірювалось.
     #[serde(default)]
     pub dpc: Option<DpcTimeline>,
+    /// Головний і рендер-потік гри (власне трасування). `None` — не вимірювалось.
+    #[serde(default)]
+    pub threads: Option<ThreadsTimeline>,
+}
+
+/// Навантаження одного потоку гри за зараховану гру (частки 0–1 часу).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ThreadLoad {
+    /// Потік.
+    pub tid: u32,
+    /// Працював на ядрі.
+    pub running: f64,
+    /// Готовий, але чекав на вільне ядро.
+    pub ready: f64,
+    /// Заблокований на синхронізації.
+    pub sync: f64,
+    /// Спав (`Sleep` — зазвичай ліміт FPS чи пауза рушія).
+    pub sleep: f64,
+    /// Чекав на сторінку з диска.
+    pub page_in: f64,
+}
+
+/// Потоки гри за трасуванням.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThreadsTimeline {
+    /// Найзавантаженіший потік гри (головний).
+    pub main: ThreadLoad,
+    /// Потік, що викликає Present (рендер), якщо відомий і не той самий, що головний.
+    pub render: Option<ThreadLoad>,
+    /// Потоків гри всього.
+    pub game_threads: u32,
+    /// Скільки зарахованої гри покрито кошиками, мс.
+    pub counted_ms: f64,
+}
+
+/// Найменше зарахованої гри з трасуванням, з якого ще є сенс робити висновки про потоки.
+const MIN_THREAD_MS: f64 = 5000.0;
+
+/// Навантаження потоків лише в зарахованій грі (кошик рахується, якщо його середина — у
+/// зарахованому відрізку).
+pub(crate) fn threads_timeline(rec: &Recording) -> Option<ThreadsTimeline> {
+    use optimax_trace::threads::slot;
+    let t = rec.threads.as_ref()?;
+    let bucket_ticks = (t.bucket_ms / 1000.0 * t.qpc_frequency as f64) as i64;
+    if bucket_ticks <= 0 {
+        return None;
+    }
+    let counted = |i: usize| {
+        let mid = t.start_qpc + i as i64 * bucket_ticks + bucket_ticks / 2;
+        rec.in_segments(mid)
+    };
+    let len = t.threads.iter().map(|s| s.buckets.len()).max().unwrap_or(0);
+    let counted_buckets = (0..len).filter(|&i| counted(i)).count();
+    let counted_ms = counted_buckets as f64 * t.bucket_ms;
+    if counted_ms < MIN_THREAD_MS {
+        return None;
+    }
+    let load = |s: &optimax_trace::threads::ThreadSeries| {
+        let mut sum = [0.0f64; slot::COUNT];
+        for (i, b) in s.buckets.iter().enumerate() {
+            if counted(i) {
+                for (x, y) in sum.iter_mut().zip(b) {
+                    *x += f64::from(*y);
+                }
+            }
+        }
+        ThreadLoad {
+            tid: s.tid,
+            running: sum[slot::RUNNING] / counted_ms,
+            ready: sum[slot::READY] / counted_ms,
+            sync: sum[slot::SYNC] / counted_ms,
+            sleep: sum[slot::SLEEP] / counted_ms,
+            page_in: sum[slot::PAGE_IN] / counted_ms,
+        }
+    };
+    let loads: Vec<(ThreadLoad, u64)> = t
+        .threads
+        .iter()
+        .filter(|s| s.tid != 0)
+        .map(|s| (load(s), s.presents))
+        .collect();
+    let main = loads
+        .iter()
+        .max_by(|a, b| a.0.running.total_cmp(&b.0.running))?
+        .0;
+    let render = loads
+        .iter()
+        .filter(|(l, p)| *p > 0 && l.tid != main.tid)
+        .max_by_key(|(_, p)| *p)
+        .map(|(l, _)| *l);
+    Some(ThreadsTimeline {
+        main,
+        render,
+        game_threads: t.game_threads,
+        counted_ms,
+    })
 }
 
 /// Процеси, які не вважаються фоновими навантаженнями (наш власний інструмент запису).
@@ -303,6 +399,7 @@ impl Timeline {
                     .collect(),
                 lost: t.lost,
             }),
+            threads: threads_timeline(rec),
         })
     }
 

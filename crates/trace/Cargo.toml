@@ -1,0 +1,32 @@
+[package]
+name = "optimax-trace"
+description = "OptimaX: анатомія кадру — власне трасування ETW (потоки гри, черга GPU, диск, DPC) на шкалі QPC"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+optimax-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Etw",
+    "Win32_System_Time",
+] }
+
+[dev-dependencies]
+anyhow.workspace = true
+# Лише приклад `trace_probe`: PID гри й CPU власного процесу під час трасування.
+sysinfo.workspace = true
+# Лише приклад `trace_cost`: FPS гри (PresentMon) у фазах з трасуванням і без.
+optimax-frametime.workspace = true
+optimax-metrics.workspace = true
+
+[lints]
+workspace = true

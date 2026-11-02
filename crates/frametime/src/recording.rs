@@ -187,6 +187,9 @@ pub struct Recording {
     /// DPC і переривання драйверів (ETW). `None` — трасування недоступне або старий запис.
     #[serde(default)]
     pub dpc_trace: Option<optimax_core::etw::DpcTrace>,
+    /// Потоки гри (власне трасування ETW). `None` — недоступне або старий запис.
+    #[serde(default)]
+    pub threads: Option<optimax_trace::threads::ThreadTrace>,
 }
 
 impl Recording {
@@ -407,6 +410,11 @@ pub fn record_with(
         .and_then(|_| Toaster::new().ok());
     let mut warmup_noticed = false;
     let mut pm_exited = false;
+    // Потоки гри — необов'язково: без них вердикт «процесор» спирається на завантаження ядер.
+    #[cfg(windows)]
+    let mut thread_tracer: Option<optimax_trace::ThreadTracer> = None;
+    #[cfg(windows)]
+    let mut thread_trace_tried = false;
 
     while gate.phase() != Phase::Done {
         if let Ok(s) = snapshots_rx.recv_timeout(TICK) {
@@ -418,6 +426,16 @@ pub fn record_with(
         if last_pid_check.elapsed() >= PROCESS_CHECK {
             pids = game_pids(&options.target);
             last_pid_check = Instant::now();
+        }
+        #[cfg(windows)]
+        if !thread_trace_tried {
+            if let Some(&pid) = pids.as_ref().and_then(|p| p.iter().min()) {
+                thread_trace_tried = true;
+                match optimax_trace::ThreadTracer::start(pid, start_qpc) {
+                    Ok(t) => thread_tracer = Some(t),
+                    Err(e) => tracing::warn!("трасування потоків гри недоступне: {e}"),
+                }
+            }
         }
         let now = qpc_now();
         let running = match &pids {
@@ -495,6 +513,19 @@ pub fn record_with(
     sampler.stop();
     snapshots.extend(snapshots_rx.try_iter());
     let dpc_trace = dpc_tracer.and_then(optimax_core::etw::DpcTracer::stop);
+    #[cfg(windows)]
+    let threads = thread_tracer.map(optimax_trace::ThreadTracer::stop);
+    #[cfg(not(windows))]
+    let threads = None;
+    if let Some(t) = &threads {
+        tracing::debug!(
+            "потоки гри: {}, перемикань {}, запізнілих {}, втрачено {}",
+            t.game_threads,
+            t.switches,
+            t.late,
+            t.lost
+        );
+    }
     if let Some(t) = &dpc_trace {
         tracing::debug!(
             "DPC: {} подій, втрачено {}, довгих {}",
@@ -527,6 +558,7 @@ pub fn record_with(
         end_reason,
         start_unix_ms,
         dpc_trace,
+        threads,
     };
     if !rec.frames.iter().any(|f| rec.frame_counted(f)) {
         return Err(FrametimeError::NoFrames(
@@ -580,6 +612,7 @@ mod tests {
             end_reason: EndReason::Completed,
             start_unix_ms: None,
             dpc_trace: None,
+            threads: None,
         };
         let counted: Vec<bool> = rec.frames.iter().map(|f| rec.frame_counted(f)).collect();
         assert_eq!(counted, vec![false, true, true, true]);
@@ -632,6 +665,7 @@ mod tests {
             end_reason: EndReason::Completed,
             start_unix_ms: None,
             dpc_trace: None,
+            threads: None,
         };
         let a = rec.anonymized(&["MsMpEng.exe"]);
         assert_eq!(a.frames[0].application, "Game.exe");

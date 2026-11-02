@@ -1,0 +1,16 @@
+//! Історія записів гри («Діагностика»): підсумок кожного запису, знімок стану ПК на момент
+//! запису, порівняння двох записів і що змінилося між ними (драйвер, Windows, файл гри…).
+//!
+//! Лише чисті функції над даними; файли — через трейт [`Files`] (у тестах — у пам'яті).
+//! Повні записи (кадри й метрики) крейт зберігає як непрозорі байти: стискає й розбирає їх
+//! застосунок.
+
+#![forbid(unsafe_code)]
+
+mod compare;
+mod model;
+mod store;
+
+pub use compare::{compare, diff, fps_noise_pct, RecordComparison, Trend, MIN_SIGNIFICANT_PCT};
+pub use model::{DisplayState, FileStamp, HistoryEntry, StateChange, StateField, SystemState};
+pub use store::{entry_id, Files, HistoryError, MemFiles, StdDir, Store, KEEP_RECORDINGS_PER_GAME};

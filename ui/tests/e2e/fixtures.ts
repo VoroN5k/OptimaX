@@ -6,6 +6,9 @@ import type { DiagnosisResult } from "../../src/lib/bindings/DiagnosisResult";
 import type { DiagnosisState } from "../../src/lib/bindings/DiagnosisState";
 import type { DiskSummary } from "../../src/lib/bindings/DiskSummary";
 import type { Finding } from "../../src/lib/bindings/Finding";
+import type { HistoryEntry } from "../../src/lib/bindings/HistoryEntry";
+import type { HistoryView } from "../../src/lib/bindings/HistoryView";
+import type { RecordComparison } from "../../src/lib/bindings/RecordComparison";
 import type { LagView } from "../../src/lib/bindings/LagView";
 import type { LastGame } from "../../src/lib/bindings/LastGame";
 import type { ProcessEntry } from "../../src/lib/bindings/ProcessEntry";
@@ -33,6 +36,11 @@ export interface Responses {
   cleanup_last_scan: ScanView | null;
   metrics_start: null;
   metrics_stop: null;
+  history_list: HistoryView;
+  history_compare: RecordComparison;
+  history_open: DiagnosisResult;
+  history_delete: null;
+  history_clear: number;
 }
 
 const GIB = 1073741824;
@@ -166,6 +174,63 @@ export const gpuResult: DiagnosisResult = {
   end_reason: "completed",
 };
 
+export function historyEntry(at: number, avg: number, driver: string, game = "re9.exe"): HistoryEntry {
+  return {
+    id: `${at}-${game}`,
+    game,
+    at_unix_ms: at,
+    bottleneck: "gpu",
+    title: { key: "diag.summary.gpu.title", args: { game } },
+    confidence: 85,
+    avg_fps: avg,
+    low_1pct_fps: avg * 0.7,
+    low_01pct_fps: avg * 0.5,
+    frames: 6000,
+    counted_s: 60,
+    fps_noise_pct: 0.8,
+    state: {
+      optimax: "0.1.6",
+      windows: "Windows 11 Pro",
+      windows_build: "26300",
+      gpu: "NVIDIA GeForce RTX 4070 SUPER",
+      driver,
+      display: { width: 2560, height: 1440, hz: 200 },
+      power_plan: "Висока продуктивність",
+      bios: "F12",
+      ram_mts: 6000,
+      hags: "enabled",
+      game_mode: "enabled",
+      game_file: { bytes: 104857600, modified_unix: 1_790_000_000 },
+    },
+    has_recording: true,
+  };
+}
+
+const older = historyEntry(1_793_000_000_000, 125, "566.36");
+const newer = historyEntry(1_793_500_000_000, 108, "572.16");
+
+export const history: HistoryView = {
+  rows: [
+    { entry: newer, changes: [{ field: "driver", from: "566.36", to: "572.16" }] },
+    { entry: historyEntry(1_793_200_000_000, 140, "566.36", "cs2.exe"), changes: [] },
+    { entry: older, changes: [] },
+  ],
+  broken: 0,
+};
+
+export const comparison: RecordComparison = {
+  older,
+  newer,
+  avg_fps_change_pct: -13.6,
+  low_1pct_change_pct: -13.6,
+  threshold_pct: 8,
+  trend: "worse",
+  same_game: true,
+  same_display: true,
+  bottleneck_changed: false,
+  changes: [{ field: "driver", from: "566.36", to: "572.16" }],
+};
+
 export function defaults(): Responses {
   return {
     app_info: { version: "0.0.0-test", elevated: true, presentmon_version: "2.6.0" },
@@ -184,5 +249,10 @@ export function defaults(): Responses {
     cleanup_last_scan: null,
     metrics_start: null,
     metrics_stop: null,
+    history_list: structuredClone(history),
+    history_compare: structuredClone(comparison),
+    history_open: structuredClone(gpuResult),
+    history_delete: null,
+    history_clear: 3,
   };
 }

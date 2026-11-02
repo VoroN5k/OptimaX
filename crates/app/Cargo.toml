@@ -31,6 +31,8 @@ optimax-gamemode.workspace = true
 optimax-upscale.workspace = true
 optimax-network.workspace = true
 optimax-cleanup.workspace = true
+optimax-history.workspace = true
+flate2.workspace = true
 tauri = { workspace = true, features = [] }
 tauri-plugin-updater.workspace = true
 serde.workspace = true
@@ -52,6 +54,7 @@ optimax-gamemode = { workspace = true, features = ["ts"] }
 optimax-upscale = { workspace = true, features = ["ts"] }
 optimax-network = { workspace = true, features = ["ts"] }
 optimax-cleanup = { workspace = true, features = ["ts"] }
+optimax-history = { workspace = true, features = ["ts"] }
 
 [lints]
 workspace = true

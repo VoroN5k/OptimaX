@@ -10,6 +10,8 @@ import type { AuditReport } from "./bindings/AuditReport";
 import type { CmdError } from "./bindings/CmdError";
 import type { ConfigSummary } from "./bindings/ConfigSummary";
 import type { DiskSummary } from "./bindings/DiskSummary";
+import type { HistoryView } from "./bindings/HistoryView";
+import type { RecordComparison } from "./bindings/RecordComparison";
 import type { LastGame } from "./bindings/LastGame";
 import type { DriveView } from "./bindings/DriveView";
 import type { DryRunView } from "./bindings/DryRunView";
@@ -78,6 +80,11 @@ export const api = {
   dashboardLastGame: () => invoke<LastGame | null>("dashboard_last_game"),
   dashboardConfig: (refresh: boolean) => invoke<ConfigSummary>("dashboard_config", { refresh }),
   dashboardDisk: (refresh: boolean) => invoke<DiskSummary>("dashboard_disk", { refresh }),
+  historyList: () => invoke<HistoryView>("history_list"),
+  historyCompare: (a: string, b: string) => invoke<RecordComparison>("history_compare", { a, b }),
+  historyOpen: (id: string) => invoke<DiagnosisResult>("history_open", { id }),
+  historyDelete: (id: string) => invoke<void>("history_delete", { id }),
+  historyClear: () => invoke<number>("history_clear"),
   crashReport: () => invoke<CrashReport>("crash_report"),
   hardwareInfo: () => invoke<HardwareInfo>("hardware_info"),
   metricsStart: (intervalMs: number) => invoke<void>("metrics_start", { intervalMs }),

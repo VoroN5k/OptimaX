@@ -4,17 +4,17 @@
   import type { CmdError } from "../lib/bindings/CmdError";
   import type { DiagnosisResult } from "../lib/bindings/DiagnosisResult";
   import type { RecordProgress } from "../lib/bindings/RecordProgress";
-  import { t, tk } from "../lib/i18n";
+  import { tk } from "../lib/i18n";
   import { flashBg, logLocal, ui } from "../lib/state.svelte";
   import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
-  import FindingCard from "../components/FindingCard.svelte";
   import Fold from "../components/Fold.svelte";
-  import FrametimeChart from "../components/FrametimeChart.svelte";
   import CrashView from "../components/CrashView.svelte";
   import Page from "../components/Page.svelte";
   import ProcessPicker from "../components/ProcessPicker.svelte";
+  import RecordHistory from "../components/RecordHistory.svelte";
   import RecordStatus from "../components/RecordStatus.svelte";
+  import ResultView from "../components/ResultView.svelte";
   import LagWatch from "../components/LagWatch.svelte";
   import ResolutionTest from "../components/ResolutionTest.svelte";
   import StartModePicker from "../components/StartModePicker.svelte";
@@ -25,10 +25,9 @@
   import { EXAMPLE_RESULT } from "../lib/tourExample";
 
   /** Вкладка: «Чому лагає?» (запис гри), «Щойно лагнуло?» (стеження з буфером) чи «Чому вилітає?». */
-  let tab = $state<"lag" | "watch" | "crash">("lag");
+  let tab = $state<"lag" | "watch" | "history" | "crash">("lag");
   /** Налаштування запису згортаються, коли є результат: зверху має бути відповідь. */
   let setupOpen = $state(true);
-  let chartOpen = $state(false);
   let resOpen = $state(false);
   let resActive = $state(false);
   // Тест роздільності, що вже йде або має підсумок, не ховаємо.
@@ -118,14 +117,6 @@
     setupOpen = s.chapter === 2;
   });
 
-  const stats = $derived(shown?.diagnosis.stats ?? null);
-  const summary = $derived(shown?.diagnosis.verdicts[0]?.finding ?? null);
-  /** Цифри, що вже стоять плитками вище, — у списку доказів підсумку не повторюємо. */
-  const TILE_KEYS = new Set(["diag.ev.avg_fps", "diag.ev.low1", "diag.ev.low01", "diag.ev.p99"]);
-  const extra = $derived((summary?.evidence ?? []).filter((e) => !TILE_KEYS.has(e.label.key)));
-  const rest = $derived(
-    (shown?.diagnosis.verdicts.slice(1) ?? []).filter((v) => !(resShown && v.finding.id.startsWith("res."))),
-  );
   /** Тест роздільності має сенс, коли вузьке місце — GPU чи CPU (а не ліміт кадрів). */
   const modeLabel = $derived(tk(ui.settings.record_start === "hotkey" ? "ui.rec.mode.hotkey" : "ui.rec.mode.auto"));
   const setupSummary = $derived(`${exe.trim() || tk("ui.diag.no_game")} · ${seconds} с · ${modeLabel}`);
@@ -134,13 +125,9 @@
   );
 </script>
 
-{#snippet openUpscale()}
-  <Button small variant="secondary" icon="upscale" onclick={() => (ui.screen = "upscale")}>{tk("ui.up.open")}</Button>
-{/snippet}
-
 <Page
-  title={tab === "crash" ? tk("ui.crash.title") : tab === "watch" ? tk("ui.lag.title") : tk("ui.diag.title")}
-  subtitle={tab === "crash" ? tk("ui.crash.subtitle") : tab === "watch" ? tk("ui.lag.subtitle") : tk("ui.diag.subtitle")}
+  title={tk(`ui.diag.page.${tab}.title`)}
+  subtitle={tk(`ui.diag.page.${tab}.subtitle`)}
 >
   <div class="tabs">
     <Segmented
@@ -149,6 +136,7 @@
       options={[
         { value: "lag", label: tk("ui.crash.tab_lag") },
         { value: "watch", label: tk("ui.crash.tab_watch") },
+        { value: "history", label: tk("ui.history.tab") },
         { value: "crash", label: tk("ui.crash.tab_crash") },
       ]}
     />
@@ -158,6 +146,8 @@
   </div>
   {#if tab === "crash"}
     <CrashView />
+  {:else if tab === "history"}
+    <RecordHistory />
   {:else if tab === "watch"}
     <div class="stack">
       <Card>
@@ -205,87 +195,21 @@
         <Card><StateView kind="empty" title={tk("ui.diag.empty_title")} text={tk("ui.diag.empty_text")} /></Card>
       {/if}
 
-      {#if shown && summary}
-        {#if example}
-          <div class="example" role="note">
-            <strong>{tk("ui.tour.example_title")}</strong>
-            <span>{tk("ui.tour.example_text")}</span>
-          </div>
-        {/if}
-        <div data-tour="diag-summary">
-        <Card title={t(summary.title)} subtitle={t(summary.detail)}>
-          {#if stats}
-            <div class="stats" data-tour="diag-stats">
-              <div><strong>{stats.avg_fps.toFixed(1)}</strong><span>{tk("ui.diag.avg")}</span></div>
-              <div><strong>{stats.low_1pct_fps.toFixed(1)}</strong><span>1% low</span></div>
-              <div><strong>{stats.low_01pct_fps.toFixed(1)}</strong><span>0.1% low</span></div>
-              <div><strong>{stats.p99_frametime_ms.toFixed(2)}</strong><span>{tk("ui.diag.p99")}</span></div>
-            </div>
-          {/if}
-          {#if extra.length}
-            <p class="small muted load-title">{tk("ui.diag.load")}</p>
-            <dl class="load">
-              {#each extra as e, i (i)}
-                <dt>{t(e.label)}</dt>
-                <dd class="mono">{t(e.value)}</dd>
-              {/each}
-            </dl>
-          {/if}
-          <p class="small dim">
-            {tk("ui.diag.confidence", { v: summary.confidence })}
-            {#if shown.display_hz} · {tk("ui.diag.hz", { hz: shown.display_hz })}{/if}
-            · {tk("ui.rec.counted_total", { s: Math.round(shown.counted_s) })}
-            {#if shown.end_reason !== "completed"} · {tk(`ui.rec.end.${shown.end_reason}`)}{/if}
-          </p>
-        </Card>
-        </div>
-
-        <section class="findings" data-tour="diag-findings" aria-label={tk("ui.diag.findings")}>
-          <h2 class="section muted">{tk("ui.diag.findings_n", { n: rest.length })}</h2>
-          {#if rest.length}
-            <div class="list">
-              {#each rest as v, i (`${shown.diagnosis.game}-${i}-${v.finding.id}`)}
-                <FindingCard
-                  finding={v.finding}
-                  collapsible
-                  expanded={i === 0}
-                  action={v.finding.id === "upscale.helps" ? openUpscale : undefined}
+      {#if shown}
+        <ResultView result={shown} {example} hideResFindings={resShown}>
+          {#snippet after()}
+            {#if resTestable && result}
+              <Fold title={tk("ui.res.title")} summary={tk("ui.res.subtitle")} bind:open={resOpen} keep>
+                <ResolutionTest
+                  game={result.diagnosis.game}
+                  bind:hasReport={resShown}
+                  bind:active={resActive}
+                  onupdated={reloadResult}
                 />
-              {/each}
-            </div>
-          {:else}
-            <p class="none small muted">{tk("ui.diag.no_more")}</p>
-          {/if}
-        </section>
-
-        {#if shown.diagnosis.chart}
-          <div data-tour="diag-radar">
-          <Fold
-            title={tk("ui.chart.title")}
-            summary={tk("ui.chart.spikes", { n: shown.diagnosis.chart.spikes_total })}
-            bind:open={chartOpen}
-          >
-            <p class="small muted fold-hint">{tk("ui.chart.subtitle")}</p>
-            <FrametimeChart chart={shown.diagnosis.chart} />
-          </Fold>
-          </div>
-        {/if}
-        {#if resTestable && shown}
-          <Fold title={tk("ui.res.title")} summary={tk("ui.res.subtitle")} bind:open={resOpen} keep>
-            <ResolutionTest
-              game={shown.diagnosis.game}
-              bind:hasReport={resShown}
-              bind:active={resActive}
-              onupdated={reloadResult}
-            />
-          </Fold>
-        {/if}
-        {#if shown.presentmon_messages.length}
-          <details class="pm small muted">
-            <summary>{tk("ui.diag.pm_messages")}</summary>
-            <pre class="mono">{shown.presentmon_messages.join("\n")}</pre>
-          </details>
-        {/if}
+              </Fold>
+            {/if}
+          {/snippet}
+        </ResultView>
       {/if}
     </div>
   {/if}
@@ -316,39 +240,9 @@
     gap: calc(var(--space) * 3);
     margin-bottom: calc(var(--space) * 4);
   }
-  .example {
-    display: grid;
-    gap: 2px;
-    padding: calc(var(--space) * 3) calc(var(--space) * 4);
-    border: 1px dashed var(--warn);
-    border-radius: var(--radius-md);
-    background: var(--bg-input);
-    font-size: 13px;
-  }
-  .example strong {
-    color: var(--warn);
-  }
-  .example span {
-    color: var(--text-muted);
-  }
   .stack {
     display: grid;
     gap: calc(var(--space) * 4);
-  }
-  .findings {
-    display: grid;
-    gap: calc(var(--space) * 2);
-  }
-  .section {
-    margin: calc(var(--space) * 1) 0 0;
-    padding: 0 calc(var(--space) * 1);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-size: 11px;
-  }
-  .fold-hint {
-    margin: 0 0 calc(var(--space) * 3);
   }
   .setup {
     display: grid;
@@ -362,54 +256,6 @@
   }
   .mode {
     margin-top: calc(var(--space) * 5);
-  }
-  .stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: calc(var(--space) * 3);
-    margin-bottom: calc(var(--space) * 3);
-  }
-  .stats div {
-    display: grid;
-    padding: calc(var(--space) * 3) calc(var(--space) * 4);
-    border-radius: var(--radius-md);
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-  }
-  .stats strong {
-    font-size: 24px;
-    font-weight: 600;
-  }
-  .stats span {
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-  .list {
-    display: grid;
-    gap: calc(var(--space) * 3);
-  }
-  .load-title {
-    margin: 0 0 calc(var(--space) * 2);
-  }
-  .load {
-    display: grid;
-    grid-template-columns: minmax(160px, max-content) 1fr;
-    gap: 4px calc(var(--space) * 4);
-    margin: 0 0 calc(var(--space) * 3);
-    padding: calc(var(--space) * 3);
-    border-radius: var(--radius-sm);
-    background: var(--bg-input);
-    font-size: 12px;
-  }
-  .load dt {
-    color: var(--text-muted);
-  }
-  .load dd {
-    margin: 0;
-  }
-  .none {
-    margin: 0;
-    padding: 0 calc(var(--space) * 1);
   }
   .pm pre {
     white-space: pre-wrap;

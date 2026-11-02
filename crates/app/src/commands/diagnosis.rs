@@ -215,14 +215,23 @@ pub fn diag_start(
                 if let Some(start) = rec.start_unix_ms {
                     ctx.shader_cache_files = shader_cache_files(start);
                 }
-                Ok(DiagnosisResult {
+                let result = DiagnosisResult {
                     diagnosis: diagnose(&rec, &ctx),
                     display_hz,
                     presentmon_messages: rec.presentmon_messages.clone(),
                     cancelled: rec.cancelled,
                     counted_s: rec.counted_seconds(),
                     end_reason: rec.end_reason,
-                })
+                };
+                // Історія — окремим потоком: стан ПК і стиснення не затримують результат.
+                let for_history = result.clone();
+                let spawned = std::thread::Builder::new()
+                    .name("optimax-history".into())
+                    .spawn(move || super::history::remember(&for_history, &rec));
+                if let Err(e) = spawned {
+                    tracing::warn!("історія записів: потік не запустився: {e}");
+                }
+                Ok(result)
             })();
             *lock(&app.state::<AppState>().recording) = None;
             let _ = match result {

@@ -2392,12 +2392,14 @@ name = "optimax-app"
 version = "0.1.6"
 dependencies = [
  "anyhow",
+ "flate2",
  "optimax-audit",
  "optimax-cleanup",
  "optimax-core",
  "optimax-diagnosis",
  "optimax-frametime",
  "optimax-gamemode",
+ "optimax-history",
  "optimax-metrics",
  "optimax-network",
  "optimax-tweaks",
@@ -2498,6 +2500,18 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tracing",
+ "ts-rs",
+]
+
+[[package]]
+name = "optimax-history"
+version = "0.1.6"
+dependencies = [
+ "optimax-core",
+ "optimax-diagnosis",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
  "ts-rs",
 ]
 

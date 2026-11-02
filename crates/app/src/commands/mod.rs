@@ -7,6 +7,7 @@ pub mod dashboard;
 pub mod diagnosis;
 pub mod feedback;
 pub mod gamemode;
+pub mod history;
 pub mod lag;
 pub mod laptop;
 pub mod metrics;

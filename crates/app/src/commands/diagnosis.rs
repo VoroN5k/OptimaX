@@ -159,7 +159,9 @@ pub fn diag_start(
     state: State<'_, AppState>,
     exe: String,
     seconds: u32,
+    scene: Option<String>,
 ) -> CmdResult<()> {
+    let scene = optimax_history::clean_scene(scene.as_deref());
     let target = Target::ProcessName(exe);
     target.validate()?;
     if super::lag::is_watching(&state) {
@@ -227,7 +229,7 @@ pub fn diag_start(
                 let for_history = result.clone();
                 let spawned = std::thread::Builder::new()
                     .name("optimax-history".into())
-                    .spawn(move || super::history::remember(&for_history, &rec));
+                    .spawn(move || super::history::remember(&for_history, &rec, scene));
                 if let Err(e) = spawned {
                     tracing::warn!("історія записів: потік не запустився: {e}");
                 }

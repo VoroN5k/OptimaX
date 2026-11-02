@@ -33,13 +33,25 @@ test.describe("Діагностика", () => {
     await page.getByRole("button", { name: tk("ui.diag.start") }).click();
     await expect
       .poll(async () => (await calls(page)).find((c) => c.cmd === "diag_start")?.args)
-      .toEqual({ exe: "re9.exe", seconds: 60 });
+      .toEqual({ exe: "re9.exe", seconds: 60, scene: null });
     await emit(page, "diag-progress", { phase: "recording", counted_s: 12, target_s: 60, elapsed_s: 14 });
     await expect(page.getByRole("button", { name: tk("ui.diag.stop") })).toBeVisible();
     const done = structuredClone(gpuResult);
     done.diagnosis.verdicts = done.diagnosis.verdicts.slice(0, 1);
     await emit(page, "diag-done", done);
     await expect(page.getByText(tk("ui.diag.no_more"))).toBeVisible();
+  });
+
+  test("мітка сцени передається в запис", async ({ page }) => {
+    await mockBackend(page);
+    await openDiagnosis(page);
+    await page.getByLabel(tk("ui.diag.scene")).fill("  коридор ");
+    await page.getByRole("button", { name: tk("ui.picker.refresh") }).waitFor();
+    await page.locator("[data-tour=diag-game] input").fill("re9.exe");
+    await page.getByRole("button", { name: tk("ui.diag.start") }).click();
+    await expect
+      .poll(async () => (await calls(page)).find((c) => c.cmd === "diag_start")?.args)
+      .toEqual({ exe: "re9.exe", seconds: 60, scene: "коридор" });
   });
 
   test("«Довідка» пояснює вердикти, Esc закриває", async ({ page }) => {

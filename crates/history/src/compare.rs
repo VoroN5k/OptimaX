@@ -1,6 +1,6 @@
 //! Порівняння записів: зміна FPS проти похибки й що змінилося в стані ПК.
 
-use crate::model::{HistoryEntry, StateChange, StateField, SystemState};
+use crate::model::{scene_match, HistoryEntry, SceneMatch, StateChange, StateField, SystemState};
 use serde::Serialize;
 
 /// Менша зміна FPS не вважається значущою навіть за малого розкиду: різні моменти гри в одній
@@ -129,6 +129,8 @@ pub struct RecordComparison {
     pub same_game: bool,
     /// Той самий режим монітора (інакше FPS не порівнянний напряму).
     pub same_display: bool,
+    /// Та сама сцена (за мітками користувача).
+    pub scene: SceneMatch,
     /// Вузьке місце змінилося.
     pub bottleneck_changed: bool,
     /// Що змінилося в стані ПК.
@@ -170,11 +172,53 @@ pub fn compare(a: &HistoryEntry, b: &HistoryEntry) -> RecordComparison {
         trend,
         same_game: older.game.eq_ignore_ascii_case(&newer.game),
         same_display: older.state.display == newer.state.display,
+        scene: scene_match(older.scene.as_deref(), newer.scene.as_deref()),
         bottleneck_changed: older.bottleneck != newer.bottleneck,
         changes: diff(&older.state, &newer.state),
         older: older.clone(),
         newer: newer.clone(),
     }
+}
+
+/// Помітне погіршення в грі: найновіший запис проти попереднього порівнянного.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Regression {
+    /// Порівняння (старіший — попередній порівнянний запис, новіший — останній запис гри).
+    pub comparison: RecordComparison,
+}
+
+/// Чи можна порівнювати записи напряму: та сама гра й режим монітора, і сцени не різні
+/// (якщо міток немає — порівнюємо, але інтерфейс про це попереджає).
+fn comparable(a: &HistoryEntry, b: &HistoryEntry) -> bool {
+    a.game.eq_ignore_ascii_case(&b.game)
+        && a.state.display == b.state.display
+        && scene_match(a.scene.as_deref(), b.scene.as_deref()) != SceneMatch::Different
+}
+
+/// Пошук погіршення: для кожної гри останній запис порівнюється з попереднім порівнянним
+/// (та сама гра, режим монітора, сцена не відрізняється). Повертає ігри, де FPS помітно
+/// впав (більше за поріг похибки), найсвіжіші першими. `entries` — у будь-якому порядку.
+pub fn regressions(entries: &[HistoryEntry]) -> Vec<Regression> {
+    let mut sorted: Vec<&HistoryEntry> = entries.iter().collect();
+    sorted.sort_by_key(|e| std::cmp::Reverse(e.at_unix_ms));
+    let mut seen: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for (i, newest) in sorted.iter().enumerate() {
+        let game = newest.game.to_ascii_lowercase();
+        if seen.contains(&game) {
+            continue;
+        }
+        seen.push(game);
+        let previous = sorted[i + 1..].iter().find(|p| comparable(p, newest));
+        if let Some(previous) = previous {
+            let c = compare(previous, newest);
+            if c.trend == Trend::Worse {
+                out.push(Regression { comparison: c });
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -209,6 +253,7 @@ pub(crate) mod tests {
                 ..Default::default()
             },
             has_recording: true,
+            scene: None,
         }
     }
 
@@ -251,6 +296,50 @@ pub(crate) mod tests {
         let c = compare(&entry(1, 100.0, Some(5.0)), &entry(2, 88.0, Some(5.0)));
         assert!((c.threshold_pct - 14.14).abs() < 0.01);
         assert_eq!(c.trend, Trend::Same);
+    }
+
+    #[test]
+    fn regressions_use_latest_record_against_previous_comparable_one() {
+        let mut a = entry(1, 125.0, Some(1.0));
+        a.scene = Some("Коридор".into());
+        let mut other_scene = entry(2, 200.0, Some(1.0));
+        other_scene.scene = Some("Місто".into());
+        let mut b = entry(3, 108.0, Some(1.0));
+        b.scene = Some(" коридор ".into());
+        b.state.driver = Some("572.16".into());
+        let mut cs = entry(2, 300.0, None);
+        cs.game = "cs2.exe".into();
+        let r = regressions(&[a.clone(), other_scene.clone(), b.clone(), cs.clone()]);
+        // «Місто» пропущено (інша сцена); порівняння коридор → коридор, драйвер змінився.
+        assert_eq!(r.len(), 1);
+        let c = &r[0].comparison;
+        assert_eq!((c.older.at_unix_ms, c.newer.at_unix_ms), (1, 3));
+        assert_eq!(c.scene, SceneMatch::Same);
+        assert_eq!(c.changes[0].field, StateField::Driver);
+        // Покращення чи зміна в межах похибки — не погіршення.
+        let mut better = b.clone();
+        better.avg_fps = Some(150.0);
+        assert!(regressions(&[a.clone(), better]).is_empty());
+        // Інший режим монітора — не порівнюємо.
+        let mut other_display = b;
+        other_display.state.display = None;
+        assert!(regressions(&[a, other_display]).is_empty());
+        // Без попереднього запису — нічого.
+        assert!(regressions(&[cs]).is_empty());
+    }
+
+    #[test]
+    fn scene_labels() {
+        use crate::model::{clean_scene, scene_match};
+        assert_eq!(clean_scene(Some("  Коридор\n ")), Some("Коридор".into()));
+        assert_eq!(clean_scene(Some("   ")), None);
+        assert_eq!(
+            clean_scene(Some(&"x".repeat(100))).map(|s| s.len()),
+            Some(40)
+        );
+        assert_eq!(scene_match(Some("A"), Some("a ")), SceneMatch::Same);
+        assert_eq!(scene_match(Some("A"), Some("B")), SceneMatch::Different);
+        assert_eq!(scene_match(Some("A"), None), SceneMatch::Unknown);
     }
 
     #[test]

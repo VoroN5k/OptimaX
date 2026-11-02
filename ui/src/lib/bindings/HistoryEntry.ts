@@ -62,4 +62,8 @@ state: SystemState,
 /**
  * Повний запис збережено (можна відкрити радар і перерахувати).
  */
-has_recording: boolean, };
+has_recording: boolean, 
+/**
+ * Мітка сцени, яку користувач вказав перед записом (`None` — не вказано).
+ */
+scene: string | null, };

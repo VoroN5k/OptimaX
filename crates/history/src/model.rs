@@ -132,4 +132,38 @@ pub struct HistoryEntry {
     pub state: SystemState,
     /// Повний запис збережено (можна відкрити радар і перерахувати).
     pub has_recording: bool,
+    /// Мітка сцени, яку користувач вказав перед записом (`None` — не вказано).
+    #[serde(default)]
+    pub scene: Option<String>,
+}
+
+/// Чи з однієї сцени два записи (за мітками користувача).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum SceneMatch {
+    /// Однакові мітки.
+    Same,
+    /// Різні мітки — FPS напряму не порівнянний.
+    Different,
+    /// В одного чи обох записів мітки немає.
+    Unknown,
+}
+
+/// Чистить мітку сцени з інтерфейсу: без керівних символів, обрізано пробіли, до 40 символів.
+pub fn clean_scene(raw: Option<&str>) -> Option<String> {
+    let s: String = raw?.chars().filter(|c| !c.is_control()).take(40).collect();
+    let s = s.trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+/// Порівнює мітки сцен (без огляду на регістр і зайві пробіли).
+pub fn scene_match(a: Option<&str>, b: Option<&str>) -> SceneMatch {
+    match (a, b) {
+        (Some(x), Some(y)) if x.trim().to_lowercase() == y.trim().to_lowercase() => {
+            SceneMatch::Same
+        }
+        (Some(_), Some(_)) => SceneMatch::Different,
+        _ => SceneMatch::Unknown,
+    }
 }

@@ -11,6 +11,12 @@ mod compare;
 mod model;
 mod store;
 
-pub use compare::{compare, diff, fps_noise_pct, RecordComparison, Trend, MIN_SIGNIFICANT_PCT};
-pub use model::{DisplayState, FileStamp, HistoryEntry, StateChange, StateField, SystemState};
+pub use compare::{
+    compare, diff, fps_noise_pct, regressions, RecordComparison, Regression, Trend,
+    MIN_SIGNIFICANT_PCT,
+};
+pub use model::{
+    clean_scene, scene_match, DisplayState, FileStamp, HistoryEntry, SceneMatch, StateChange,
+    StateField, SystemState,
+};
 pub use store::{entry_id, Files, HistoryError, MemFiles, StdDir, Store, KEEP_RECORDINGS_PER_GAME};

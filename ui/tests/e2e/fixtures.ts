@@ -9,6 +9,7 @@ import type { Finding } from "../../src/lib/bindings/Finding";
 import type { HistoryEntry } from "../../src/lib/bindings/HistoryEntry";
 import type { HistoryView } from "../../src/lib/bindings/HistoryView";
 import type { RecordComparison } from "../../src/lib/bindings/RecordComparison";
+import type { Regression } from "../../src/lib/bindings/Regression";
 import type { LagView } from "../../src/lib/bindings/LagView";
 import type { LastGame } from "../../src/lib/bindings/LastGame";
 import type { ProcessEntry } from "../../src/lib/bindings/ProcessEntry";
@@ -41,6 +42,7 @@ export interface Responses {
   history_open: DiagnosisResult;
   history_delete: null;
   history_clear: number;
+  history_regressions: Regression[];
 }
 
 const GIB = 1073741824;
@@ -203,6 +205,7 @@ export function historyEntry(at: number, avg: number, driver: string, game = "re
       game_file: { bytes: 104857600, modified_unix: 1_790_000_000 },
     },
     has_recording: true,
+    scene: "коридор",
   };
 }
 
@@ -227,6 +230,7 @@ export const comparison: RecordComparison = {
   trend: "worse",
   same_game: true,
   same_display: true,
+  scene: "same",
   bottleneck_changed: false,
   changes: [{ field: "driver", from: "566.36", to: "572.16" }],
 };
@@ -254,5 +258,6 @@ export function defaults(): Responses {
     history_open: structuredClone(gpuResult),
     history_delete: null,
     history_clear: 3,
+    history_regressions: [],
   };
 }

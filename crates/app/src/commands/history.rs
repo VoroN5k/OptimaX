@@ -14,8 +14,9 @@ use optimax_diagnosis::timeline::Timeline;
 use optimax_diagnosis::{diagnose, Bottleneck, Context};
 use optimax_frametime::Recording;
 use optimax_history::{
-    compare, diff, entry_id, fps_noise_pct, DisplayState, FileStamp, HistoryEntry,
-    RecordComparison, StateChange, StdDir, Store, SystemState, KEEP_RECORDINGS_PER_GAME,
+    compare, diff, entry_id, fps_noise_pct, regressions, DisplayState, FileStamp, HistoryEntry,
+    RecordComparison, Regression, StateChange, StdDir, Store, SystemState,
+    KEEP_RECORDINGS_PER_GAME,
 };
 use serde::Serialize;
 use std::io::{Read, Write};
@@ -141,6 +142,7 @@ pub fn entry_from(
     r: &DiagnosisResult,
     rec: &Recording,
     state: SystemState,
+    scene: Option<String>,
     at_unix_ms: i64,
 ) -> Option<HistoryEntry> {
     let d = &r.diagnosis;
@@ -167,6 +169,7 @@ pub fn entry_from(
         fps_noise_pct: noise,
         state,
         has_recording: true,
+        scene,
     })
 }
 
@@ -179,9 +182,10 @@ fn compress(rec: &Recording) -> CmdResult<Vec<u8>> {
 
 /// Зберігає завершений запис «Діагностики» в історію (блокує: стан ПК і стиснення).
 /// Помилка лише логується — діагностика від історії не залежить.
-pub fn remember(r: &DiagnosisResult, rec: &Recording) {
+pub fn remember(r: &DiagnosisResult, rec: &Recording, scene: Option<String>) {
     let run = || -> CmdResult<Option<String>> {
-        let Some(entry) = entry_from(r, rec, system_state(&r.diagnosis.game), now_ms()) else {
+        let state = system_state(&r.diagnosis.game);
+        let Some(entry) = entry_from(r, rec, state, scene, now_ms()) else {
             return Ok(None);
         };
         let files = dir()?;
@@ -280,6 +284,17 @@ pub async fn history_open(id: String) -> CmdResult<DiagnosisResult> {
     .await
 }
 
+/// Ігри, де FPS помітно впав між останнім записом і попереднім порівнянним (для «Головної»).
+#[tauri::command]
+pub async fn history_regressions() -> CmdResult<Vec<Regression>> {
+    blocking(|| {
+        let files = dir()?;
+        let (entries, _) = Store::new(&files).list().map_err(failed)?;
+        Ok(regressions(&entries))
+    })
+    .await
+}
+
 /// Видаляє запис з історії.
 #[tauri::command]
 pub async fn history_delete(id: String) -> CmdResult<()> {
@@ -356,7 +371,14 @@ mod tests {
 
     #[test]
     fn entry_takes_summary_and_skips_insufficient_data() {
-        let e = entry_from(&result(Bottleneck::Gpu), &rec(), SystemState::default(), 42).unwrap();
+        let e = entry_from(
+            &result(Bottleneck::Gpu),
+            &rec(),
+            SystemState::default(),
+            None,
+            42,
+        )
+        .unwrap();
         assert_eq!(e.id, "42-re9.exe");
         assert_eq!(e.confidence, 85);
         assert_eq!(e.title.key, "diag.summary.gpu.title");
@@ -365,6 +387,7 @@ mod tests {
             &result(Bottleneck::InsufficientData),
             &rec(),
             SystemState::default(),
+            None,
             42
         )
         .is_none());
@@ -373,8 +396,14 @@ mod tests {
     #[test]
     fn rows_diff_against_previous_record_of_the_same_game() {
         let mk = |game: &str, at: i64, driver: &str| {
-            let mut e =
-                entry_from(&result(Bottleneck::Gpu), &rec(), SystemState::default(), at).unwrap();
+            let mut e = entry_from(
+                &result(Bottleneck::Gpu),
+                &rec(),
+                SystemState::default(),
+                None,
+                at,
+            )
+            .unwrap();
             e.game = game.into();
             e.state.driver = Some(driver.into());
             e

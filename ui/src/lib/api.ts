@@ -12,6 +12,7 @@ import type { ConfigSummary } from "./bindings/ConfigSummary";
 import type { DiskSummary } from "./bindings/DiskSummary";
 import type { HistoryView } from "./bindings/HistoryView";
 import type { RecordComparison } from "./bindings/RecordComparison";
+import type { Regression } from "./bindings/Regression";
 import type { LastGame } from "./bindings/LastGame";
 import type { DriveView } from "./bindings/DriveView";
 import type { DryRunView } from "./bindings/DryRunView";
@@ -85,13 +86,15 @@ export const api = {
   historyOpen: (id: string) => invoke<DiagnosisResult>("history_open", { id }),
   historyDelete: (id: string) => invoke<void>("history_delete", { id }),
   historyClear: () => invoke<number>("history_clear"),
+  historyRegressions: () => invoke<Regression[]>("history_regressions"),
   crashReport: () => invoke<CrashReport>("crash_report"),
   hardwareInfo: () => invoke<HardwareInfo>("hardware_info"),
   metricsStart: (intervalMs: number) => invoke<void>("metrics_start", { intervalMs }),
   metricsStop: () => invoke<void>("metrics_stop"),
 
   listProcesses: () => invoke<ProcessEntry[]>("list_processes"),
-  diagStart: (exe: string, seconds: number) => invoke<void>("diag_start", { exe, seconds }),
+  diagStart: (exe: string, seconds: number, scene: string | null) =>
+    invoke<void>("diag_start", { exe, seconds, scene }),
   diagCancel: () => invoke<void>("diag_cancel"),
   diagState: () => invoke<DiagnosisState>("diag_state"),
   resStart: (exe: string, seconds: number) => invoke<ResView>("res_start", { exe, seconds }),

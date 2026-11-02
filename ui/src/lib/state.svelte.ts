@@ -36,6 +36,10 @@ export const ui = $state({
   measuring: false,
   /** Результат останньої перевірки оновлень (за кнопкою або при запуску, якщо дозволено). */
   update: null as UpdateStatus | null,
+  /** Мітка сцени для наступного запису (живе, поки відкрита програма). */
+  scene: "",
+  /** Порівняти ці записи історії, щойно відкриється вкладка «Історія» (з «Головної»). */
+  pendingCompare: null as [string, string] | null,
 });
 
 export const log = $state({ lines: [] as LogLine[] });

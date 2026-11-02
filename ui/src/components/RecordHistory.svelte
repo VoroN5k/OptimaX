@@ -8,7 +8,7 @@
   import type { StateChange } from "../lib/bindings/StateChange";
   import { dateTime } from "../lib/format";
   import { t, tk } from "../lib/i18n";
-  import { logLocal } from "../lib/state.svelte";
+  import { logLocal, ui } from "../lib/state.svelte";
   import Button from "./Button.svelte";
   import Card from "./Card.svelte";
   import Modal from "./Modal.svelte";
@@ -45,7 +45,19 @@
     }
   }
 
-  onMount(() => void load());
+  onMount(() => {
+    void load().then(() => {
+      // З «Головної»: вибрати пару записів і одразу порівняти.
+      const pair = ui.pendingCompare;
+      ui.pendingCompare = null;
+      const first = pair && view?.rows.find((r) => r.entry.id === pair[0]);
+      if (pair && first) {
+        game = first.entry.game;
+        selected = [...pair];
+        void compareSelected();
+      }
+    });
+  });
 
   function gamesOf(v: HistoryView | null): string[] {
     const out: string[] = [];
@@ -165,6 +177,7 @@
               <div class="line">
                 <span class="mono when">{when(e.at_unix_ms)}</span>
                 <span class="title">{t(e.title)}</span>
+                {#if e.scene}<span class="scene small">{e.scene}</span>{/if}
                 <span class="mono muted">{tk("ui.history.fps", { avg: fps(e.avg_fps), low: fps(e.low_1pct_fps) })}</span>
               </div>
               {#if r.changes.length}
@@ -196,7 +209,8 @@
       </ul>
       <div class="foot">
         <Button small variant="ghost" disabled={busy} onclick={() => (confirmClear = true)}>{tk("ui.history.clear")}</Button>
-        <span class="small muted">{tk("ui.history.pick_hint")}</span>
+        <!-- Порожній span лишається, щоб кнопки не зсувались. -->
+        <span class="small muted">{selected.length < 2 ? tk("ui.history.pick_hint") : ""}</span>
         <Button small variant="primary" disabled={busy || selected.length !== 2} onclick={compareSelected}>
           {tk("ui.history.compare")}
         </Button>
@@ -233,6 +247,11 @@
         </div>
         {#if !c.same_game}
           <p class="warn small">{tk("ui.history.warn_game")}</p>
+        {/if}
+        {#if c.scene === "different"}
+          <p class="warn small">{tk("ui.history.warn_scene", { a: c.older.scene ?? "", b: c.newer.scene ?? "" })}</p>
+        {:else if c.scene === "unknown"}
+          <p class="small muted note">{tk("ui.history.scene_unknown")}</p>
         {/if}
         {#if !c.same_display}
           <p class="warn small">{tk("ui.history.warn_display")}</p>
@@ -348,6 +367,17 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .scene {
+    flex-shrink: 0;
+    padding: 1px calc(var(--space) * 2);
+    border-radius: 999px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+  .note {
+    margin: calc(var(--space) * 3) 0 0;
   }
   .chips {
     display: flex;

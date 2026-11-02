@@ -103,6 +103,7 @@ fn export_typescript_bindings() {
         crate::commands::history::HistoryView,
         crate::commands::history::HistoryRow,
         optimax_history::RecordComparison,
+        optimax_history::Regression,
         optimax_cleanup::ScanProgress,
         optimax_cleanup::ExecProgress,
         optimax_cleanup::JournalRecord,

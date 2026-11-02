@@ -5,6 +5,7 @@
   import type { DiskSummary } from "../lib/bindings/DiskSummary";
   import type { Finding } from "../lib/bindings/Finding";
   import type { LastGame } from "../lib/bindings/LastGame";
+  import type { Regression } from "../lib/bindings/Regression";
   import type { UiDesired } from "../lib/bindings/UiDesired";
   import { ago, size } from "../lib/format";
   import { t, tk } from "../lib/i18n";
@@ -28,6 +29,8 @@
   let config = $state<Load<ConfigSummary>>({ data: null, loading: true, error: null });
   let disk = $state<Load<DiskSummary>>({ data: null, loading: true, error: null });
   let fix = $state<UiDesired | null>(null);
+  /** Ігри, де FPS помітно впав між останнім записом і попереднім порівнянним. */
+  let drops = $state<Regression[]>([]);
   let configEl = $state<HTMLElement | null>(null);
 
   async function load<T>(slot: Load<T>, f: () => Promise<T>) {
@@ -48,6 +51,10 @@
       load(game, () => api.dashboardLastGame()),
       load(config, () => api.dashboardConfig(force)),
       load(disk, () => api.dashboardDisk(force)),
+      api
+        .historyRegressions()
+        .then((r) => (drops = r))
+        .catch(() => (drops = [])),
     ]).then(() => {
       const problems = (config.data?.high ?? 0) + (config.data?.moderate ?? 0);
       flashBg(problems > 0 ? "warn" : "ok");
@@ -75,6 +82,7 @@
   const findings = $derived(report?.findings ?? []);
 
   const fps = (v: number | null) => (v == null ? "—" : v.toFixed(0));
+  const dateOnly = (ms: number) => new Date(ms).toLocaleDateString("uk-UA");
   /** Менше за це — «звільняти майже нічого» (а не «0.1 ГБ можна звільнити»). */
   const LITTLE = 256 * 1048576;
 
@@ -108,6 +116,38 @@
 {/snippet}
 
 <Page title={tk("ui.home.title")} subtitle={tk("ui.home.subtitle")}>
+  {#each drops.slice(0, 2) as d (d.comparison.newer.id)}
+    {@const c = d.comparison}
+    <div class="drop" role="status">
+      <i class="dot" aria-hidden="true"></i>
+      <div class="drop-text">
+        <strong>
+          {tk("ui.home.drop_title", {
+            game: c.newer.game,
+            pct: Math.abs(c.avg_fps_change_pct ?? 0).toFixed(0),
+            since: dateOnly(c.older.at_unix_ms),
+          })}
+        </strong>
+        <span class="small muted">
+          {#if c.changes.length}
+            {tk("ui.home.drop_changes", { list: c.changes.map((x) => tk(`ui.history.field.${x.field}`)).join(", ") })}
+          {:else}
+            {tk("ui.home.drop_no_changes")}
+          {/if}
+          {#if c.scene !== "same"} · {tk("ui.home.drop_scene_unknown")}{/if}
+        </span>
+      </div>
+      <Button
+        small
+        variant="secondary"
+        onclick={() => {
+          ui.pendingCompare = [c.older.id, c.newer.id];
+          ui.screen = "diagnosis";
+        }}>{tk("ui.home.drop_open")}</Button
+      >
+    </div>
+  {/each}
+
   <div data-tour="home-state">
   <Card title={tk("ui.home.state")}>
     <div class="tiles">
@@ -252,6 +292,25 @@
 {/if}
 
 <style>
+  .drop {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space) * 3);
+    margin-bottom: calc(var(--space) * 4);
+    padding: calc(var(--space) * 3) calc(var(--space) * 4);
+    border: 1px solid var(--warn);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+  }
+  .drop .dot {
+    background: var(--warn);
+  }
+  .drop-text {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
   .tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

@@ -42,6 +42,8 @@
   let error = $state<CmdError | null>(null);
 
   onMount(() => {
+    // З «Головної» попросили порівняти записи — одразу вкладка історії.
+    if (ui.pendingCompare) tab = "history";
     // Повернення на сторінку: показати останній результат і хід запису, якщо він іде.
     void api
       .diagState()
@@ -82,7 +84,7 @@
     error = null;
     result = null;
     try {
-      await api.diagStart(exe.trim(), seconds);
+      await api.diagStart(exe.trim(), seconds, ui.scene.trim() || null);
       recording = true;
       ui.measuring = true;
       progress = null;
@@ -119,7 +121,9 @@
 
   /** Тест роздільності має сенс, коли вузьке місце — GPU чи CPU (а не ліміт кадрів). */
   const modeLabel = $derived(tk(ui.settings.record_start === "hotkey" ? "ui.rec.mode.hotkey" : "ui.rec.mode.auto"));
-  const setupSummary = $derived(`${exe.trim() || tk("ui.diag.no_game")} · ${seconds} с · ${modeLabel}`);
+  const setupSummary = $derived(
+    [exe.trim() || tk("ui.diag.no_game"), `${seconds} с`, modeLabel, ui.scene.trim()].filter(Boolean).join(" · "),
+  );
   const resTestable = $derived(
     !recording && !!result && (result.diagnosis.bottleneck === "gpu" || result.diagnosis.bottleneck === "cpu"),
   );
@@ -174,6 +178,17 @@
           </div>
         </div>
         <div class="mode" data-tour="diag-start-mode"><StartModePicker /></div>
+        <div class="scene">
+          <label for="diag-scene" class="small muted">{tk("ui.diag.scene")}</label>
+          <input
+            id="diag-scene"
+            bind:value={ui.scene}
+            maxlength="40"
+            placeholder={tk("ui.diag.scene_placeholder")}
+            autocomplete="off"
+          />
+          <p class="small dim">{tk("ui.diag.scene_hint")}</p>
+        </div>
       </Fold>
 
       {#if recording}
@@ -256,6 +271,23 @@
   }
   .mode {
     margin-top: calc(var(--space) * 5);
+  }
+  .scene {
+    display: grid;
+    gap: calc(var(--space) * 2);
+    max-width: 420px;
+    margin-top: calc(var(--space) * 5);
+  }
+  .scene input {
+    height: 38px;
+    padding: 0 calc(var(--space) * 3);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-input);
+    font-size: 13px;
+  }
+  .scene input:focus-visible {
+    border-color: var(--accent-from);
   }
   .pm pre {
     white-space: pre-wrap;

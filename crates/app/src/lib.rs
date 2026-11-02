@@ -289,6 +289,7 @@ mod app {
                 history::history_open,
                 history::history_delete,
                 history::history_clear,
+                history::history_regressions,
             ])
             .build(tauri::generate_context!())?;
         app.run(|handle, event| {

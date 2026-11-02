@@ -339,18 +339,44 @@ pub fn load_evidence(a: &Analysis<'_>) -> Vec<Evidence> {
     out
 }
 
-/// GPU-bound: GPU ≥ 95 % більшу частину часу на робочій частоті.
+/// Межовий випадок «відеокарта» (погоджено користувачем 2026-11-02): GPU у стелі менше
+/// потрібної частки часу, але за PresentMon зайнятий щонайменше стільки часу кадру…
+pub const GPU_EDGE_RATIO: f64 = 0.92;
+/// …середнє завантаження GPU не нижче цього…
+pub const GPU_EDGE_AVG: f64 = 90.0;
+/// …а найзавантаженіше ядро в стелі менше цієї частки часу (процесор не обмежує).
+pub const GPU_EDGE_CORE_SHARE: f64 = 0.25;
+/// Впевненість межового вердикту: нижча за звичайний, бо поріг «≥ 95 %» не досягнуто.
+pub const GPU_EDGE_CONFIDENCE: u8 = 60;
+
+/// GPU-bound: GPU ≥ 95 % більшу частину часу на робочій частоті. Межовий випадок — GPU
+/// трохи не дотягує до стелі, але зайнятий майже весь час кадру, а процесор вільний
+/// ([`GPU_EDGE_RATIO`]…): той самий вердикт із нижчою впевненістю й окремим поясненням.
 pub fn gpu_bound(a: &Analysis<'_>) -> Option<Finding> {
     let share = a.share(gpu_busy);
     let ratio = a.busy_ratio(true);
     let ratio_high = ratio.is_some_and(|r| r >= 0.9);
-    if share < gpu_share_needed(ratio) {
+    let avg = a.gpu_avg_util();
+    let edge = share < gpu_share_needed(ratio)
+        && ratio.is_some_and(|r| r >= GPU_EDGE_RATIO)
+        && avg.is_some_and(|u| u >= GPU_EDGE_AVG)
+        && a.share(|s| s.busiest_core_pct >= CORE_SATURATED_PCT) < GPU_EDGE_CORE_SHARE;
+    if share < gpu_share_needed(ratio) && !edge {
         return None;
     }
     // Чутливість FPS до роздільності не перевірялась (потрібен окремий прогін) — стеля 85 %.
-    let confidence = (50.0 + 30.0 * share + if ratio_high { 10.0 } else { 0.0 }).min(85.0);
-    let mut d = draft("gpu_bound", Category::Gpu, Impact::Info, conf(confidence))
+    let confidence = if edge {
+        GPU_EDGE_CONFIDENCE
+    } else {
+        conf((50.0 + 30.0 * share + if ratio_high { 10.0 } else { 0.0 }).min(85.0))
+    };
+    let mut d = draft("gpu_bound", Category::Gpu, Impact::Info, confidence)
         .arg("share", format!("{:.0}", share * 100.0))
+        .arg(
+            "ratio",
+            format!("{:.0}", ratio.unwrap_or(0.0).min(1.0) * 100.0),
+        )
+        .arg("avg", format!("{:.0}", avg.unwrap_or(0.0)))
         .advice()
         .evidence(Text::new("diag.ev.gpu_busy_share"), pct(share));
     if let Some(u) = a.gpu_avg_util() {
@@ -370,7 +396,12 @@ pub fn gpu_bound(a: &Analysis<'_>) -> Option<Finding> {
     if power_cap >= 0.5 {
         d = d.evidence(Text::new("diag.ev.power_cap_normal"), pct(power_cap));
     }
-    Some(d.build())
+    let mut f = d.build();
+    if edge {
+        f.title.key = "diag.gpu_bound.title_edge".into();
+        f.detail.key = "diag.gpu_bound.detail_edge".into();
+    }
+    Some(f)
 }
 
 /// CPU-bound: GPU < 90 %, а найзавантаженіше ядро ≥ 95 % більшу частину часу.

@@ -1,0 +1,15 @@
+# Та сама сцена, що re9-dlss-quality, але DLSS Performance: GPU у середньому 92 %, за
+# PresentMon зайнятий 94 % часу кадру, у стелі (≥ 95 %) лише 27 % часу — нижче порогу 40 %.
+# Ядро процесора в стелі 0 % часу. З 2026-11-02 це межовий вердикт «відеокарта» з
+# впевненістю 60 % (GPU_EDGE_*); до того було «не ясно».
+description = "RE9, DLSS Performance, 1440p, темний коридор"
+recorded = "2026-11-02"
+display_hz = 200
+
+[expect]
+bottleneck = "gpu"
+min_confidence = 55
+has = ["gpu_bound", "upscale.helps"]
+absent = ["cpu_bound"]
+avg_fps = [108.0, 164.0]
+low_1pct_fps = [70.0, 112.0]

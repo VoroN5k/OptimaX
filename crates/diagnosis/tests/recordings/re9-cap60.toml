@@ -1,0 +1,13 @@
+# Та сама сцена з лімітом 60 FPS у грі: FPS тримається на ліміті, тож ні відеокарта, ні
+# процесор не є вузьким місцем, а апскейл FPS не додасть.
+description = "RE9, ліміт FPS 60 у грі, 1440p, темний коридор"
+recorded = "2026-11-02"
+display_hz = 200
+
+[expect]
+bottleneck = "frame_cap"
+min_confidence = 60
+has = ["cap.limiter"]
+absent = ["gpu_bound", "cpu_bound", "upscale.helps"]
+avg_fps = [58.0, 62.0]
+low_1pct_fps = [42.0, 60.0]

@@ -12,12 +12,16 @@
     "app:dev": "cd ../crates/app && tauri dev",
     "app:build": "cd ../crates/app && tauri build --no-bundle",
     "app:bundle": "cd ../crates/app && tauri build --bundles nsis",
-    "release:latest": "node scripts/latest-json.mjs"
+    "release:latest": "node scripts/latest-json.mjs",
+    "test:ui": "playwright test",
+    "check:e2e": "tsc -p tests/tsconfig.json"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@tauri-apps/cli": "2.12.4",
     "@tsconfig/svelte": "5.0.8",
+    "@types/node": "22.20.5",
     "svelte": "5.57.2",
     "svelte-check": "4.7.7",
     "typescript": "5.9.3",

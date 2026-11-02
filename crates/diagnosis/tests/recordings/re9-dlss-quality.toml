@@ -1,0 +1,14 @@
+# Важка сцена з DLSS Quality: відеокарта в стелі ~88 % часу, процесор встигає.
+# Вердикти запису: summary.gpu, stutter.isolated, gpu_bound, upscale.helps.
+# stutter.isolated не вимагаємо: 0.1% low (55.4) близько до порогу «половина середнього».
+description = "RE9, DLSS Quality, 1440p, темний коридор"
+recorded = "2026-11-02"
+display_hz = 200
+
+[expect]
+bottleneck = "gpu"
+min_confidence = 70
+has = ["gpu_bound", "upscale.helps"]
+absent = ["cpu_bound"]
+avg_fps = [88.0, 134.0]
+low_1pct_fps = [60.0, 96.0]

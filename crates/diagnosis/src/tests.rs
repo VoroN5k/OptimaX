@@ -683,6 +683,49 @@ fn unclear_summary_shows_load_against_thresholds() {
 }
 
 #[test]
+fn gpu_busy_almost_whole_frame_is_edge_gpu_bound() {
+    // GPU 91–96 %: у стелі лише чверть часу, але PresentMon каже, що GPU працює 95 % часу кадру,
+    // а процесор вільний — межова «відеокарта» з нижчою впевненістю.
+    let mut tl = timeline(&jittery(8.0, 3000), |_, i| {
+        let mut s = base_sample();
+        if let Some(g) = s.gpu.as_mut() {
+            g.util = Some(if i % 4 == 0 { 96 } else { 91 });
+        }
+        s
+    });
+    for f in &mut tl.frames {
+        f.gpu_busy_ms = Some(f.frametime_ms * 0.95);
+    }
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert_eq!(d.bottleneck, Bottleneck::Gpu, "{:?}", ids(&d));
+    let f = find(&d, "gpu_bound").unwrap();
+    assert_eq!(f.confidence, Confidence::new(rules::GPU_EDGE_CONFIDENCE));
+    assert_eq!(f.title.key, "diag.gpu_bound.title_edge");
+    assert_eq!(f.detail.key, "diag.gpu_bound.detail_edge");
+    assert_eq!(f.title.args["ratio"], "95");
+
+    // Той самий GPU, але ядро процесора в стелі — це вже не «відеокарта».
+    let mut busy_cpu = tl.clone();
+    for s in &mut busy_cpu.samples {
+        s.busiest_core_pct = 99.0;
+    }
+    assert!(find(
+        &diagnose_timeline(&busy_cpu, &Context::default()),
+        "gpu_bound"
+    )
+    .is_none());
+    // І без даних PresentMon про зайнятість GPU — теж ні (лише завантаження з NVML).
+    let mut no_ratio = tl;
+    for f in &mut no_ratio.frames {
+        f.gpu_busy_ms = None;
+    }
+    assert_eq!(
+        diagnose_timeline(&no_ratio, &Context::default()).bottleneck,
+        Bottleneck::Unclear
+    );
+}
+
+#[test]
 fn clear_verdict_summary_has_no_load_evidence() {
     let tl = timeline(&jittery(8.0, 3000), |_, _| {
         let mut s = base_sample();

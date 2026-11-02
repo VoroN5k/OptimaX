@@ -223,6 +223,44 @@ impl Recording {
         let ticks: i64 = self.segments.iter().map(|(a, b)| b - a).sum();
         ticks_to_ms(ticks, self.qpc_frequency) / 1000.0
     }
+
+    /// Знеособлена копія (для регресійних тестів у репозиторії): імена процесів, крім гри й
+    /// `keep` (системні процеси, на яких тримаються правила), стають `app1.exe`, `app2.exe`… —
+    /// той самий процес отримує те саме ім'я в кадрах і знімках; повідомлення PresentMon
+    /// (можуть містити шляхи) прибираються. Цифри, PID, драйвери й назви заліза не змінюються.
+    pub fn anonymized(&self, keep: &[&str]) -> Recording {
+        let game = match &self.target {
+            Target::ProcessName(n) => Some(n.as_str()),
+            Target::ProcessId(_) => None,
+        };
+        let kept = |n: &str| {
+            game.is_some_and(|g| g.eq_ignore_ascii_case(n))
+                || keep.iter().any(|k| k.eq_ignore_ascii_case(n))
+        };
+        let mut aliases: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        let mut alias = |n: &str| -> String {
+            if kept(n) {
+                return n.to_string();
+            }
+            let next = aliases.len() + 1;
+            aliases
+                .entry(n.to_ascii_lowercase())
+                .or_insert_with(|| format!("app{next}.exe"))
+                .clone()
+        };
+        let mut out = self.clone();
+        for f in &mut out.frames {
+            f.application = alias(&f.application);
+        }
+        for s in &mut out.snapshots {
+            for p in &mut s.top_processes {
+                p.name = alias(&p.name);
+            }
+        }
+        out.presentmon_messages.clear();
+        out
+    }
 }
 
 /// Записує кадри й метрики, не повідомляючи про хід. Див. [`record_with`].
@@ -552,6 +590,62 @@ mod tests {
             ..rec
         };
         assert!(all.frames.iter().all(|f| all.frame_counted(f)));
+    }
+
+    #[test]
+    fn anonymized_keeps_game_and_listed_names_and_aliases_the_rest() {
+        let mut f1 = frame(10);
+        f1.application = "Game.exe".into();
+        let mut f2 = frame(20);
+        f2.application = "Discord.exe".into();
+        let snap = |names: &[&str]| Snapshot {
+            elapsed_ms: 0,
+            qpc: 0,
+            cpu: Default::default(),
+            memory: Default::default(),
+            disk: Default::default(),
+            gpus: vec![],
+            top_processes: names
+                .iter()
+                .map(|n| optimax_metrics::ProcessSample {
+                    pid: 1,
+                    name: (*n).into(),
+                    cpu_percent: 1.0,
+                    memory_bytes: 0,
+                    io_bytes_per_sec: 0,
+                })
+                .collect(),
+        };
+        let rec = Recording {
+            target: Target::ProcessName("game.exe".into()),
+            qpc_frequency: 1000,
+            start_qpc: 0,
+            frames: vec![f1, f2],
+            snapshots: vec![
+                snap(&["MsMpEng.exe", "discord.exe", "Telegram.exe"]),
+                snap(&["Telegram.exe"]),
+            ],
+            skipped_lines: 0,
+            presentmon_messages: vec![r"C:\Users\someone\game.log".into()],
+            cancelled: false,
+            segments: vec![],
+            end_reason: EndReason::Completed,
+            start_unix_ms: None,
+            dpc_trace: None,
+        };
+        let a = rec.anonymized(&["MsMpEng.exe"]);
+        assert_eq!(a.frames[0].application, "Game.exe");
+        assert_eq!(a.frames[1].application, "app1.exe");
+        let names: Vec<&str> = a.snapshots[0]
+            .top_processes
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        // Той самий процес (без огляду на регістр) — те саме ім'я в кадрах і знімках.
+        assert_eq!(names, vec!["MsMpEng.exe", "app1.exe", "app2.exe"]);
+        assert_eq!(a.snapshots[1].top_processes[0].name, "app2.exe");
+        assert!(a.presentmon_messages.is_empty());
+        assert_eq!(a.frames.len(), rec.frames.len());
     }
 
     #[test]

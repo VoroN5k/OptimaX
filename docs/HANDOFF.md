@@ -170,6 +170,21 @@ Actions (`.github/workflows/release.yml`) збирає zip, інсталятор
   Дані із запису замість власної сесії **не** робили: замір показав, що окрема сесія FPS не
   знижує, а спільне джерело ускладнило б запис.
 
+## 2m. Регресійні тести на реальних записах + UI-тести (ідея 16 з `docs/IDEAS.local.md`; не закомічено)
+
+- `Recording::anonymized(keep)` (frametime): сторонні процеси → `app1.exe`…, без повідомлень
+  PresentMon; гра, `KEEP_PROCESSES` (системні Windows + `MsMpEng.exe`) лишаються.
+- `crates/diagnosis/tests/recordings/` — пари `<ім'я>.json.gz` + `<ім'я>.toml` (опис і
+  очікування: bottleneck, min_confidence, has/absent, межі FPS); тест `recordings.rs`
+  проганяє всі через `diagnose`. Спільний код — `tests/fixture/mod.rs` (його ж підключає
+  приклад через `#[path]`). Записів **ще немає** — тест проходить порожнім, поки користувач
+  не запише перші (`--example fixture -- record …`, README у теці).
+- Нові dev-залежності (погоджено 2026-11-02): `flate2` (вже був у дереві через Tauri) і `toml`
+  для diagnosis; `@playwright/test` 1.64.1 і `@types/node` 22 для ui. До exe не потрапляють.
+- UI-тести (11): Головна (плитки, кеш/«Оновити», порожній стан, компактні знахідки),
+  Діагностика (результат, запис через події, Довідка), Знайомство (поява, пропуск, повний
+  прохід із прикладом, Esc). У релізному workflow — після перевірок UI.
+
 ## 3. Наступні завдання (обрав користувач 2026-11-01)
 
 Робити **по одному**, після кожного — звіт, чекліст і зупинка. Нові залежності — спершу питати.
@@ -486,6 +501,11 @@ Windows 11 Pro, Ryzen 7 5800X, RTX 4070 SUPER; основний монітор 2
 ```
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace            # зараз 376 тестів
-cd ui && npm run check && npm run check:i18n
+cargo test --workspace            # зараз 402 тести, зокрема регресійні записи
+cd ui && npm run check && npm run check:i18n && npm run check:e2e && npm run test:ui
 ```
+
+`test:ui` — Playwright (Chromium, перший раз `npx playwright install chromium`), бекенд
+підроблено в `ui/tests/e2e/mock.ts`, відповіді типізовані згенерованими прив'язками
+(`fixtures.ts`). Нова команда бекенду, яку викликає екран у тесті, — додати її в `Responses`
+(інакше вона потрапить у `unmocked` і перша перевірка «Головної» впаде).

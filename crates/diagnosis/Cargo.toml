@@ -23,6 +23,8 @@ serde.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 optimax-audit.workspace = true
+flate2.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

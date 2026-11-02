@@ -282,6 +282,8 @@ pub fn apply(d: &mut Diagnosis, report: &ResolutionReport) {
     };
     for v in &mut d.verdicts {
         let id = v.finding.id.as_str();
+        // Межовий вердикт (GPU не в стелі, але зайнятий майже весь кадр) має власні тексти.
+        let edge = v.finding.detail.key.ends_with(".detail_edge");
         match (id, report.outcome) {
             ("gpu_bound", ResolutionOutcome::Helps) => {
                 let c = v
@@ -290,7 +292,12 @@ pub fn apply(d: &mut Diagnosis, report: &ResolutionReport) {
                     .percent()
                     .max(report.finding.confidence.percent());
                 v.finding.confidence = Confidence::new(c.min(GPU_BOUND_CONFIRMED_MAX));
-                v.finding.detail.key = "diag.gpu_bound.detail_confirmed".into();
+                v.finding.detail.key = if edge {
+                    "diag.gpu_bound.detail_edge_confirmed"
+                } else {
+                    "diag.gpu_bound.detail_confirmed"
+                }
+                .into();
             }
             ("gpu_bound", ResolutionOutcome::NoHelp) => {
                 let c = v
@@ -299,7 +306,12 @@ pub fn apply(d: &mut Diagnosis, report: &ResolutionReport) {
                     .percent()
                     .min(GPU_BOUND_CONTRADICTED_MAX);
                 v.finding.confidence = Confidence::new(c);
-                v.finding.detail.key = "diag.gpu_bound.detail_contradicted".into();
+                v.finding.detail.key = if edge {
+                    "diag.gpu_bound.detail_edge_contradicted"
+                } else {
+                    "diag.gpu_bound.detail_contradicted"
+                }
+                .into();
             }
             _ => {}
         }
@@ -493,6 +505,45 @@ mod tests {
             .filter(|e| e.label.key == "diag.ev.res_test")
             .count();
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn edge_gpu_bound_keeps_its_own_texts_after_the_test() {
+        let edge = |d: &mut Diagnosis| {
+            for v in &mut d.verdicts {
+                if v.finding.id == "gpu_bound" {
+                    v.finding.detail.key = "diag.gpu_bound.detail_edge".into();
+                }
+            }
+        };
+        let key = |d: &Diagnosis| {
+            d.verdicts
+                .iter()
+                .find(|v| v.finding.id == "gpu_bound")
+                .map(|v| v.finding.detail.key.clone())
+                .unwrap()
+        };
+        let helps = evaluate(&runs(
+            [100.0, 100.0],
+            [140.0, 140.0],
+            (Some(99.0), Some(80.0)),
+        ))
+        .unwrap();
+        let mut d = diagnosis_with(&["summary.gpu", "gpu_bound"]);
+        edge(&mut d);
+        apply(&mut d, &helps);
+        assert_eq!(key(&d), "diag.gpu_bound.detail_edge_confirmed");
+
+        let no = evaluate(&runs(
+            [100.0, 100.0],
+            [101.0, 100.0],
+            (Some(99.0), Some(70.0)),
+        ))
+        .unwrap();
+        let mut d = diagnosis_with(&["summary.gpu", "gpu_bound"]);
+        edge(&mut d);
+        apply(&mut d, &no);
+        assert_eq!(key(&d), "diag.gpu_bound.detail_edge_contradicted");
     }
 
     #[test]

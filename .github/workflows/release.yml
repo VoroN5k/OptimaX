@@ -96,6 +96,13 @@ jobs:
           npm run check
           npm run check:i18n
 
+      - name: UI-тести (Playwright, підроблений бекенд)
+        working-directory: ui
+        run: |
+          npm run check:e2e
+          npx playwright install chromium
+          npm run test:ui
+
       - name: Збірка інсталятора з підписом
         working-directory: ui
         env:

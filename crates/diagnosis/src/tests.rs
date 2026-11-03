@@ -1548,6 +1548,10 @@ fn threads(main_running: f64, main_sleep: f64) -> crate::timeline::ThreadsTimeli
         counted_ms: 30_000.0,
         main_detail: vec![],
         render_detail: vec![],
+        buckets_start_ms: 0.0,
+        bucket_ms: 250.0,
+        main_buckets: vec![],
+        render_buckets: vec![],
     }
 }
 
@@ -1791,4 +1795,36 @@ fn spike_anatomy_shows_what_the_main_thread_did() {
     assert!(a.spikes.iter().all(|s| s.main.is_some()));
     // Рендер-потоку без проміжків — без висновку про нього.
     assert!(a.spikes.iter().all(|s| s.render.is_none()));
+}
+
+// ---- Шкала запису для інтерактивного перегляду ----
+
+#[test]
+fn view_keeps_every_frame_marks_gaps_and_carries_thread_lanes() {
+    let mut tl = timeline(&jittery(8.0, 3000), |_, _| base_sample());
+    // Alt+Tab на 2 с посередині: далі кадри зсунуті.
+    for f in tl.frames.iter_mut().skip(1500) {
+        f.t_ms += 2000.0;
+    }
+    let mut th = threads(0.95, 0.0);
+    th.main_buckets = vec![[200.0, 10.0, 30.0, 5.0, 0.0, 5.0]; 4];
+    th.main_detail = vec![(100.0, 1.234_567, 0)];
+    tl.threads = Some(th);
+    let d = diagnose_timeline(&tl, &Context::default());
+    let v = d.view.expect("шкала є, коли є кадри");
+    assert_eq!(v.frames.t.len(), tl.frames.len());
+    assert_eq!(v.frames.ft.len(), tl.frames.len());
+    assert_eq!(v.frames.cpu.len(), tl.frames.len());
+    assert_eq!(v.frames.queue.len(), tl.frames.len());
+    assert_eq!(v.gaps.len(), 1);
+    let (from, to) = v.gaps[0];
+    assert!((to - from - 2000.0).abs() < 20.0, "{from}..{to}");
+    assert_eq!(v.samples.t.len(), tl.samples.len());
+    let main = v.main.expect("головний потік");
+    assert_eq!(main.tid, 1);
+    assert_eq!(main.buckets.len(), 4);
+    // Округлення до 0,01 мс.
+    assert_eq!(main.detail, vec![(100.0, 1.23, 0)]);
+    assert_eq!(v.render.map(|r| r.tid), Some(2));
+    assert!((v.median_ms - 8.0).abs() < 1.0);
 }

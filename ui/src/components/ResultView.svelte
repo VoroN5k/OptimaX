@@ -9,6 +9,7 @@
   import Fold from "./Fold.svelte";
   import FrameAnatomy from "./FrameAnatomy.svelte";
   import FrametimeChart from "./FrametimeChart.svelte";
+  import TimelineExplorer from "./TimelineExplorer.svelte";
 
   // Результат запису: підсумок, знахідки, радар. Спільний для «Чому лагає?» та «Історії».
   let {
@@ -113,7 +114,17 @@
       title={tk("ui.anatomy.title")}
       summary={tk("ui.anatomy.summary", { ms: an.typical.frame_ms.toFixed(1), n: an.spikes.length })}
     >
-      <FrameAnatomy anatomy={an} />
+      <FrameAnatomy anatomy={an} start={result.diagnosis.view?.start_ms ?? result.diagnosis.chart?.start_ms ?? 0} />
+    </Fold>
+  {/if}
+  {#if result.diagnosis.view && result.diagnosis.view.frames.t.length}
+    {@const v = result.diagnosis.view}
+    <Fold
+      title={tk("ui.tl.title")}
+      summary={tk("ui.tl.summary", { s: ((v.end_ms - v.start_ms) / 1000).toFixed(0), n: v.spikes.length })}
+    >
+      <p class="small muted fold-hint">{tk("ui.tl.subtitle")}</p>
+      <TimelineExplorer view={v} chart={result.diagnosis.chart} />
     </Fold>
   {/if}
   {@render after?.()}

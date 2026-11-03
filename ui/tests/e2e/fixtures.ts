@@ -10,6 +10,7 @@ import type { HistoryEntry } from "../../src/lib/bindings/HistoryEntry";
 import type { HistoryView } from "../../src/lib/bindings/HistoryView";
 import type { RecordComparison } from "../../src/lib/bindings/RecordComparison";
 import type { Regression } from "../../src/lib/bindings/Regression";
+import type { TimelineView } from "../../src/lib/bindings/TimelineView";
 import type { DriverCheck } from "../../src/lib/bindings/DriverCheck";
 import type { DriverEffect } from "../../src/lib/bindings/DriverEffect";
 import type { BlackBoxView } from "../../src/lib/bindings/BlackBoxView";
@@ -124,6 +125,39 @@ export const lastGame: LastGame = {
 };
 
 /** Справжній (не приклад) результат запису: відеокарта, дві знахідки. */
+/** Шкала запису на 30 с: кадри по 8 мс, один ривок 60 мс близько 12,5 с, DPC поруч. */
+function syntheticView(): TimelineView {
+  const t: number[] = [];
+  const ft: number[] = [];
+  let at = 1000;
+  while (at < 31000) {
+    const v = at >= 12500 && at < 12508 ? 60 : 8;
+    at += v;
+    t.push(at);
+    ft.push(v);
+  }
+  return {
+    start_ms: t[0] ?? 0,
+    end_ms: t[t.length - 1] ?? 0,
+    median_ms: 8,
+    frames: { t, ft, cpu: ft.map((v) => v * 0.7), gpu: ft.map(() => 7.4), queue: ft.map(() => 3.2) },
+    spikes: [[12564, 60]],
+    gaps: [],
+    samples: { t: [2000, 12000, 22000], gpu: [97, 95, 96], core: [55, 60, 58] },
+    main: {
+      tid: 1,
+      start_ms: 1000,
+      bucket_ms: 250,
+      buckets: Array.from({ length: 120 }, () => [180, 10, 50, 0, 10, 0] as [number, number, number, number, number, number]),
+      detail: [[12504, 18, 0], [12522, 36, 3], [12558, 6, 0]],
+    },
+    render: null,
+    dpc: [{ t: 12528, us: 1200, driver: 0, isr: false }],
+    drivers: ["nvlddmkm.sys"],
+    shader_writes: [],
+  };
+}
+
 export const gpuResult: DiagnosisResult = {
   diagnosis: {
     game: "re9.exe",
@@ -194,6 +228,7 @@ export const gpuResult: DiagnosisResult = {
       stall_counts: [1, 0, 0],
       main_counts: [0, 0, 0, 1, 0, 0],
     },
+    view: syntheticView(),
   },
   display_hz: 200,
   presentmon_messages: [],

@@ -13,6 +13,7 @@ pub mod framegen;
 pub mod resolution;
 pub mod rules;
 pub mod timeline;
+pub mod view;
 
 pub use chart::{ChartPoint, FrametimeChart, SpikeMark};
 pub use framegen::{FrameGenInfo, FrameGenSeries};
@@ -104,6 +105,9 @@ pub struct Diagnosis {
     /// Анатомія кадру: типовий кадр і де виникла затримка в найгірших ривках (PresentMon 2.x).
     #[serde(default)]
     pub anatomy: Option<anatomy::FrameAnatomy>,
+    /// Усе виміряне на одній шкалі часу для інтерактивного перегляду.
+    #[serde(default)]
+    pub view: Option<view::TimelineView>,
 }
 
 /// Файл кешу шейдерів, змінений під час запису (за годинником, бо так його бачить ФС).
@@ -211,6 +215,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
     let analysis = Analysis::new(tl, ctx.display_hz);
     let stats = analysis.as_ref().map(|a| a.stats.clone());
     let chart = analysis.as_ref().map(chart::frametime_chart);
+    let view = analysis.as_ref().map(view::timeline_view);
     let seconds = tl.duration_ms() / 1000.0;
     let enough = analysis.is_some()
         && tl.frames.len() >= MIN_FRAMES
@@ -232,6 +237,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
             chart,
             frame_gen: None,
             anatomy: None,
+            view,
         };
     };
 
@@ -319,6 +325,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
         chart,
         frame_gen: None,
         anatomy,
+        view,
     }
 }
 
@@ -397,6 +404,7 @@ pub fn diagnose(rec: &Recording, ctx: &Context) -> Diagnosis {
             chart: None,
             frame_gen: None,
             anatomy: None,
+            view: None,
         },
     }
 }

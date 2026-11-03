@@ -79,4 +79,31 @@ test.describe("Діагностика", () => {
     await expect(page.locator("table.spikes tbody tr")).toContainText(`${tk("ui.anatomy.main.page_in")} 36.0`);
     await expect(page.getByText(`${tk("ui.anatomy.main.page_in")} · 1`)).toBeVisible();
   });
+
+  test("шкала запису: перехід до найгіршого ривку й значення під курсором", async ({ page }) => {
+    await mockBackend(page, { diag_state: { recording: false, last: structuredClone(gpuResult) } });
+    await page.goto("/");
+    await page.getByRole("button", { name: tk("ui.nav.diagnosis") }).click();
+    const fold = page.getByRole("button", { name: new RegExp(tk("ui.tl.title")) });
+    await expect(fold).toContainText(tk("ui.tl.summary", { s: "30", n: 1 }));
+    await fold.click();
+    const canvas = page.getByRole("application", { name: tk("ui.tl.aria") });
+    await expect(canvas).toBeVisible();
+    await page.getByRole("button", { name: tk("ui.tl.worst") }).click();
+    await expect(page.getByText(tk("ui.tl.spike", { i: 1, n: 1, t: "11.56", ms: "60.0" }))).toBeVisible();
+    // Відрізок ривку займає видимий діапазон: курсор посередині — у ривку, головний потік чекав на диск.
+    await canvas.scrollIntoViewIfNeeded();
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error("немає полотна");
+    const at = (ms: number) => {
+      // Видимо [12564 - 60 - 400, 12564 + 300]; підписи ліворуч — 104 px.
+      const from = 12104;
+      const to = 12864;
+      return box.x + 104 + ((ms - from) / (to - from)) * (box.width - 104);
+    };
+    await page.mouse.move(at(12528.6), box.y + 20);
+    await expect(page.locator(".readout")).toContainText(tk("ui.anatomy.main.page_in"));
+    await expect(page.locator(".readout")).toContainText("nvlddmkm.sys: 1.20");
+    await expect(page.locator(".readout")).toContainText(tk("ui.tl.frame", { ft: "60.0", cpu: "42.0", gpu: "7.4", q: "3.2" }));
+  });
 });

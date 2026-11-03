@@ -213,6 +213,18 @@ pub struct ThreadsTimeline {
     /// Те саме для рендер-потоку.
     #[serde(default)]
     pub render_detail: Vec<(f64, f64, u8)>,
+    /// Початок кошика 0, мс від старту запису.
+    #[serde(default)]
+    pub buckets_start_ms: f64,
+    /// Ширина кошика, мс.
+    #[serde(default)]
+    pub bucket_ms: f64,
+    /// Мс у кожному кошику за станами головного потоку (`optimax_trace::threads::slot`).
+    #[serde(default)]
+    pub main_buckets: Vec<[f32; 6]>,
+    /// Те саме для рендер-потоку (порожньо — рендер не відомий чи це той самий потік).
+    #[serde(default)]
+    pub render_buckets: Vec<[f32; 6]>,
 }
 
 /// Найменше зарахованої гри з трасуванням, з якого ще є сенс робити висновки про потоки.
@@ -290,9 +302,31 @@ pub(crate) fn threads_timeline(rec: &Recording) -> Option<ThreadsTimeline> {
             })
             .unwrap_or_default()
     };
+    let buckets_of = |tid: u32| -> Vec<[f32; 6]> {
+        t.threads
+            .iter()
+            .find(|s| s.tid == tid)
+            .map(|s| {
+                s.buckets
+                    .iter()
+                    .map(|b| {
+                        let mut out = [0.0f32; 6];
+                        for (o, v) in out.iter_mut().zip(b) {
+                            *o = *v;
+                        }
+                        out
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
     Some(ThreadsTimeline {
         main_detail: detail_of(main.tid),
         render_detail: render.map(|r| detail_of(r.tid)).unwrap_or_default(),
+        buckets_start_ms: offset_ms,
+        bucket_ms: t.bucket_ms,
+        main_buckets: buckets_of(main.tid),
+        render_buckets: render.map(|r| buckets_of(r.tid)).unwrap_or_default(),
         main,
         render,
         game_threads: t.game_threads,

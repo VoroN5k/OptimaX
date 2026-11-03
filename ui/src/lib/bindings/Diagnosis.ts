@@ -4,6 +4,7 @@ import type { FrameAnatomy } from "./FrameAnatomy";
 import type { FrameGenInfo } from "./FrameGenInfo";
 import type { FrameStats } from "./FrameStats";
 import type { FrametimeChart } from "./FrametimeChart";
+import type { TimelineView } from "./TimelineView";
 import type { Verdict } from "./Verdict";
 
 /**
@@ -37,4 +38,8 @@ frame_gen: FrameGenInfo | null,
 /**
  * Анатомія кадру: типовий кадр і де виникла затримка в найгірших ривках (PresentMon 2.x).
  */
-anatomy: FrameAnatomy | null, };
+anatomy: FrameAnatomy | null, 
+/**
+ * Усе виміряне на одній шкалі часу для інтерактивного перегляду.
+ */
+view: TimelineView | null, };

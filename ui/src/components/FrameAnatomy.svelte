@@ -9,7 +9,7 @@
   // починає / працює / простоює; до показу) і що розтягнуло найгірші ривки. Числа й
   // класифікацію рахує бекенд; тут лише показ.
 
-  let { anatomy }: { anatomy: FrameAnatomy } = $props();
+  let { anatomy, start = 0 }: { anatomy: FrameAnatomy; start?: number } = $props();
 
   /** Скільки ривків показувати в таблиці. */
   const SHOWN = 8;
@@ -115,7 +115,7 @@
       <tbody>
         {#each anatomy.spikes.slice(0, SHOWN) as s (s.t_ms)}
           <tr>
-            <td class="mono">{(s.t_ms / 1000).toFixed(1)} с</td>
+            <td class="mono">{(Math.max(0, s.t_ms - start) / 1000).toFixed(1)} с</td>
             <td class="mono">{ms(s.parts.frame_ms)}</td>
             <td class="mono">{ms(s.parts.cpu_busy)}</td>
             <td class="mono">{ms(s.parts.cpu_wait)}</td>

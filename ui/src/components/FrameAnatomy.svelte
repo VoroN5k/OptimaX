@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { FrameAnatomy } from "../lib/bindings/FrameAnatomy";
+  import type { SpikeAnatomy } from "../lib/bindings/SpikeAnatomy";
   import type { Stall } from "../lib/bindings/Stall";
+  import type { ThreadState } from "../lib/bindings/ThreadState";
   import { tk } from "../lib/i18n";
 
   // Анатомія кадру за стовпцями PresentMon 2.x: типовий кадр (CPU готує / чекає; GPU
@@ -12,6 +14,24 @@
   /** Скільки ривків показувати в таблиці. */
   const SHOWN = 8;
   const STALLS: Stall[] = ["cpu_busy", "wait_gpu", "wait"];
+  /** Порядок як у `main_counts` бекенду. */
+  const STATES: ThreadState[] = ["running", "ready", "sync", "page_in", "sleep", "other"];
+
+  /** Скільки мс головний потік був у стані, що переважив (бекенд уже вибрав стан). */
+  function stateMs(s: SpikeAnatomy): number | null {
+    const m = s.main;
+    if (!m || !s.main_state) return null;
+    const by: Record<ThreadState, number> = {
+      running: m.running,
+      ready: m.ready,
+      sync: m.sync,
+      page_in: m.page_in,
+      sleep: m.sleep,
+      other: m.other,
+    };
+    return by[s.main_state];
+  }
+  const traced = $derived(anatomy.main_counts.some((n) => n > 0));
 
   const ms = (v: number | null | undefined) => (v == null ? "—" : v.toFixed(1));
   const ty = $derived(anatomy.typical);
@@ -70,6 +90,16 @@
         {/if}
       {/each}
     </div>
+    {#if traced}
+      <p class="small muted">{tk("ui.anatomy.main_title")}</p>
+      <div class="chips">
+        {#each STATES as st, i (st)}
+          {#if anatomy.main_counts[i]}
+            <span class="chip small">{tk(`ui.anatomy.main.${st}`)} · {anatomy.main_counts[i]}</span>
+          {/if}
+        {/each}
+      </div>
+    {/if}
     <table class="spikes small">
       <thead>
         <tr>
@@ -79,6 +109,7 @@
           <th>{tk("ui.anatomy.col.cpu_wait")}</th>
           <th>{tk("ui.anatomy.col.gpu")}</th>
           <th>{tk("ui.anatomy.col.stall")}</th>
+          {#if traced}<th>{tk("ui.anatomy.col.main")}</th>{/if}
         </tr>
       </thead>
       <tbody>
@@ -90,6 +121,21 @@
             <td class="mono">{ms(s.parts.cpu_wait)}</td>
             <td class="mono">{ms(s.parts.gpu_busy)} / {ms(s.prev_gpu_busy)}</td>
             <td>{s.stall ? tk(`ui.anatomy.stall.${s.stall}`) : "—"}</td>
+            {#if traced}
+              <td
+                title={s.main
+                  ? tk("ui.anatomy.main_detail", {
+                      run: ms(s.main.running),
+                      ready: ms(s.main.ready),
+                      sync: ms(s.main.sync),
+                      disk: ms(s.main.page_in),
+                      sleep: ms(s.main.sleep),
+                    })
+                  : undefined}
+              >
+                {s.main_state ? `${tk(`ui.anatomy.main.${s.main_state}`)} ${ms(stateMs(s))} ${tk("ui.anatomy.ms")}` : "—"}
+              </td>
+            {/if}
           </tr>
         {/each}
       </tbody>

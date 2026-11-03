@@ -26,4 +26,9 @@ spikes: Array<SpikeAnatomy>,
 /**
  * Скільки розібраних ривків за кожною причиною: CPU готував / чекав на GPU / чекав.
  */
-stall_counts: [number, number, number], };
+stall_counts: [number, number, number], 
+/**
+ * Скільки ривків за станом головного потоку: працював / чекав на ядро / синхронізація /
+ * диск / сон / інше (лише ривки з даними трасування).
+ */
+main_counts: [number, number, number, number, number, number], };

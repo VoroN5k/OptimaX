@@ -51,6 +51,99 @@ pub enum Stall {
     Wait,
 }
 
+/// Що робив потік протягом кадру ривка, мс (з точних проміжків трасування).
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ThreadSlice {
+    /// Працював.
+    pub running: f64,
+    /// Готовий, чекав на вільне ядро.
+    pub ready: f64,
+    /// Заблокований на синхронізації.
+    pub sync: f64,
+    /// Чекав на сторінку з диска.
+    pub page_in: f64,
+    /// Спав.
+    pub sleep: f64,
+    /// Інше очікування ядра.
+    pub other: f64,
+}
+
+/// Стан потоку, що забрав найбільше часу кадру.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadState {
+    /// Працював (обчислення).
+    Running,
+    /// Чекав на вільне ядро (його витіснили).
+    Ready,
+    /// Чекав на інший потік, подію чи блокування.
+    Sync,
+    /// Чекав на сторінку з диска (page fault).
+    PageIn,
+    /// Спав.
+    Sleep,
+    /// Інше очікування ядра.
+    Other,
+}
+
+/// Частка кадру, яку мають покривати проміжки, щоб робити висновок.
+const MIN_COVERAGE: f64 = 0.5;
+
+impl ThreadSlice {
+    fn total(&self) -> f64 {
+        self.running + self.ready + self.sync + self.page_in + self.sleep + self.other
+    }
+
+    /// Стан, що забрав найбільше часу.
+    pub fn dominant(&self) -> ThreadState {
+        [
+            (ThreadState::Running, self.running),
+            (ThreadState::Ready, self.ready),
+            (ThreadState::Sync, self.sync),
+            (ThreadState::PageIn, self.page_in),
+            (ThreadState::Sleep, self.sleep),
+            (ThreadState::Other, self.other),
+        ]
+        .into_iter()
+        .fold((ThreadState::Running, -1.0), |best, x| {
+            if x.1 > best.1 {
+                x
+            } else {
+                best
+            }
+        })
+        .0
+    }
+}
+
+/// Скільки часу потоку в кожному стані у вікні `[from, to]` (мс). `None`, якщо проміжки
+/// покривають менше половини вікна (потік не трасувався чи вікно поза детальними даними).
+pub fn thread_slice(detail: &[(f64, f64, u8)], from: f64, to: f64) -> Option<ThreadSlice> {
+    use optimax_trace::threads::slot;
+    let mut s = ThreadSlice::default();
+    let start = detail.partition_point(|(a, d, _)| a + d <= from);
+    for &(a, d, st) in &detail[start..] {
+        if a >= to {
+            break;
+        }
+        let part = (a + d).min(to) - a.max(from);
+        if part <= 0.0 {
+            continue;
+        }
+        match usize::from(st) {
+            slot::RUNNING => s.running += part,
+            slot::READY => s.ready += part,
+            slot::SYNC => s.sync += part,
+            slot::PAGE_IN => s.page_in += part,
+            slot::SLEEP => s.sleep += part,
+            _ => s.other += part,
+        }
+    }
+    (to > from && s.total() >= (to - from) * MIN_COVERAGE).then_some(s)
+}
+
 /// Розбір одного ривка.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -63,6 +156,15 @@ pub struct SpikeAnatomy {
     pub prev_gpu_busy: Option<f64>,
     /// Що розтягнуло ривок (`None` — PresentMon не дав частин).
     pub stall: Option<Stall>,
+    /// Що робив головний потік гри протягом кадру (трасування потоків).
+    #[serde(default)]
+    pub main: Option<ThreadSlice>,
+    /// Стан головного потоку, що забрав найбільше часу кадру.
+    #[serde(default)]
+    pub main_state: Option<ThreadState>,
+    /// Що робив рендер-потік (Present) протягом кадру.
+    #[serde(default)]
+    pub render: Option<ThreadSlice>,
 }
 
 /// Анатомія кадрів запису.
@@ -80,6 +182,10 @@ pub struct FrameAnatomy {
     pub spikes: Vec<SpikeAnatomy>,
     /// Скільки розібраних ривків за кожною причиною: CPU готував / чекав на GPU / чекав.
     pub stall_counts: [u32; 3],
+    /// Скільки ривків за станом головного потоку: працював / чекав на ядро / синхронізація /
+    /// диск / сон / інше (лише ривки з даними трасування).
+    #[serde(default)]
+    pub main_counts: [u32; 6],
 }
 
 fn median(mut v: Vec<f64>) -> Option<f64> {
@@ -154,6 +260,8 @@ pub fn frame_anatomy(a: &Analysis<'_>) -> Option<FrameAnatomy> {
     let mut worst: Vec<(f64, f64)> = a.spikes.iter().map(|(t, ms, _)| (*t, *ms)).collect();
     worst.sort_by(|x, y| y.1.total_cmp(&x.1));
     let mut stall_counts = [0u32; 3];
+    let mut main_counts = [0u32; 6];
+    let threads = a.timeline.threads.as_ref();
     let spikes: Vec<SpikeAnatomy> = worst
         .into_iter()
         .take(MAX_SPIKES)
@@ -168,11 +276,21 @@ pub fn frame_anatomy(a: &Analysis<'_>) -> Option<FrameAnatomy> {
             if let Some(s) = stall {
                 stall_counts[s as usize] += 1;
             }
+            // Кадр ривка: від Present попереднього кадру до Present цього.
+            let (from, to) = (f.t_ms - f.frametime_ms, f.t_ms);
+            let main = threads.and_then(|t| thread_slice(&t.main_detail, from, to));
+            let render = threads.and_then(|t| thread_slice(&t.render_detail, from, to));
+            if let Some(m) = main {
+                main_counts[m.dominant() as usize] += 1;
+            }
             Some(SpikeAnatomy {
                 t_ms: f.t_ms,
                 parts: p,
                 prev_gpu_busy,
                 stall,
+                main,
+                main_state: main.map(|m| m.dominant()),
+                render,
             })
         })
         .collect();
@@ -182,6 +300,7 @@ pub fn frame_anatomy(a: &Analysis<'_>) -> Option<FrameAnatomy> {
         queued_share,
         spikes,
         stall_counts,
+        main_counts,
     })
 }
 
@@ -197,6 +316,23 @@ mod tests {
             gpu_busy: Some(gpu),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn thread_slice_sums_overlap_and_requires_coverage() {
+        use optimax_trace::threads::slot;
+        let detail = vec![
+            (0.0, 10.0, slot::RUNNING as u8),
+            (10.0, 40.0, slot::PAGE_IN as u8),
+            (50.0, 20.0, slot::RUNNING as u8),
+        ];
+        let s = thread_slice(&detail, 5.0, 60.0).expect("покрито");
+        assert!((s.running - 15.0).abs() < 1e-9);
+        assert!((s.page_in - 40.0).abs() < 1e-9);
+        assert_eq!(s.dominant(), ThreadState::PageIn);
+        // Поза даними — без висновку.
+        assert!(thread_slice(&detail, 100.0, 160.0).is_none());
+        assert!(thread_slice(&detail, 60.0, 200.0).is_none());
     }
 
     #[test]

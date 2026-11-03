@@ -76,5 +76,7 @@ test.describe("Діагностика", () => {
     await expect(page.getByText(`${tk("ui.anatomy.stall.cpu_busy")} · 1`)).toBeVisible();
     await expect(page.locator("table.spikes tbody tr")).toHaveCount(1);
     await expect(page.locator("table.spikes tbody tr")).toContainText("55.2");
+    await expect(page.locator("table.spikes tbody tr")).toContainText(`${tk("ui.anatomy.main.page_in")} 36.0`);
+    await expect(page.getByText(`${tk("ui.anatomy.main.page_in")} · 1`)).toBeVisible();
   });
 });

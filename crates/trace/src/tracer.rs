@@ -102,10 +102,23 @@ impl ThreadTracer {
             std::thread::Builder::new()
                 .name("optimax-thread-trace".into())
                 .spawn(move || {
+                    let mut picked = false;
                     while !stop.load(Ordering::SeqCst) {
                         std::thread::sleep(DRAIN_EVERY);
                         let watermark = qpc_now() - lag;
-                        lock(&shared).threads.drain(watermark);
+                        let mut g = lock(&shared);
+                        g.threads.drain(watermark);
+                        if !picked {
+                            // Рендер — потік, що найчастіше викликає Present.
+                            let render: Vec<u32> = g
+                                .presents
+                                .iter()
+                                .max_by_key(|(_, n)| **n)
+                                .map(|(t, _)| *t)
+                                .into_iter()
+                                .collect();
+                            picked = g.threads.pick_detail(&render);
+                        }
                     }
                 })
                 .map_err(|_| TraceError::Api {
@@ -123,8 +136,9 @@ impl ThreadTracer {
         })
     }
 
-    /// Зупиняє трасування й повертає підсумок потоків гри.
-    pub fn stop(mut self) -> ThreadTrace {
+    /// Зупиняє трасування й повертає підсумок потоків гри; точні проміжки головних потоків
+    /// лишаються лише у вікнах `keep` (тики QPC — навколо ривків).
+    pub fn stop(mut self, keep: &[(i64, i64)]) -> ThreadTrace {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(h) = self.drainer.take() {
             let _ = h.join();
@@ -135,7 +149,7 @@ impl ThreadTracer {
         let threads = std::mem::replace(&mut g.threads, ThreadCollector::new(0, 0, self.freq));
         let presents = std::mem::take(&mut g.presents);
         drop(g);
-        threads.finish(&presents, lost, self.freq)
+        threads.finish(&presents, lost, self.freq, keep)
     }
 }
 

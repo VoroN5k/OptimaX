@@ -120,7 +120,7 @@ mod run {
             };
             let kept = tracing
                 .map(|t| {
-                    let tr = t.threads.stop();
+                    let tr = t.threads.stop(&[]);
                     (tr.switches, tr.late, tr.lost)
                 })
                 .unwrap_or_default();

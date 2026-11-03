@@ -206,6 +206,13 @@ pub struct ThreadsTimeline {
     pub game_threads: u32,
     /// Скільки зарахованої гри покрито кошиками, мс.
     pub counted_ms: f64,
+    /// Точні проміжки головного потоку навколо ривків: (початок, тривалість — мс від старту
+    /// запису; стан — `optimax_trace::threads::slot`).
+    #[serde(default)]
+    pub main_detail: Vec<(f64, f64, u8)>,
+    /// Те саме для рендер-потоку.
+    #[serde(default)]
+    pub render_detail: Vec<(f64, f64, u8)>,
 }
 
 /// Найменше зарахованої гри з трасуванням, з якого ще є сенс робити висновки про потоки.
@@ -263,7 +270,29 @@ pub(crate) fn threads_timeline(rec: &Recording) -> Option<ThreadsTimeline> {
         .filter(|(l, p)| *p > 0 && l.tid != main.tid)
         .max_by_key(|(_, p)| *p)
         .map(|(l, _)| *l);
+    // Точні проміжки — на шкалу запису (мс від `rec.start_qpc`).
+    let offset_ms = (t.start_qpc - rec.start_qpc) as f64 * 1000.0 / t.qpc_frequency.max(1) as f64;
+    let detail_of = |tid: u32| -> Vec<(f64, f64, u8)> {
+        t.detail
+            .iter()
+            .find(|d| d.tid == tid)
+            .map(|d| {
+                d.intervals
+                    .iter()
+                    .map(|i| {
+                        (
+                            offset_ms + f64::from(i[0]) / 1000.0,
+                            f64::from(i[1]) / 1000.0,
+                            u8::try_from(i[2]).unwrap_or(u8::MAX),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
     Some(ThreadsTimeline {
+        main_detail: detail_of(main.tid),
+        render_detail: render.map(|r| detail_of(r.tid)).unwrap_or_default(),
         main,
         render,
         game_threads: t.game_threads,

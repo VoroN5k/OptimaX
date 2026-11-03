@@ -1546,6 +1546,8 @@ fn threads(main_running: f64, main_sleep: f64) -> crate::timeline::ThreadsTimeli
         render: Some(load(2, 0.36, 0.0)),
         game_threads: 144,
         counted_ms: 30_000.0,
+        main_detail: vec![],
+        render_detail: vec![],
     }
 }
 
@@ -1682,6 +1684,7 @@ fn thread_load_counts_only_counted_play() {
             switches: 0,
             late: 0,
             lost: 0,
+            detail: vec![],
         }),
     };
     let t = crate::timeline::threads_timeline(&rec).expect("потоки");
@@ -1749,4 +1752,43 @@ fn frame_anatomy_splits_spikes_into_cpu_work_and_waiting_for_gpu() {
     assert!(diagnose_timeline(&plain, &Context::default())
         .anatomy
         .is_none());
+}
+
+#[test]
+fn spike_anatomy_shows_what_the_main_thread_did() {
+    use optimax_trace::threads::slot;
+    let ft = spiky();
+    let mut tl = timeline(&ft, |_, _| base_sample());
+    for f in &mut tl.frames {
+        f.cpu_busy_ms = Some(f.frametime_ms * 0.8);
+        f.gpu_busy_ms = Some(5.0);
+    }
+    let spikes: Vec<(f64, f64)> = tl
+        .frames
+        .iter()
+        .filter(|f| f.frametime_ms >= 40.0)
+        .map(|f| (f.t_ms - f.frametime_ms, f.frametime_ms))
+        .collect();
+    // Парні ривки — головний потік працював увесь кадр, непарні — 30 мс чекав сторінку з диска.
+    let mut detail = Vec::new();
+    for (k, (start, dur)) in spikes.iter().enumerate() {
+        if k % 2 == 0 {
+            detail.push((*start, *dur, slot::RUNNING as u8));
+        } else {
+            detail.push((*start, dur - 30.0, slot::RUNNING as u8));
+            detail.push((start + dur - 30.0, 30.0, slot::PAGE_IN as u8));
+        }
+    }
+    let mut th = threads(0.8, 0.0);
+    th.main_detail = detail;
+    tl.threads = Some(th);
+    let a = diagnose_timeline(&tl, &Context::default())
+        .anatomy
+        .expect("анатомія");
+    let even = spikes.len().div_ceil(2) as u32;
+    let odd = spikes.len() as u32 / 2;
+    assert_eq!(a.main_counts, [even, 0, 0, odd, 0, 0]);
+    assert!(a.spikes.iter().all(|s| s.main.is_some()));
+    // Рендер-потоку без проміжків — без висновку про нього.
+    assert!(a.spikes.iter().all(|s| s.render.is_none()));
 }

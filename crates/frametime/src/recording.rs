@@ -294,6 +294,49 @@ fn game_pids(target: &Target) -> Option<Vec<u32>> {
     }
 }
 
+/// Скільки мс тримати точні проміжки потоків до й після ривка.
+const SPIKE_MARGIN_MS: f64 = 300.0;
+/// Найбільше ривків, навколо яких тримати точні проміжки (найдовші).
+const MAX_SPIKE_WINDOWS: usize = 300;
+
+/// Вікна (тики QPC) навколо ривків головного swap chain: від початку кадру ривка мінус запас
+/// до його Present плюс запас. Злиті, якщо перетинаються.
+pub fn spike_windows(frames: &[FrameRecord], freq: i64) -> Vec<(i64, i64)> {
+    let Some((pid, chain)) = crate::stats::main_swap_chain(frames) else {
+        return Vec::new();
+    };
+    let mut main: Vec<(i64, f64)> = frames
+        .iter()
+        .filter(|f| f.process_id == pid && f.swap_chain == chain)
+        .filter_map(|f| match f.time {
+            FrameTimestamp::Qpc(t) => Some((t, f.ms_between_presents)),
+            FrameTimestamp::Ms(_) => None,
+        })
+        .collect();
+    main.sort_by_key(|(t, _)| *t);
+    let ft: Vec<f64> = main.iter().map(|(_, ms)| *ms).collect();
+    let mut spikes = crate::stats::find_spikes(&ft);
+    spikes.sort_by(|a, b| b.frametime_ms.total_cmp(&a.frametime_ms));
+    let ticks = |ms: f64| (ms / 1000.0 * freq as f64) as i64;
+    let mut windows: Vec<(i64, i64)> = spikes
+        .iter()
+        .take(MAX_SPIKE_WINDOWS)
+        .filter_map(|s| {
+            let (t, ms) = *main.get(s.index)?;
+            Some((t - ticks(ms + SPIKE_MARGIN_MS), t + ticks(SPIKE_MARGIN_MS)))
+        })
+        .collect();
+    windows.sort_unstable();
+    let mut merged: Vec<(i64, i64)> = Vec::new();
+    for (a, b) in windows {
+        match merged.last_mut() {
+            Some(last) if a <= last.1 => last.1 = last.1.max(b),
+            _ => merged.push((a, b)),
+        }
+    }
+    merged
+}
+
 /// Записує кадри й метрики. Блокує потік на час запису — викликати не з UI-потоку.
 pub fn record_with(
     presentmon: &BundledPresentMon,
@@ -513,19 +556,6 @@ pub fn record_with(
     sampler.stop();
     snapshots.extend(snapshots_rx.try_iter());
     let dpc_trace = dpc_tracer.and_then(optimax_core::etw::DpcTracer::stop);
-    #[cfg(windows)]
-    let threads = thread_tracer.map(optimax_trace::ThreadTracer::stop);
-    #[cfg(not(windows))]
-    let threads = None;
-    if let Some(t) = &threads {
-        tracing::debug!(
-            "потоки гри: {}, перемикань {}, запізнілих {}, втрачено {}",
-            t.game_threads,
-            t.switches,
-            t.late,
-            t.lost
-        );
-    }
     if let Some(t) = &dpc_trace {
         tracing::debug!(
             "DPC: {} подій, втрачено {}, довгих {}",
@@ -536,6 +566,21 @@ pub fn record_with(
     }
 
     let (frames, skipped_lines) = frames_thread.join().unwrap_or_default();
+    // Точні проміжки потоків гри — лише навколо ривків (інакше запис роздувається).
+    #[cfg(windows)]
+    let threads = thread_tracer.map(|t| t.stop(&spike_windows(&frames, freq)));
+    #[cfg(not(windows))]
+    let threads = None;
+    if let Some(t) = &threads {
+        tracing::debug!(
+            "потоки гри: {}, перемикань {}, запізнілих {}, втрачено {}, детальних потоків {}",
+            t.game_threads,
+            t.switches,
+            t.late,
+            t.lost,
+            t.detail.len()
+        );
+    }
     let presentmon_messages = messages_thread.join().unwrap_or_default();
     if !gate.has_recorded() {
         return Err(FrametimeError::NotStarted(end_reason));

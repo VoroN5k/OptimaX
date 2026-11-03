@@ -223,8 +223,19 @@ Actions (`.github/workflows/release.yml`) збирає zip, інсталятор
   `Stall {cpu_busy, wait_gpu, wait}`: більша з частин інтервалу; «чекав на GPU», якщо GPU
   цього чи попереднього кадру ≥ 50 % ривка). Це опис вимірів, не вердикт (правила не змінено).
   UI: `FrameAnatomy.svelte` — згортка «Анатомія кадру» в `ResultView`.
-- Далі (етап 3): анатомія фризу з потоками (що робив головний потік під час ривка: працював /
-  блокувався й на що), диск і page faults; вбудувати в чорну скриньку.
+- **Етап 3 (зроблено, 2026-11-03):** `ThreadMachine` пише точні проміжки (злиті однакові
+  сусідні) для потоків із `set_detail`; `ThreadCollector::pick_detail` після 5 с обробки бере 3
+  найзавантаженіші + рендер (найбільше Present). `ThreadTracer::stop(keep)` /
+  `ThreadCollector::finish(.., keep)` лишають проміжки лише у вікнах `keep`;
+  `frametime::spike_windows` — вікна навколо до 300 найдовших ривків головного swap chain
+  (`find_spikes`), ±300 мс. `ThreadTrace.detail: Vec<ThreadDetail {tid, intervals: [мкс від
+  start_qpc, тривалість мкс, slot]}>`. Діагностика: `ThreadsTimeline.main_detail/render_detail`
+  (мс на шкалі запису), `anatomy::thread_slice` (сума станів у вікні кадру ривка, висновок —
+  якщо покрито ≥ 50 %), `SpikeAnatomy.main/main_state/render`, `FrameAnatomy.main_counts`.
+  UI: колонка «Головний потік» і зведення станів у «Анатомії кадру».
+  Диск/HardFault окремо не трасуємо: очікування сторінки з диска видно з `KWAIT_REASON`
+  (PageIn). Чорну скриньку не чіпали (трасування ≈2 % CPU на години гри — окреме рішення).
+  Не перевірено в програмі.
 
 ## 2p. Чорна скринька — пункт 7, етап 1 (не закомічено)
 

@@ -39,6 +39,10 @@ pub mod opcode {
 pub const BUCKET_MS: f64 = 250.0;
 /// Скільки потоків гри зберігати окремо (решта — сумою в потоці 0).
 pub const KEEP_THREADS: usize = 16;
+/// Для скількох найзавантаженіших потоків (плюс рендер) зберігати точні проміжки станів.
+pub const DETAIL_THREADS: usize = 3;
+/// Через скільки кошиків обробки вибирати потоки для точних проміжків (5 с).
+const DETAIL_AFTER_BUCKETS: i64 = 20;
 
 /// Стан потоку, що покидає ядро (`OldThreadState`, `KTHREAD_STATE`).
 mod state {
@@ -225,6 +229,10 @@ pub struct ThreadMachine {
     states: HashMap<u32, St>,
     last_cpu: HashMap<u32, u8>,
     acc: HashMap<u32, Acc>,
+    /// Потоки, для яких зберігаються точні проміжки.
+    detail: HashSet<u32>,
+    /// Точні проміжки: (початок, кінець, [`slot`]) за порядком часу.
+    intervals: HashMap<u32, Vec<(i64, i64, u8)>>,
 }
 
 impl ThreadMachine {
@@ -239,7 +247,14 @@ impl ThreadMachine {
             states: HashMap::new(),
             last_cpu: HashMap::new(),
             acc: HashMap::new(),
+            detail: HashSet::new(),
+            intervals: HashMap::new(),
         }
+    }
+
+    /// Для цих потоків далі зберігаються точні проміжки станів.
+    pub fn set_detail(&mut self, tids: impl IntoIterator<Item = u32>) {
+        self.detail.extend(tids);
     }
 
     fn inside(&self, t: i64) -> bool {
@@ -251,6 +266,13 @@ impl ThreadMachine {
         let (a, b) = (a.max(self.from), b.min(self.to));
         if b <= a {
             return;
+        }
+        if self.detail.contains(&tid) {
+            let v = self.intervals.entry(tid).or_default();
+            match v.last_mut() {
+                Some(last) if last.1 == a && last.2 as usize == slot => last.1 = b,
+                _ => v.push((a, b, slot as u8)),
+            }
         }
         let (bucket_ticks, from, tick_ms) = (self.bucket_ticks, self.from, self.tick_ms);
         let acc = self.acc.entry(tid).or_default();
@@ -422,6 +444,18 @@ pub struct ThreadTrace {
     pub late: u64,
     /// Втрачених подій ETW.
     pub lost: u64,
+    /// Точні проміжки станів головних потоків — лише у вікнах навколо ривків.
+    #[serde(default)]
+    pub detail: Vec<ThreadDetail>,
+}
+
+/// Точні проміжки станів одного потоку.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThreadDetail {
+    /// Потік.
+    pub tid: u32,
+    /// Проміжки: [початок, тривалість] у мкс від [`ThreadTrace::start_qpc`] і [`slot`].
+    pub intervals: Vec<[u32; 3]>,
 }
 
 /// Збирач подій потоків гри в реальному часі (лише перемикання й пробудження, де бере участь
@@ -548,6 +582,36 @@ impl ThreadCollector {
         self.drained_to = watermark;
     }
 
+    /// Вибирає потоки для точних проміжків, щойно оброблено перші 5 с: [`DETAIL_THREADS`]
+    /// найзавантаженіших плюс `extra` (рендер). Повертає `true`, якщо вибір зроблено.
+    pub fn pick_detail(&mut self, extra: &[u32]) -> bool {
+        if !self.machine.detail.is_empty() {
+            return true;
+        }
+        let processed = self.drained_to.saturating_sub(self.machine.from);
+        if processed < self.machine.bucket_ticks * DETAIL_AFTER_BUCKETS {
+            return false;
+        }
+        let mut top: Vec<(u32, i64)> = self
+            .machine
+            .acc
+            .iter()
+            .map(|(t, a)| (*t, a.stats.running))
+            .collect();
+        top.sort_by_key(|(t, r)| (std::cmp::Reverse(*r), *t));
+        let chosen: Vec<u32> = top
+            .into_iter()
+            .take(DETAIL_THREADS)
+            .map(|(t, _)| t)
+            .chain(extra.iter().copied().filter(|t| self.game.contains(t)))
+            .collect();
+        if chosen.is_empty() {
+            return false;
+        }
+        self.machine.set_detail(chosen);
+        true
+    }
+
     /// Скільки подій чекає обробки.
     pub fn pending(&self) -> usize {
         self.pending.len()
@@ -559,11 +623,40 @@ impl ThreadCollector {
     }
 
     /// Обробляє все, закриває стани на кінці подій і складає підсумок запису.
-    /// `presents` — виклики Present за потоками гри; `lost` — втрачені події ETW.
-    pub fn finish(mut self, presents: &HashMap<u32, u64>, lost: u64, freq: i64) -> ThreadTrace {
+    /// `presents` — виклики Present за потоками гри; `lost` — втрачені події ETW;
+    /// `keep` — вікна (тики QPC), у яких зберегти точні проміжки (навколо ривків).
+    pub fn finish(
+        mut self,
+        presents: &HashMap<u32, u64>,
+        lost: u64,
+        freq: i64,
+        keep: &[(i64, i64)],
+    ) -> ThreadTrace {
         let end = self.span.map_or(self.machine.from, |(_, b)| b);
         self.drain(i64::MAX - 1);
         self.machine.close_all(end);
+        let from = self.machine.from;
+        let us =
+            |ticks: i64| u32::try_from(ticks.max(0) * 1_000_000 / freq.max(1)).unwrap_or(u32::MAX);
+        let mut detail: Vec<ThreadDetail> = self
+            .machine
+            .intervals
+            .drain()
+            .map(|(tid, v)| {
+                let intervals = v
+                    .iter()
+                    .flat_map(|&(a, b, slot)| {
+                        keep.iter().filter_map(move |&(ka, kb)| {
+                            let (s, e) = (a.max(ka), b.min(kb));
+                            (e > s).then(|| [us(s - from), us(e - s), u32::from(slot)])
+                        })
+                    })
+                    .collect();
+                ThreadDetail { tid, intervals }
+            })
+            .filter(|d: &ThreadDetail| !d.intervals.is_empty())
+            .collect();
+        detail.sort_by_key(|d| d.tid);
         let mut all: Vec<(u32, Acc)> = self.machine.acc.drain().collect();
         all.sort_by_key(|(tid, a)| (std::cmp::Reverse(a.stats.running), *tid));
         let series = |tid: u32, a: &Acc, owner: &HashMap<u32, u32>| {
@@ -634,6 +727,7 @@ impl ThreadCollector {
             switches: self.switches_game,
             late: self.late,
             lost,
+            detail,
         }
     }
 }
@@ -781,7 +875,7 @@ mod tests {
         c.on_thread_event(opcode::CSWITCH, 700, 1, &switch_data(10, 0, 5));
         c.on_thread_event(opcode::CSWITCH, 800, 1, &switch_data(0, 10, 5));
         let presents: HashMap<u32, u64> = [(10, 5)].into();
-        let t = c.finish(&presents, 3, 1000);
+        let t = c.finish(&presents, 3, 1000, &[]);
         assert_eq!((t.game_threads, t.switches, t.late, t.lost), (1, 4, 1, 3));
         let s = &t.threads[0];
         assert_eq!((s.tid, s.presents, s.runs), (10, 5, 2));
@@ -814,11 +908,60 @@ mod tests {
             );
         }
         let presents: HashMap<u32, u64> = [(1, 9)].into(); // рендер — найменш завантажений
-        let t = c.finish(&presents, 0, 1000);
+        let t = c.finish(&presents, 0, 1000, &[]);
         assert_eq!(t.threads[0].tid, n);
         assert_eq!(t.threads.len(), KEEP_THREADS + 2); // верхівка + рендер + сума
         assert!(t.threads.iter().any(|s| s.tid == 1 && s.presents == 9));
         let rest = t.threads.iter().find(|s| s.tid == 0).expect("сума решти");
         assert!((rest.totals_ms[slot::RUNNING] - 5.0).abs() < 1e-6); // потоки 2 і 3
+    }
+
+    #[test]
+    fn detail_intervals_only_for_picked_threads_and_kept_windows() {
+        // 1 тик = 1 мс. Потоки 10 (працює багато) і 20 (рендер, працює мало).
+        let mut c = ThreadCollector::new(1, 0, 1000);
+        c.on_thread_event(opcode::DC_START, 0, 0, &thread_data(1, 10));
+        c.on_thread_event(opcode::DC_START, 0, 0, &thread_data(1, 20));
+        c.on_thread_event(opcode::DC_START, 0, 0, &thread_data(1, 30));
+        // Кожні 100 мс: потік 10 працює 80 мс, блокується на 20; потік 20 — 5 мс.
+        for k in 0..100i64 {
+            let t = k * 100;
+            c.on_thread_event(opcode::CSWITCH, t, 0, &switch_data(10, 0, 5));
+            c.on_thread_event(opcode::CSWITCH, t + 80, 0, &switch_data(0, 10, 5));
+            c.on_thread_event(opcode::CSWITCH, t, 1, &switch_data(20, 0, 5));
+            c.on_thread_event(opcode::CSWITCH, t + 5, 1, &switch_data(0, 20, 5));
+            if t == 4000 {
+                c.drain(t);
+                // Менше 5 с оброблено — ще не вибираємо.
+                assert!(!c.pick_detail(&[20]));
+            }
+            if t == 6000 {
+                c.drain(t);
+                assert!(c.pick_detail(&[20, 999]));
+            }
+        }
+        // Вікно навколо «ривка» 7000–7300.
+        let t = c.finish(&HashMap::new(), 0, 1000, &[(7000, 7300)]);
+        let main = t
+            .detail
+            .iter()
+            .find(|d| d.tid == 10)
+            .expect("головний потік");
+        // У вікні 7000–7300: працює 7000–7080, 7100–7180, 7200–7280 (по 80 мс = 80000 мкс).
+        let running: Vec<[u32; 3]> = main
+            .intervals
+            .iter()
+            .copied()
+            .filter(|i| i[2] == slot::RUNNING as u32)
+            .collect();
+        assert_eq!(running.len(), 3);
+        assert_eq!(running[0], [7_000_000, 80_000, slot::RUNNING as u32]);
+        assert!(main
+            .intervals
+            .iter()
+            .all(|i| i[0] >= 7_000_000 && i[0] + i[1] <= 7_300_000));
+        assert!(t.detail.iter().any(|d| d.tid == 20));
+        // Потік 30 нічого не робив, 999 — не з гри.
+        assert!(!t.detail.iter().any(|d| d.tid == 999 || d.tid == 30));
     }
 }

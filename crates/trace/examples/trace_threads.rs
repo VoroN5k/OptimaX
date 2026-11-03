@@ -57,7 +57,7 @@ mod run {
         println!("трасування {seconds} с — грайте у фокусі гри…");
         let started = Instant::now();
         std::thread::sleep(Duration::from_secs(seconds));
-        let t = tracer.stop();
+        let t = tracer.stop(&[(i64::MIN, i64::MAX)]);
         let secs = started.elapsed().as_secs_f64();
         sys.refresh_processes_specifics(
             ProcessesToUpdate::All,
@@ -79,6 +79,14 @@ mod run {
             t.late,
             t.lost
         );
+        for d in &t.detail {
+            println!(
+                "точні проміжки потоку {}: {} (перевірка: сума {:.0} мс)",
+                d.tid,
+                d.intervals.len(),
+                d.intervals.iter().map(|i| f64::from(i[1])).sum::<f64>() / 1000.0
+            );
+        }
         let window = secs * 1000.0;
         println!(
             "{:>7} {:<18} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7}  витісняв найчастіше",

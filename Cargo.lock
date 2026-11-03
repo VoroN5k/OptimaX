@@ -2476,6 +2476,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "optimax-experiment"
+version = "0.1.6"
+dependencies = [
+ "optimax-core",
+ "optimax-frametime",
+ "serde",
+ "ts-rs",
+]
+
+[[package]]
 name = "optimax-frametime"
 version = "0.1.6"
 dependencies = [

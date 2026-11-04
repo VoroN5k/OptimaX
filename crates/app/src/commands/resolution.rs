@@ -1,12 +1,14 @@
-//! Тест чутливості FPS до роздільності: два прогони на рідній роздільності, два на зниженій
-//! (змінює користувач у грі), підсумок і уточнення останнього діагнозу.
-//! Подія `res-progress` — хід поточного прогону. Нічого в системі не змінює.
+//! Тест чутливості FPS до роздільності: прогони по черзі на рідній і зниженій роздільності
+//! (змінює користувач у грі) за порядком рушія порівнянь, підсумок і уточнення останнього
+//! діагнозу. Подія `res-progress` — хід поточного прогону. Нічого в системі не змінює.
 
 use super::{blocking, record_game};
 use crate::dto::ResView;
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
 use optimax_diagnosis::resolution::{self, ResolutionReport, ResolutionRun};
+use optimax_diagnosis::Timeline;
+use optimax_experiment::{evaluate, next_variant, Policy, Report, Run, Status};
 use optimax_frametime::{CancelToken, StartMode, Target};
 use tauri::{AppHandle, Manager, State};
 
@@ -16,7 +18,12 @@ pub struct ResSession {
     seconds: u32,
     start: StartMode,
     sound: bool,
+    policy: Policy,
+    /// Прогони для показу (завантаження GPU, ліміт кадрів).
     runs: Vec<ResolutionRun>,
+    /// Ті самі прогони для рушія порівнянь.
+    exp_runs: Vec<Run>,
+    estimate: Report,
     /// Скасування поточного прогону (є, поки прогін іде).
     cancel: Option<CancelToken>,
     report: Option<ResolutionReport>,
@@ -28,8 +35,11 @@ impl ResSession {
             game: self.game.clone(),
             seconds: self.seconds,
             start: self.start,
-            order: resolution::schedule().to_vec(),
             runs: self.runs.clone(),
+            next_reduced: (self.estimate.status == Status::Continue)
+                .then(|| next_variant(&self.exp_runs, self.policy.variants) == 1),
+            max_per_arm: u32::try_from(self.policy.max_per_arm).unwrap_or(u32::MAX),
+            estimate: self.estimate.clone(),
             running: self.cancel.is_some(),
             report: self.report.clone(),
         }
@@ -59,12 +69,16 @@ pub fn res_start(state: State<'_, AppState>, exe: String, seconds: u32) -> CmdRe
         let st = lock(&state.settings);
         (st.record_start, st.record_sound)
     };
+    let policy = resolution::policy();
     let session = ResSession {
         game: exe,
         seconds: seconds.clamp(20, 120),
         start,
         sound,
+        policy,
         runs: Vec::new(),
+        exp_runs: Vec::new(),
+        estimate: evaluate(&[], &policy),
         cancel: None,
         report: None,
     };
@@ -79,7 +93,7 @@ pub fn res_state(state: State<'_, AppState>) -> Option<ResView> {
     lock(&state.res_test).as_ref().map(ResSession::view)
 }
 
-/// Записує наступний прогін; після останнього — підсумок і уточнення діагнозу.
+/// Записує наступний прогін; коли висновок певний — підсумок і уточнення діагнозу.
 #[tauri::command]
 pub async fn res_run_next(app: AppHandle) -> CmdResult<ResView> {
     blocking(move || {
@@ -95,9 +109,12 @@ pub async fn res_run_next(app: AppHandle) -> CmdResult<ResView> {
             if super::lag::is_watching(&state) {
                 return Err(super::lag::busy_error());
             }
-            let reduced = *resolution::schedule()
-                .get(s.runs.len())
-                .ok_or_else(|| CmdError::Failed("усі прогони вже виконано".into()))?;
+            if s.estimate.status == Status::Done {
+                return Err(CmdError::Failed(
+                    "висновок уже є — прогонів більше не треба".into(),
+                ));
+            }
+            let reduced = next_variant(&s.exp_runs, s.policy.variants) == 1;
             let cancel = CancelToken::new();
             s.cancel = Some(cancel.clone());
             (s.game.clone(), s.seconds, s.start, s.sound, reduced, cancel)
@@ -108,8 +125,12 @@ pub async fn res_run_next(app: AppHandle) -> CmdResult<ResView> {
                 if rec.cancelled {
                     return Err(CmdError::Cancelled("прогін зупинено".into()));
                 }
-                ResolutionRun::from_recording(&rec, reduced)
-                    .ok_or_else(|| CmdError::Failed("у прогоні замало кадрів гри".into()))
+                let tl = Timeline::from_recording(&rec)
+                    .ok_or_else(|| CmdError::Failed("у прогоні немає кадрів гри".into()))?;
+                let shown = ResolutionRun::from_timeline(&tl, reduced)
+                    .ok_or_else(|| CmdError::Failed("у прогоні замало кадрів гри".into()))?;
+                let run = super::experiment::run_from(&rec, u8::from(reduced))?;
+                Ok((shown, run))
             });
 
         let mut guard = lock(&state.res_test);
@@ -117,8 +138,11 @@ pub async fn res_run_next(app: AppHandle) -> CmdResult<ResView> {
             .as_mut()
             .ok_or_else(|| CmdError::NotFound("тест скасовано під час прогону".into()))?;
         s.cancel = None;
-        s.runs.push(measured?);
-        if let Some(report) = resolution::evaluate(&s.runs) {
+        let (shown, run) = measured?;
+        s.runs.push(shown);
+        s.exp_runs.push(run);
+        s.estimate = evaluate(&s.exp_runs, &s.policy);
+        if let Some(report) = resolution::evaluate(&s.runs, &s.estimate) {
             if let Some(last) = lock(&state.last_diagnosis).as_mut() {
                 if last.diagnosis.game.eq_ignore_ascii_case(&s.game) {
                     resolution::apply(&mut last.diagnosis, &report);

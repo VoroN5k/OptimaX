@@ -3,23 +3,29 @@
 //! Предмет тесту — або один твік, або профіль гри цілком (усе, що профіль робить у режимі
 //! гри). Профіль перевіряється на запущеній грі; режим гри на час тесту має бути зупинений,
 //! інакше він сам увімкне профіль і в прогонах «без профілю».
+//!
+//! Статистика — рушій порівнянь (`optimax_experiment`): порядок ABBA, поправка на дрейф,
+//! адаптивна кількість прогонів (3–8 на варіант). Варіант 0 (A) — без зміни, 1 (B) — зі зміною.
 
 use super::{blocking, record_game};
 use crate::dto::{AbFinal, AbView, UiDesired};
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState, FlagConfirm, MEMORY, PROCESSES};
 use optimax_core::process::{ProcessApi, ProcessInfo};
-use optimax_core::{Catalog, CivilDate};
-use optimax_diagnosis::{diagnose, Bottleneck, Context};
+use optimax_core::{Catalog, CivilDate, Text};
+use optimax_experiment::report::render_markdown;
+use optimax_experiment::{evaluate, next_variant, Outcome, Policy, Report, Run, Status, Variant};
 use optimax_frametime::{CancelToken, StartMode, Target};
 use optimax_gamemode::{
     end_session, preview_changes, session_plan, start_session, GameProfile, ProfileStore,
     ProfileTest, SessionReport,
 };
-use optimax_tweaks::ab::{
-    evaluate, render_markdown, schedule, Arm, Decision, RunConditions, RunResult,
-};
 use optimax_tweaks::{Desired, Plan, TweakError, TweakId};
+
+/// Без зміни.
+const OFF: Variant = 0;
+/// Зі зміною.
+const ON: Variant = 1;
 use tauri::{AppHandle, Manager, State};
 
 /// Що перевіряє A/B.
@@ -41,27 +47,46 @@ pub struct AbSession {
     game: String,
     subject: AbSubject,
     plan: Plan,
-    order: Vec<Arm>,
-    next: usize,
     seconds: u32,
     /// Спосіб старту — однаковий для всіх прогонів тесту.
     start: StartMode,
     sound: bool,
-    results: Vec<RunResult>,
+    policy: Policy,
+    runs: Vec<Run>,
+    report: Report,
     /// Скасування поточного прогону.
     cancel: Option<CancelToken>,
 }
 
 impl AbSession {
+    fn new(game: String, subject: AbSubject, plan: Plan, seconds: u32, state: &AppState) -> Self {
+        let (start, sound) = {
+            let st = lock(&state.settings);
+            (st.record_start, st.record_sound)
+        };
+        let policy = Policy::default();
+        Self {
+            game,
+            subject,
+            plan,
+            seconds: seconds.clamp(20, 300),
+            start,
+            sound,
+            policy,
+            runs: Vec::new(),
+            report: evaluate(&[], &policy),
+            cancel: None,
+        }
+    }
+
     fn view(&self) -> AbView {
         AbView {
             game: self.game.clone(),
             plan: self.plan.clone(),
-            order: self.order.clone(),
-            next: u32::try_from(self.next).unwrap_or(u32::MAX),
             seconds: self.seconds,
             start: self.start,
-            results: self.results.clone(),
+            report: self.report.clone(),
+            max_per_arm: u32::try_from(self.policy.max_per_arm).unwrap_or(u32::MAX),
             profile: matches!(self.subject, AbSubject::Profile { .. }),
         }
     }
@@ -85,13 +110,12 @@ fn running_game(exe: &str) -> CmdResult<ProcessInfo> {
         })
 }
 
-/// Починає A/B: перевіряє, що зміна не порожня, і складає розклад ABAB…
+/// Починає A/B: перевіряє, що зміна не порожня. Порядок і кількість прогонів веде рушій.
 #[tauri::command]
 pub fn ab_start(
     state: State<'_, AppState>,
     game: String,
     desired: UiDesired,
-    runs: u32,
     seconds: u32,
 ) -> CmdResult<AbView> {
     Target::ProcessName(game.clone()).validate()?;
@@ -119,25 +143,16 @@ pub fn ab_start(
             "система вже у стані «після» — порівнювати нічого".into(),
         ));
     }
-    let (start, sound) = {
-        let st = lock(&state.settings);
-        (st.record_start, st.record_sound)
-    };
-    let session = AbSession {
-        start,
-        sound,
+    let session = AbSession::new(
         game,
-        subject: AbSubject::Tweak {
+        AbSubject::Tweak {
             desired,
             active_entry: None,
         },
         plan,
-        order: schedule(usize::try_from(runs).unwrap_or(3)),
-        next: 0,
-        seconds: seconds.clamp(20, 300),
-        results: Vec::new(),
-        cancel: None,
-    };
+        seconds,
+        &state,
+    );
     let view = session.view();
     *slot = Some(session);
     Ok(view)
@@ -148,7 +163,6 @@ pub fn ab_start(
 pub fn ab_start_profile(
     state: State<'_, AppState>,
     exe: String,
-    runs: u32,
     seconds: u32,
 ) -> CmdResult<AbView> {
     Target::ProcessName(exe.clone()).validate()?;
@@ -188,28 +202,19 @@ pub fn ab_start_profile(
             "профіль зараз нічого не змінює для цієї гри — порівнювати нічого".into(),
         ));
     }
-    let (start, sound) = {
-        let st = lock(&state.settings);
-        (st.record_start, st.record_sound)
-    };
-    let session = AbSession {
-        start,
-        sound,
-        game: profile.exe.clone(),
-        subject: AbSubject::Profile {
+    let session = AbSession::new(
+        profile.exe.clone(),
+        AbSubject::Profile {
             profile: Box::new(profile),
             session: None,
         },
-        plan: Plan {
+        Plan {
             info: TweakId::GameProfile.info(),
             changes,
         },
-        order: schedule(usize::try_from(runs).unwrap_or(3)),
-        next: 0,
-        seconds: seconds.clamp(20, 300),
-        results: Vec::new(),
-        cancel: None,
-    };
+        seconds,
+        &state,
+    );
     let view = session.view();
     *slot = Some(session);
     Ok(view)
@@ -232,10 +237,15 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
             let s = guard
                 .as_mut()
                 .ok_or_else(|| CmdError::NotFound("A/B-тест не запущено".into()))?;
-            let arm = *s
-                .order
-                .get(s.next)
-                .ok_or_else(|| CmdError::Failed("усі прогони вже виконано".into()))?;
+            if s.report.status == Status::Done {
+                return Err(CmdError::Failed(
+                    "висновок уже є — прогонів більше не треба".into(),
+                ));
+            }
+            if s.cancel.is_some() {
+                return Err(CmdError::Failed("прогін уже йде".into()));
+            }
+            let arm = next_variant(&s.runs, s.policy.variants);
             let mut engine = lock(&state.engine);
             let confirm = FlagConfirm::new(allow_without_restore_point);
             let cancelled = |confirm: &FlagConfirm| {
@@ -250,7 +260,7 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
                         desired,
                         active_entry,
                     },
-                    Arm::B,
+                    ON,
                 ) if active_entry.is_none() => {
                     let plan = engine.plan(desired)?;
                     match engine.apply(&plan, &confirm) {
@@ -259,12 +269,12 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
                         Err(e) => return Err(e.into()),
                     }
                 }
-                (AbSubject::Tweak { active_entry, .. }, Arm::A) => {
+                (AbSubject::Tweak { active_entry, .. }, OFF) => {
                     if let Some(id) = active_entry.take() {
                         engine.rollback(id)?;
                     }
                 }
-                (AbSubject::Profile { profile, session }, Arm::B) if session.is_none() => {
+                (AbSubject::Profile { profile, session }, ON) if session.is_none() => {
                     // Гру могли перезапустити між прогонами — шукаємо процес щоразу.
                     let game = running_game(&profile.exe)?;
                     match start_session(&mut engine, &PROCESSES, &MEMORY, profile, &game, &confirm)
@@ -274,7 +284,7 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
                         Err(e) => return Err(e.into()),
                     }
                 }
-                (AbSubject::Profile { session, .. }, Arm::A) => {
+                (AbSubject::Profile { session, .. }, OFF) => {
                     if let Some(report) = session.take() {
                         end_session(&mut engine, &report);
                     }
@@ -286,40 +296,21 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
             (arm, s.game.clone(), s.seconds, s.start, s.sound, cancel)
         };
         // 2. Запис (довго, без замків).
-        let rec = record_game(&app, game, seconds, start, sound, &cancel, "ab-progress")?;
-        if rec.cancelled {
-            return Err(CmdError::Cancelled("прогін зупинено".into()));
-        }
-        let d = diagnose(&rec, &Context::default());
-        let stats = d
-            .stats
-            .ok_or_else(|| CmdError::Failed("у прогоні немає кадрів гри".into()))?;
-        let temps: Vec<f64> = rec
-            .snapshots
-            .iter()
-            .filter_map(|s| s.gpus.iter().filter_map(|g| g.temperature_c).max())
-            .map(f64::from)
-            .collect();
-        let result = RunResult {
-            arm,
-            avg_fps: stats.avg_fps,
-            low_1pct_fps: stats.low_1pct_fps,
-            conditions: RunConditions {
-                duration_s: stats.duration_ms / 1000.0,
-                frames: stats.frames,
-                gpu_temp_avg_c: (!temps.is_empty())
-                    .then(|| temps.iter().sum::<f64>() / temps.len() as f64),
-                frame_capped: d.bottleneck == Bottleneck::FrameCap,
-            },
-        };
-        // 3. Зберегти результат.
+        let measured = record_game(&app, game, seconds, start, sound, &cancel, "ab-progress")
+            .and_then(|rec| {
+                if rec.cancelled {
+                    return Err(CmdError::Cancelled("прогін зупинено".into()));
+                }
+                super::experiment::run_from(&rec, arm)
+            });
+        // 3. Зберегти результат і перерахувати висновок.
         let mut guard = lock(&state.ab);
         let s = guard
             .as_mut()
             .ok_or_else(|| CmdError::NotFound("A/B-тест скасовано під час прогону".into()))?;
-        s.results.push(result);
-        s.next += 1;
         s.cancel = None;
+        s.runs.push(measured?);
+        s.report = evaluate(&s.runs, &s.policy);
         Ok(s.view())
     })
     .await
@@ -332,13 +323,25 @@ pub fn ab_finish(state: State<'_, AppState>, keep: bool) -> CmdResult<AbFinal> {
     let s = guard
         .as_ref()
         .ok_or_else(|| CmdError::NotFound("A/B-тест не запущено".into()))?;
-    let report = evaluate(&s.results)?;
+    if s.report.status != Status::Done {
+        return Err(CmdError::Failed(
+            "висновку ще немає — потрібні ще прогони".into(),
+        ));
+    }
+    let report = s.report.clone();
     let catalog = Catalog::ukrainian()?;
     let title = catalog.render(&s.plan.info.title);
-    let markdown = render_markdown(&report, &catalog, &title, &s.game);
+    let names = [
+        catalog.render(&Text::new("ui.opt.arm_a")),
+        catalog.render(&Text::new("ui.opt.arm_b")),
+    ];
+    let markdown = render_markdown(&report, &catalog, &names, &title, &s.game, s.seconds);
+    let cmp = report.comparison(ON);
+    let effect = cmp.map_or(Outcome::Unclear, |c| c.verdict);
     let kept = match &s.subject {
         AbSubject::Tweak { active_entry, .. } => {
-            let kept = keep && report.decision == Decision::Keep;
+            // Залишаємо лише виміряний приріст (CLAUDE.md, розд. 6).
+            let kept = keep && effect == Outcome::Better;
             if let (false, Some(id)) = (kept, *active_entry) {
                 lock(&state.engine).rollback(id)?;
             }
@@ -351,12 +354,14 @@ pub fn ab_finish(state: State<'_, AppState>, keep: bool) -> CmdResult<AbFinal> {
                 end_session(&mut lock(&state.engine), report);
             }
             let mut updated = (**profile).clone();
+            let delta = |e: Option<&optimax_experiment::Estimate>| e.map_or(0.0, |e| e.delta_pct);
             updated.last_test = Some(ProfileTest {
                 date: CivilDate::today(),
-                runs_per_arm: u32::try_from(s.results.len() / 2).unwrap_or(0),
-                avg_fps_pct: report.avg_fps.delta_pct,
-                low_1pct_pct: report.low_1pct.delta_pct,
-                effect: report.effect,
+                runs_per_arm: u32::try_from(report.runs_of(OFF).min(report.runs_of(ON)))
+                    .unwrap_or(0),
+                avg_fps_pct: delta(cmp.and_then(|c| c.avg_fps.as_ref())),
+                low_1pct_pct: delta(cmp.and_then(|c| c.low_1pct.as_ref())),
+                effect,
             });
             profiles()?.upsert(&updated)?;
             false

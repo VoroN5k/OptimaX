@@ -1,7 +1,7 @@
-//! A/B-тест зміни на реальній грі (прогони чергуються ABAB…):
+//! A/B-тест зміни на реальній грі (рушій порівнянь: порядок ABBA, 3–8 прогонів на варіант):
 //!
 //! ```text
-//! cargo run --release -p optimax-tweaks --example ab_test -- <гра.exe> power balanced|high|<GUID> [--runs 3] [--seconds 60] [--save звіт.md]
+//! cargo run --release -p optimax-tweaks --example ab_test -- <гра.exe> power balanced|high|<GUID> [--seconds 60] [--save звіт.md]
 //! cargo run --release -p optimax-tweaks --example ab_test -- <гра.exe> game-mode on|off [...]
 //! ```
 //!
@@ -20,11 +20,10 @@ mod app {
     use optimax_core::power::WinPower;
     use optimax_core::registry::WinRegistry;
     use optimax_core::{Catalog, Text};
-    use optimax_diagnosis::{diagnose, Bottleneck, Context};
+    use optimax_diagnosis::{diagnose, Bottleneck, Context, Timeline};
+    use optimax_experiment::report::render_markdown;
+    use optimax_experiment::{evaluate, next_variant, Outcome, Policy, Run, Status};
     use optimax_frametime::{record, BundledPresentMon, CancelToken, RecordOptions, Target};
-    use optimax_tweaks::ab::{
-        evaluate, render_markdown, schedule, Arm, Decision, RunConditions, RunResult,
-    };
     use optimax_tweaks::restore::WinRestorePoint;
     use optimax_tweaks::{Engine, FileStore, RestorePointStatus};
     use std::io::BufRead;
@@ -49,9 +48,6 @@ mod app {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("вкажіть exe гри"))?;
         let want = desired(&args[1..])?;
-        let runs_per_arm: usize = arg_value(args, "--runs")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3);
         let seconds: u64 = arg_value(args, "--seconds")
             .and_then(|v| v.parse().ok())
             .unwrap_or(60);
@@ -67,11 +63,10 @@ mod app {
             println!("Система вже у стані B — порівнювати нічого. Спершу поверніть інше значення.");
             return Ok(());
         }
-        let order = schedule(runs_per_arm);
+        let policy = Policy::default();
         println!(
-            "\nТест: {} прогонів по {seconds} с, порядок {}. Зміна застосовуватиметься й відкочуватиметься між прогонами.",
-            order.len(),
-            order.iter().map(|a| if *a == Arm::A { 'A' } else { 'B' }).collect::<String>()
+            "\nТест: прогони по {seconds} с у порядку ABBA ABBA…, від {} до {} на варіант — поки висновок не стане певним. Зміна застосовуватиметься й відкочуватиметься між прогонами.",
+            policy.min_per_arm, policy.max_per_arm
         );
         if plan.info.restart_game_between_runs {
             println!("⚠ Для цієї зміни гру треба перезапускати перед кожним прогоном.");
@@ -82,11 +77,12 @@ mod app {
 
         let pm = BundledPresentMon::install_default()?;
         let mut active_entry: Option<u64> = None;
-        let mut results = Vec::new();
+        let mut runs: Vec<Run> = Vec::new();
         let outcome = (|| -> anyhow::Result<()> {
-            for (i, arm) in order.iter().enumerate() {
+            while evaluate(&runs, &policy).status == Status::Continue {
+                let arm = next_variant(&runs, policy.variants);
                 match (arm, active_entry) {
-                    (Arm::B, None) => {
+                    (1, None) => {
                         let p = engine.plan(&want)?;
                         let out = engine.apply(&p, &Console)?;
                         if let Some(RestorePointStatus::Created { sequence }) = out.restore_point {
@@ -97,13 +93,13 @@ mod app {
                         }
                         active_entry = out.entry_ids.last().copied();
                     }
-                    (Arm::A, Some(id)) => {
+                    (0, Some(id)) => {
                         engine.rollback(id)?;
                         active_entry = None;
                     }
                     _ => {}
                 }
-                let name = if *arm == Arm::A {
+                let name = if arm == 0 {
                     "A (без зміни)"
                 } else {
                     "B (зі зміною)"
@@ -114,9 +110,8 @@ mod app {
                     ""
                 };
                 wait_enter(&format!(
-                    "\nПрогін {}/{} — {name}.{restart} Підготуйте ту саму сцену й натисніть Enter…",
-                    i + 1,
-                    order.len()
+                    "\nПрогін {} — {name}.{restart} Підготуйте ту саму сцену й натисніть Enter…",
+                    runs.len() + 1
                 ));
                 let gpu = optimax_metrics::NvmlGpu::open()
                     .map(|g| Box::new(g) as Box<dyn optimax_metrics::GpuApi>);
@@ -150,17 +145,15 @@ mod app {
                         ""
                     }
                 );
-                results.push(RunResult {
-                    arm: *arm,
-                    avg_fps: stats.avg_fps,
-                    low_1pct_fps: stats.low_1pct_fps,
-                    conditions: RunConditions {
-                        duration_s: stats.duration_ms / 1000.0,
-                        frames: stats.frames,
-                        gpu_temp_avg_c: (!temps.is_empty())
-                            .then(|| temps.iter().sum::<f64>() / temps.len() as f64),
-                        frame_capped: d.bottleneck == Bottleneck::FrameCap,
-                    },
+                let frames = Timeline::from_recording(&rec)
+                    .ok_or_else(|| anyhow::anyhow!("у прогоні немає кадрів гри"))?;
+                runs.push(Run {
+                    variant: arm,
+                    frametimes_ms: frames.frames.iter().map(|f| f.frametime_ms).collect(),
+                    gpu_temp_avg_c: (!temps.is_empty())
+                        .then(|| temps.iter().sum::<f64>() / temps.len() as f64),
+                    frame_capped: d.bottleneck == Bottleneck::FrameCap,
+                    excluded: false,
                 });
             }
             Ok(())
@@ -173,12 +166,23 @@ mod app {
             return Err(e);
         }
 
-        let report = evaluate(&results)?;
+        let report = evaluate(&runs, &policy);
         let title = c.render(&plan.info.title);
-        let md = render_markdown(&report, &c, &title, &game);
+        let names = ["без зміни".to_string(), "зі зміною".to_string()];
+        let md = render_markdown(
+            &report,
+            &c,
+            &names,
+            &title,
+            &game,
+            u32::try_from(seconds).unwrap_or(u32::MAX),
+        );
         println!("\n{md}\n");
-        match (report.decision, active_entry) {
-            (Decision::Keep, Some(id)) => {
+        let better = report
+            .comparison(1)
+            .is_some_and(|x| x.verdict == Outcome::Better);
+        match (better, active_entry) {
+            (true, Some(id)) => {
                 if !ask("Залишити зміну? [y/N] ") {
                     engine.rollback(id)?;
                     println!("Відкочено.");
@@ -186,7 +190,7 @@ mod app {
                     println!("Зміну залишено (запис журналу #{id}).");
                 }
             }
-            (Decision::Revert, Some(id)) => {
+            (false, Some(id)) => {
                 engine.rollback(id)?;
                 println!("Зміну відкочено: приросту не підтверджено.");
             }

@@ -357,16 +357,15 @@ pub struct AbView {
     pub game: String,
     /// Опис зміни.
     pub plan: Plan,
-    /// Порядок прогонів.
-    pub order: Vec<optimax_tweaks::ab::Arm>,
-    /// Наступний прогін (індекс у `order`).
-    pub next: u32,
     /// Тривалість прогону, с.
     pub seconds: u32,
     /// Спосіб старту прогонів.
     pub start: optimax_frametime::StartMode,
-    /// Результати виконаних прогонів.
-    pub results: Vec<optimax_tweaks::ab::RunResult>,
+    /// Оцінка за виконаними прогонами (A — без зміни, B — зі зміною; наступний варіант,
+    /// чи вже досить).
+    pub report: optimax_experiment::Report,
+    /// Найбільше прогонів на варіант.
+    pub max_per_arm: u32,
     /// Перевіряється профіль гри цілком (а не один твік).
     pub profile: bool,
 }
@@ -381,13 +380,17 @@ pub struct ResView {
     pub seconds: u32,
     /// Спосіб старту прогонів.
     pub start: optimax_frametime::StartMode,
-    /// Порядок прогонів: `false` — рідна роздільність, `true` — знижена.
-    pub order: Vec<bool>,
     /// Виконані прогони.
     pub runs: Vec<optimax_diagnosis::resolution::ResolutionRun>,
+    /// Наступний прогін: `false` — рідна роздільність, `true` — знижена (`None` — досить).
+    pub next_reduced: Option<bool>,
+    /// Найбільше прогонів на кожну роздільність.
+    pub max_per_arm: u32,
+    /// Оцінка рушія порівнянь (інтервал, скільки ще прогонів).
+    pub estimate: optimax_experiment::Report,
     /// Іде прогін.
     pub running: bool,
-    /// Підсумок (після всіх прогонів).
+    /// Підсумок (коли висновок певний).
     pub report: Option<optimax_diagnosis::resolution::ResolutionReport>,
 }
 
@@ -395,8 +398,8 @@ pub struct ResView {
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct AbFinal {
-    /// Звіт.
-    pub report: optimax_tweaks::ab::AbReport,
+    /// Звіт (A — без зміни, B — зі зміною).
+    pub report: optimax_experiment::Report,
     /// Звіт Markdown для форуму.
     pub markdown: String,
     /// Чи залишено зміну.
@@ -452,14 +455,14 @@ pub struct ExpWarmup {
     pub has_temp: bool,
 }
 
-/// Стан порівняння двох варіантів для UI.
+/// Стан порівняння варіантів для UI.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ExpView {
     /// Гра.
     pub game: String,
-    /// Назви варіантів A і B (від користувача).
-    pub names: [String; 2],
+    /// Назви варіантів A, B… (від користувача; A — базовий).
+    pub names: Vec<String>,
     /// Тривалість прогону, с.
     pub seconds: u32,
     /// Спосіб старту прогонів.
@@ -486,8 +489,8 @@ pub struct ExpRecord {
     pub game: String,
     /// Коли завершено, Unix-мс.
     pub at_unix_ms: i64,
-    /// Назви варіантів A і B.
-    pub names: [String; 2],
+    /// Назви варіантів A, B….
+    pub names: Vec<String>,
     /// Тривалість прогону, с.
     pub seconds: u32,
     /// Підсумок.

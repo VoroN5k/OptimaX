@@ -4,7 +4,7 @@ use crate::GameModeError;
 use optimax_core::process::{is_protected_process, PriorityClass};
 use optimax_core::service::is_stoppable_service;
 use optimax_core::{CivilDate, Text};
-use optimax_tweaks::ab::Outcome;
+use optimax_experiment::Outcome;
 use optimax_tweaks::catalog::GpuPref;
 use optimax_upscale::UpscaleSettings;
 use serde::{Deserialize, Serialize};

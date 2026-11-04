@@ -6,11 +6,12 @@
   import type { PowerSchemes } from "../lib/bindings/PowerSchemes";
   import type { RecordProgress } from "../lib/bindings/RecordProgress";
   import type { UiDesired } from "../lib/bindings/UiDesired";
-  import { tk } from "../lib/i18n";
+  import { t, tk } from "../lib/i18n";
   import { flashBg, logLocal, ui } from "../lib/state.svelte";
   import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
   import ChangePreview from "../components/ChangePreview.svelte";
+  import ExpEstimates from "../components/ExpEstimates.svelte";
   import Modal from "../components/Modal.svelte";
   import Page from "../components/Page.svelte";
   import ProcessPicker from "../components/ProcessPicker.svelte";
@@ -29,7 +30,6 @@
   let step = $state(1);
   let choice = $state<Choice | null>(null);
   let game = $state("");
-  let runs = $state(3);
   let seconds = $state(60);
   let ab = $state<AbView | null>(null);
   /** Підсумок стосується профілю гри (результат збережено в профіль, а не «залишено / відкочено»). */
@@ -84,7 +84,7 @@
     if (!choice) return;
     error = null;
     try {
-      ab = await api.abStart(game.trim(), choice.desired, runs, seconds);
+      ab = await api.abStart(game.trim(), choice.desired, seconds);
       step = 3;
     } catch (e) {
       error = asCmdError(e).message;
@@ -117,7 +117,7 @@
     try {
       testedProfile = ab?.profile ?? false;
       final = await api.abFinish(keep);
-      flashBg(final.report.effect === "better" ? "ok" : "warn");
+      flashBg(effectOf(final.report) === "better" ? "ok" : "warn");
       logLocal("info", tk(testedProfile ? "ui.opt.profile_saved_log" : final.kept ? "ui.opt.kept_log" : "ui.opt.reverted_log"));
       ab = null;
       step = 4;
@@ -138,8 +138,13 @@
     step = 1;
   }
 
-  const done = $derived(ab ? ab.next >= ab.order.length : false);
-  const nextArm = $derived(ab && !done ? ab.order[ab.next] : null);
+  const done = $derived(ab?.report.status === "done");
+  /** Наступний варіант: 0 — без зміни (A), 1 — зі зміною (B). */
+  const nextArm = $derived(ab && !done ? (ab.report.next ?? null) : null);
+  const letter = (v: number) => String.fromCharCode(65 + v);
+  const armNames = $derived([tk("ui.opt.arm_a"), tk("ui.opt.arm_b")]);
+  /** Висновок про зміну (B проти A). */
+  const effectOf = (r: { comparisons: { verdict: string }[] }) => r.comparisons[0]?.verdict ?? "unclear";
 </script>
 
 <Page title={tk("ui.opt.title")} subtitle={tk("ui.opt.subtitle")}>
@@ -186,8 +191,6 @@
         <div class="grid2">
           <ProcessPicker bind:value={game} label={tk("ui.diag.game")} />
           <div class="opts">
-            <span class="small muted">{tk("ui.opt.runs")}</span>
-            <Segmented label={tk("ui.opt.runs")} bind:value={runs} options={[{ value: 3, label: "3 + 3" }, { value: 5, label: "5 + 5" }]} />
             <span class="small muted">{tk("ui.diag.duration")}</span>
             <Segmented
               label={tk("ui.diag.duration")}
@@ -207,27 +210,54 @@
       <Card title={tk("ui.opt.step3", { game: ab.game })} subtitle={tk("ui.opt.step3_hint", { s: ab.seconds })}>
         <ChangePreview plan={ab.plan} open={false} />
         <ol class="runs">
-          {#each ab.order as arm, i (i)}
-            {@const r = ab.results[i]}
-            <li class:current={i === ab.next} class:done={!!r}>
-              <span class="arm {arm}">{arm}</span>
-              <span>{tk(arm === "A" ? "ui.opt.arm_a" : "ui.opt.arm_b")}</span>
-              <span class="mono">{r ? `${r.avg_fps.toFixed(1)} FPS · 1% ${r.low_1pct_fps.toFixed(1)}` : i === ab.next && running ? tk("ui.opt.recording") : "—"}</span>
-              {#if r?.conditions.frame_capped}<span class="cap small">{tk("ui.opt.capped")}</span>{/if}
+          {#each ab.report.runs as r, i (i)}
+            <li class="done">
+              <span class="arm" class:on={r.variant === 1}>{letter(r.variant)}</span>
+              <span>{armNames[r.variant]}</span>
+              <span class="mono">{`${r.avg_fps.toFixed(1)} FPS · 1% ${r.low_1pct_fps.toFixed(1)}`}</span>
+              {#if r.frame_capped}<span class="cap small">{tk("ui.opt.capped")}</span>{/if}
             </li>
           {/each}
+          {#if nextArm != null}
+            <li class="current">
+              <span class="arm" class:on={nextArm === 1}>{letter(nextArm)}</span>
+              <span>{armNames[nextArm]}</span>
+              <span class="mono">{running ? tk("ui.opt.recording") : "—"}</span>
+            </li>
+          {/if}
         </ol>
+        <div class="ests"><ExpEstimates report={ab.report} names={armNames} /></div>
+        {#if !done && ab.report.more_per_arm != null}
+          <p class="small muted">{tk("ui.exp.more_runs", { n: ab.report.more_per_arm })}</p>
+        {/if}
+        {#if done}
+          <p class="small">{tk(`ui.opt.done.${effectOf(ab.report)}`)}</p>
+        {/if}
+        {#if ab.report.warnings.length}
+          <ul class="warns small">
+            {#each ab.report.warnings as w, i (i)}<li>{t(w)}</li>{/each}
+          </ul>
+        {/if}
         {#if running}
           <div class="run-status"><RecordStatus progress={runProgress} game={ab.game} /></div>
         {/if}
-        {#if nextArm && ab.plan.info.restart_game_between_runs}
+        {#if nextArm != null && ab.plan.info.restart_game_between_runs}
           <p class="warn small">{tk("ui.opt.restart_game")}</p>
         {/if}
       </Card>
     {:else if step === 4 && final}
       <Card title={tk("ui.opt.report")}>
-        <div class="verdict {final.report.effect}">
-          {tk(final.report.effect === "better" ? "ui.opt.effect_better" : final.report.effect === "worse" ? "ui.opt.effect_worse" : "ui.opt.effect_none")}
+        {@const effect = effectOf(final.report)}
+        <div class="verdict {effect}">
+          {tk(
+            effect === "better"
+              ? "ui.opt.effect_better"
+              : effect === "worse"
+                ? "ui.opt.effect_worse"
+                : effect === "unclear"
+                  ? "ui.opt.effect_unclear"
+                  : "ui.opt.effect_none",
+          )}
           — {tk(testedProfile ? "ui.opt.profile_saved" : final.kept ? "ui.opt.kept" : "ui.opt.reverted")}
         </div>
         <pre class="md mono">{final.markdown}</pre>
@@ -289,7 +319,7 @@
           <Button variant="primary" icon="check" onclick={() => finish(true)}>{tk("ui.opt.finish")}</Button>
         {:else}
           <Button variant="primary" icon="play" loading={running} onclick={() => runNext(false)}>
-            {tk("ui.opt.run_next", { n: ab.next + 1, m: ab.order.length, arm: nextArm ?? "" })}
+            {tk("ui.opt.run_next", { n: ab.report.runs.length + 1, arm: nextArm != null ? letter(nextArm) : "" })}
           </Button>
         {/if}
       {:else if step === 4}
@@ -439,9 +469,17 @@
     font-size: 12px;
     background: var(--bg-input);
   }
-  .arm.B {
+  .arm.on {
     background: var(--accent-gradient);
     color: var(--on-accent);
+  }
+  .ests {
+    margin-top: calc(var(--space) * 4);
+  }
+  .warns {
+    margin: calc(var(--space) * 3) 0 0;
+    padding-left: calc(var(--space) * 5);
+    color: var(--warn);
   }
   .cap,
   .warn {

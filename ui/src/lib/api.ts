@@ -110,8 +110,8 @@ export const api = {
   resState: () => invoke<ResView | null>("res_state"),
   resRunNext: () => invoke<ResView>("res_run_next"),
   resCancel: () => invoke<void>("res_cancel"),
-  expStart: (exe: string, nameA: string, nameB: string, seconds: number, warmup: boolean) =>
-    invoke<ExpView>("exp_start", { exe, nameA, nameB, seconds, warmup }),
+  expStart: (exe: string, names: string[], seconds: number, warmup: boolean) =>
+    invoke<ExpView>("exp_start", { exe, names, seconds, warmup }),
   expSkipWarmup: () => invoke<ExpView>("exp_skip_warmup"),
   expState: () => invoke<ExpView | null>("exp_state"),
   expRunNext: () => invoke<ExpView>("exp_run_next"),
@@ -133,10 +133,9 @@ export const api = {
   rollback: (id: number) => invoke<void>("journal_rollback", { id }),
   rollbackAll: () => invoke<RollbackResult>("journal_rollback_all"),
 
-  abStart: (game: string, desired: UiDesired, runs: number, seconds: number) =>
-    invoke<AbView>("ab_start", { game, desired, runs, seconds }),
-  abStartProfile: (exe: string, runs: number, seconds: number) =>
-    invoke<AbView>("ab_start_profile", { exe, runs, seconds }),
+  abStart: (game: string, desired: UiDesired, seconds: number) =>
+    invoke<AbView>("ab_start", { game, desired, seconds }),
+  abStartProfile: (exe: string, seconds: number) => invoke<AbView>("ab_start_profile", { exe, seconds }),
   abState: () => invoke<AbView | null>("ab_state"),
   abRunNext: (allowWithoutRestorePoint: boolean) => invoke<AbView>("ab_run_next", { allowWithoutRestorePoint }),
   abFinish: (keep: boolean) => invoke<AbFinal>("ab_finish", { keep }),

@@ -52,7 +52,7 @@ pub fn mark_suspects(runs: &[Run], sums: &mut [RunSummary]) {
             continue;
         }
         let peers: Vec<usize> = (0..n)
-            .filter(|&j| j != i && !sums[j].excluded && sums[j].arm == sums[i].arm)
+            .filter(|&j| j != i && !sums[j].excluded && sums[j].variant == sums[i].variant)
             .collect();
         if peers.len() + 1 < MIN_RUNS {
             continue;

@@ -1,26 +1,38 @@
 //! Тест чутливості FPS до роздільності (CLAUDE.md, розд. 9: GPU-bound — «FPS чутливий до
-//! роздільності»). Два прогони на рідній роздільності, потім два на зниженій (роздільність,
-//! render scale чи DLSS/FSR Performance змінює користувач у грі) — порядок AABB, щоб у грі
-//! перемикати лише раз.
+//! роздільності»). Прогони на рідній (A) і зниженій (B) роздільності — роздільність, render
+//! scale чи DLSS/FSR Performance змінює користувач у грі.
 //!
-//! Висновок — лише за виміряним: приріст має бути і практично помітним
-//! ([`HELPS_MIN_PCT`]), і більшим за розкид між повторами ([`SPREAD_FACTOR`]). Чисті функції.
+//! Статистика — рушій порівнянь (`optimax_experiment`, правила [`policy`]): порядок ABBA,
+//! поправка на дрейф, 3–6 прогонів на роздільність, поки висновок не стане певним.
+//! Висновок — лише за виміряним: «допоможе», якщо приріст не менший за [`HELPS_MIN_PCT`], а
+//! нижня межа інтервалу вища за [`NO_HELP_MAX_PCT`]; «не допоможе», якщо весь інтервал у
+//! межах ±[`NO_HELP_MAX_PCT`].
+//! Чисті функції.
 
 use crate::{diagnose_timeline, Bottleneck, Context, Diagnosis, MeasuredGain, Timeline, Verdict};
 use optimax_core::{Category, Confidence, Finding, FindingBuilder, Impact, Text};
+use optimax_experiment::{Estimate, Outcome, Policy, Report, Status};
 use optimax_frametime::Recording;
 use serde::{Deserialize, Serialize};
 
-/// Прогонів на кожну роздільність.
-pub const RUNS_PER_ARM: usize = 2;
 /// Найменший приріст середнього FPS, з якого кажемо «допоможе», %.
 pub const HELPS_MIN_PCT: f64 = 10.0;
-/// Зміна FPS, у межах якої кажемо «не допоможе», %.
+/// Зміна FPS, у межах якої кажемо «не допоможе», % (поріг «ефекту немає» для рушія).
 pub const NO_HELP_MAX_PCT: f64 = 3.0;
-/// Приріст має бути в стільки разів більшим за розкид між повторами.
-pub const SPREAD_FACTOR: f64 = 2.0;
 /// Падіння середнього завантаження GPU (в. п.), яке підтверджує, що роздільність змінилась.
 pub const GPU_DROP_MIN_PP: f64 = 5.0;
+/// Найбільше прогонів на кожну роздільність.
+pub const MAX_RUNS_PER_ARM: usize = 6;
+
+/// Правила рушія порівнянь для цього тесту: варіант 0 — рідна роздільність, 1 — знижена.
+pub fn policy() -> Policy {
+    Policy {
+        max_per_arm: MAX_RUNS_PER_ARM,
+        margin_avg_pct: NO_HELP_MAX_PCT,
+        margin_low_pct: 5.0,
+        ..Policy::default()
+    }
+}
 
 /// Один прогін тесту.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -66,11 +78,6 @@ impl ResolutionRun {
     }
 }
 
-/// Порядок прогонів: `false` — рідна, `true` — знижена.
-pub fn schedule() -> [bool; RUNS_PER_ARM * 2] {
-    [false, false, true, true]
-}
-
 /// Висновок тесту.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -98,8 +105,12 @@ pub struct ResolutionReport {
     pub avg_fps_change_pct: f64,
     /// Зміна 1% low, %.
     pub low_1pct_change_pct: f64,
-    /// Найбільший розкид середнього FPS між двома повторами однієї роздільності, %.
-    pub spread_pct: f64,
+    /// Інтервал зміни середнього FPS: нижня межа, %.
+    pub ci_low_pct: f64,
+    /// Верхня межа, %.
+    pub ci_high_pct: f64,
+    /// Прогонів на кожну роздільність.
+    pub runs_per_arm: u32,
     /// Знахідка для показу.
     pub finding: Finding,
     /// Прогони в порядку виконання.
@@ -110,55 +121,21 @@ fn mean(v: &[f64]) -> Option<f64> {
     (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64)
 }
 
-/// Розкид двох (кількох) значень: (max − min) / середнє, %.
-fn spread(v: &[f64]) -> f64 {
-    let (Some(m), Some(max), Some(min)) = (
-        mean(v),
-        v.iter().copied().reduce(f64::max),
-        v.iter().copied().reduce(f64::min),
-    ) else {
-        return 0.0;
-    };
-    if m > 0.0 {
-        (max - min) / m * 100.0
-    } else {
-        0.0
-    }
-}
-
-fn change_pct(from: f64, to: f64) -> f64 {
-    if from > 0.0 {
-        (to - from) / from * 100.0
-    } else {
-        0.0
-    }
-}
-
 fn signed_pct(v: f64) -> String {
     format!("{v:+.1}")
 }
 
-/// Оцінює прогони. `None` — ще не по [`RUNS_PER_ARM`] прогонів кожної роздільності.
-pub fn evaluate(runs: &[ResolutionRun]) -> Option<ResolutionReport> {
-    let pick = |reduced: bool, f: fn(&ResolutionRun) -> f64| -> Vec<f64> {
-        runs.iter()
-            .filter(|r| r.reduced == reduced)
-            .map(f)
-            .collect()
-    };
-    let (nat_avg, red_avg) = (pick(false, |r| r.avg_fps), pick(true, |r| r.avg_fps));
-    if nat_avg.len() < RUNS_PER_ARM || red_avg.len() < RUNS_PER_ARM {
+/// Підсумок за оцінкою рушія. `None` — висновку ще немає (рушій просить ще прогони).
+/// `runs` — ті самі прогони в тому самому порядку, що й у рушія.
+pub fn evaluate(runs: &[ResolutionRun], estimate: &Report) -> Option<ResolutionReport> {
+    if estimate.status != Status::Done {
         return None;
     }
-    let (nat_low, red_low) = (
-        pick(false, |r| r.low_1pct_fps),
-        pick(true, |r| r.low_1pct_fps),
-    );
-    let (na, ra) = (mean(&nat_avg)?, mean(&red_avg)?);
-    let (nl, rl) = (mean(&nat_low)?, mean(&red_low)?);
-    let delta = change_pct(na, ra);
-    let delta_low = change_pct(nl, rl);
-    let spread_pct = spread(&nat_avg).max(spread(&red_avg));
+    let cmp = estimate.comparison(1)?;
+    let (avg, low): (&Estimate, &Estimate) = (cmp.avg_fps.as_ref()?, cmp.low_1pct.as_ref()?);
+    let delta = avg.delta_pct;
+    let delta_low = low.delta_pct;
+    let per_arm = estimate.runs_of(0).min(estimate.runs_of(1));
 
     let util = |reduced: bool| -> Option<f64> {
         let v: Vec<f64> = runs
@@ -174,13 +151,17 @@ pub fn evaluate(runs: &[ResolutionRun]) -> Option<ResolutionReport> {
     let capped = runs.iter().any(|r| r.frame_capped);
     let (outcome, confidence) = if capped {
         (ResolutionOutcome::Capped, 90.0)
-    } else if delta >= HELPS_MIN_PCT && delta > SPREAD_FACTOR * spread_pct {
-        // Що більший приріст відносно порогу, то впевненіше.
+    } else if avg.outcome == Outcome::Better
+        && delta >= HELPS_MIN_PCT
+        && avg.ci_low_pct >= NO_HELP_MAX_PCT
+    {
+        // Приріст значущий і напевно більший за смугу «не допоможе»; що більший він
+        // відносно порогу, то впевненіше.
         (
             ResolutionOutcome::Helps,
             (75.0 + (delta - HELPS_MIN_PCT)).min(95.0),
         )
-    } else if delta.abs() <= NO_HELP_MAX_PCT {
+    } else if avg.outcome == Outcome::NoEffect {
         match gpu_drop {
             Some(d) if d < GPU_DROP_MIN_PP => (ResolutionOutcome::NotApplied, 70.0),
             Some(_) => (ResolutionOutcome::NoHelp, 85.0),
@@ -203,27 +184,33 @@ pub fn evaluate(runs: &[ResolutionRun]) -> Option<ResolutionReport> {
         ResolutionOutcome::Capped => Category::FrameCap,
         _ => Category::Summary,
     };
+    let (lo, hi) = (signed_pct(avg.ci_low_pct), signed_pct(avg.ci_high_pct));
     let mut b = FindingBuilder::new("diag", id, category, impact, confidence.round() as u8)
         .arg("delta", signed_pct(delta))
         .arg("delta_low", signed_pct(delta_low))
-        .arg("spread", format!("{spread_pct:.1}"))
+        .arg("lo", lo.clone())
+        .arg("hi", hi.clone())
         .evidence(
             Text::new("diag.ev.res_avg"),
             Text::new("diag.ev.res_pair")
-                .arg("native", format!("{na:.1}"))
-                .arg("reduced", format!("{ra:.1}"))
+                .arg("native", format!("{:.1}", avg.a))
+                .arg("reduced", format!("{:.1}", avg.b))
                 .arg("delta", signed_pct(delta)),
         )
         .evidence(
             Text::new("diag.ev.res_low"),
             Text::new("diag.ev.res_pair")
-                .arg("native", format!("{nl:.1}"))
-                .arg("reduced", format!("{rl:.1}"))
+                .arg("native", format!("{:.1}", low.a))
+                .arg("reduced", format!("{:.1}", low.b))
                 .arg("delta", signed_pct(delta_low)),
         )
         .evidence(
-            Text::new("diag.ev.res_spread"),
-            Text::new("value.pct").arg("v", format!("{spread_pct:.1}")),
+            Text::new("diag.ev.res_ci"),
+            Text::new("diag.ev.res_ci_value")
+                .arg("lo", lo)
+                .arg("hi", hi)
+                .arg("conf", format!("{:.1}", estimate.confidence_pct))
+                .arg("n", per_arm),
         );
     if let (Some(n), Some(r)) = (nat_util, red_util) {
         b = b.evidence(
@@ -250,7 +237,9 @@ pub fn evaluate(runs: &[ResolutionRun]) -> Option<ResolutionReport> {
         outcome,
         avg_fps_change_pct: delta,
         low_1pct_change_pct: delta_low,
-        spread_pct,
+        ci_low_pct: avg.ci_low_pct,
+        ci_high_pct: avg.ci_high_pct,
+        runs_per_arm: u32::try_from(per_arm).unwrap_or(u32::MAX),
         finding,
         runs: runs.to_vec(),
     })
@@ -268,7 +257,7 @@ pub fn apply(d: &mut Diagnosis, report: &ResolutionReport) {
     let gain = MeasuredGain {
         avg_fps_change_pct: report.avg_fps_change_pct,
         low_1pct_change_pct: report.low_1pct_change_pct,
-        runs: RUNS_PER_ARM as u32,
+        runs: report.runs_per_arm,
     };
     let measured = matches!(
         report.outcome,
@@ -277,7 +266,9 @@ pub fn apply(d: &mut Diagnosis, report: &ResolutionReport) {
     let test_evidence = || {
         (
             Text::new("diag.ev.res_test"),
-            Text::new("diag.ev.res_test_value").arg("delta", signed_pct(report.avg_fps_change_pct)),
+            Text::new("diag.ev.res_test_value")
+                .arg("delta", signed_pct(report.avg_fps_change_pct))
+                .arg("n", report.runs_per_arm),
         )
     };
     for v in &mut d.verdicts {
@@ -349,74 +340,110 @@ pub fn apply(d: &mut Diagnosis, report: &ResolutionReport) {
 mod tests {
     use super::*;
 
-    fn run(reduced: bool, avg: f64, util: Option<f64>) -> ResolutionRun {
-        ResolutionRun {
-            reduced,
-            avg_fps: avg,
-            low_1pct_fps: avg * 0.7,
-            gpu_util_avg: util,
+    use optimax_experiment::{next_variant, Run};
+
+    /// Прогін із `avg` FPS: 3000 кадрів із детермінованим шумом ±5 % (середнє рівно `avg`).
+    fn exp_run(reduced: bool, avg: f64, seed: usize) -> Run {
+        let base = 1000.0 / avg;
+        let mut ft: Vec<f64> = (0..3000)
+            .map(|i| {
+                let u = ((i * 7919 + seed * 104_729) % 101) as f64 / 50.0 - 1.0;
+                base * (1.0 + 0.05 * u)
+            })
+            .collect();
+        let m = ft.iter().sum::<f64>() / ft.len() as f64;
+        for v in &mut ft {
+            *v *= base / m;
+        }
+        Run {
+            variant: u8::from(reduced),
+            frametimes_ms: ft,
+            gpu_temp_avg_c: Some(70.0),
             frame_capped: false,
-            frames: 5000,
+            excluded: false,
         }
     }
 
-    fn runs(
-        native: [f64; 2],
-        reduced: [f64; 2],
+    /// Тест до висновку рушія (або до `limit` прогонів): FPS рідної / зниженої з розкидом
+    /// між прогонами ±`jitter` (частка), завантаження GPU — `util`.
+    fn test_runs(
+        native: f64,
+        reduced: f64,
+        jitter: f64,
         util: (Option<f64>, Option<f64>),
-    ) -> Vec<ResolutionRun> {
-        vec![
-            run(false, native[0], util.0),
-            run(false, native[1], util.0),
-            run(true, reduced[0], util.1),
-            run(true, reduced[1], util.1),
-        ]
+        limit: usize,
+    ) -> (Vec<ResolutionRun>, Report) {
+        let mut exp: Vec<Run> = Vec::new();
+        let mut res = Vec::new();
+        loop {
+            let report = optimax_experiment::evaluate(&exp, &policy());
+            if report.status == Status::Done || exp.len() >= limit {
+                return (res, report);
+            }
+            let r = next_variant(&exp, 2) == 1;
+            let i = exp.len();
+            let k = 1.0 + jitter * if i.is_multiple_of(3) { 1.0 } else { -0.5 };
+            let fps = if r { reduced } else { native } * k;
+            exp.push(exp_run(r, fps, i));
+            res.push(ResolutionRun {
+                reduced: r,
+                avg_fps: fps,
+                low_1pct_fps: fps * 0.7,
+                gpu_util_avg: if r { util.1 } else { util.0 },
+                frame_capped: false,
+                frames: 3000,
+            });
+        }
+    }
+
+    fn report_for(native: f64, reduced: f64, util: (Option<f64>, Option<f64>)) -> ResolutionReport {
+        let (runs, est) = test_runs(native, reduced, 0.003, util, 100);
+        evaluate(&runs, &est).expect("висновок")
     }
 
     #[test]
-    fn needs_two_runs_of_each() {
-        assert!(evaluate(&[]).is_none());
-        let mut r = runs([100.0, 100.0], [140.0, 140.0], (Some(99.0), Some(80.0)));
-        r.pop();
-        assert!(evaluate(&r).is_none());
-        assert_eq!(schedule(), [false, false, true, true]);
+    fn needs_a_certain_estimate() {
+        let (runs, est) = test_runs(100.0, 140.0, 0.003, (Some(99.0), Some(80.0)), 4);
+        assert_eq!(est.status, Status::Continue);
+        assert!(evaluate(&runs, &est).is_none());
+        let (runs, est) = test_runs(100.0, 140.0, 0.003, (Some(99.0), Some(80.0)), 100);
+        assert_eq!(runs.len(), 6, "ABBAAB вистачає для явного приросту");
+        let order: Vec<bool> = runs.iter().map(|r| r.reduced).collect();
+        assert_eq!(order, [false, true, true, false, false, true]);
+        assert!(evaluate(&runs, &est).is_some());
     }
 
     #[test]
     fn gpu_bound_game_gains_fps() {
-        let r = evaluate(&runs(
-            [100.0, 102.0],
-            [140.0, 138.0],
-            (Some(99.0), Some(85.0)),
-        ))
-        .unwrap();
+        let r = report_for(100.0, 138.0, (Some(99.0), Some(85.0)));
         assert_eq!(r.outcome, ResolutionOutcome::Helps);
-        assert!((r.avg_fps_change_pct - 37.6).abs() < 0.1);
+        assert!((r.avg_fps_change_pct - 38.0).abs() < 1.0, "{r:?}");
+        assert!(r.ci_low_pct > HELPS_MIN_PCT);
         assert_eq!(r.finding.id, "res.helps");
         assert_eq!(r.finding.confidence.percent(), 95);
         assert_eq!(r.finding.evidence.len(), 4);
+        assert_eq!(r.runs_per_arm, 3);
     }
 
     #[test]
-    fn gain_within_spread_is_not_claimed() {
-        // +12 %, але повтори розходяться на ~10 % — приріст не вдвічі більший за розкид.
-        let r = evaluate(&runs(
-            [95.0, 105.0],
-            [107.0, 117.0],
-            (Some(99.0), Some(85.0)),
-        ))
-        .unwrap();
+    fn small_gain_is_not_claimed() {
+        // +6 % — значущо, але менше за поріг «допоможе».
+        let r = report_for(100.0, 106.0, (Some(99.0), Some(90.0)));
         assert_eq!(r.outcome, ResolutionOutcome::Unclear);
     }
 
     #[test]
+    fn noisy_runs_ask_for_more_and_stay_unclear() {
+        // Розкид між прогонами ±8 % — навіть +12 % не можна стверджувати певно.
+        let (runs, est) = test_runs(100.0, 112.0, 0.08, (Some(99.0), Some(85.0)), 100);
+        assert!(runs.len() > 6, "{}", runs.len());
+        let r = evaluate(&runs, &est).expect("висновок на межі прогонів");
+        assert_ne!(r.outcome, ResolutionOutcome::Helps, "{r:?}");
+    }
+
+    #[test]
     fn cpu_bound_game_does_not_gain() {
-        let r = evaluate(&runs(
-            [100.0, 101.0],
-            [101.0, 102.0],
-            (Some(70.0), Some(45.0)),
-        ))
-        .unwrap();
+        let r = report_for(100.0, 100.5, (Some(70.0), Some(45.0)));
         assert_eq!(r.outcome, ResolutionOutcome::NoHelp);
         assert_eq!(r.finding.confidence.percent(), 85);
         assert!(r.finding.advice.is_none());
@@ -424,19 +451,14 @@ mod tests {
 
     #[test]
     fn unchanged_gpu_load_means_resolution_was_not_changed() {
-        let r = evaluate(&runs(
-            [100.0, 101.0],
-            [100.0, 101.0],
-            (Some(97.0), Some(96.0)),
-        ))
-        .unwrap();
+        let r = report_for(100.0, 100.0, (Some(97.0), Some(96.0)));
         assert_eq!(r.outcome, ResolutionOutcome::NotApplied);
         assert!(r.finding.advice.is_some());
     }
 
     #[test]
     fn without_gpu_metrics_no_help_is_less_certain() {
-        let r = evaluate(&runs([100.0, 101.0], [100.0, 101.0], (None, None))).unwrap();
+        let r = report_for(100.0, 100.5, (None, None));
         assert_eq!(r.outcome, ResolutionOutcome::NoHelp);
         assert_eq!(r.finding.confidence.percent(), 60);
         assert_eq!(
@@ -447,9 +469,12 @@ mod tests {
 
     #[test]
     fn frame_cap_makes_test_meaningless() {
-        let mut r = runs([144.0, 144.0], [144.0, 144.0], (Some(60.0), Some(40.0)));
-        r[2].frame_capped = true;
-        assert_eq!(evaluate(&r).unwrap().outcome, ResolutionOutcome::Capped);
+        let (mut runs, est) = test_runs(144.0, 144.0, 0.0, (Some(60.0), Some(40.0)), 100);
+        runs[2].frame_capped = true;
+        assert_eq!(
+            evaluate(&runs, &est).expect("висновок").outcome,
+            ResolutionOutcome::Capped
+        );
     }
 
     fn diagnosis_with(ids: &[&str]) -> Diagnosis {
@@ -478,12 +503,7 @@ mod tests {
     #[test]
     fn confirmed_gpu_bound_gets_measured_gain() {
         let mut d = diagnosis_with(&["summary.gpu", "gpu_bound", "upscale.helps"]);
-        let r = evaluate(&runs(
-            [100.0, 100.0],
-            [140.0, 140.0],
-            (Some(99.0), Some(80.0)),
-        ))
-        .unwrap();
+        let r = report_for(100.0, 140.0, (Some(99.0), Some(80.0)));
         apply(&mut d, &r);
         let ids: Vec<_> = d.verdicts.iter().map(|v| v.finding.id.as_str()).collect();
         assert_eq!(
@@ -495,7 +515,9 @@ mod tests {
         assert_eq!(d.verdicts[0].finding.confidence.percent(), 95);
         assert_eq!(g.finding.detail.key, "diag.gpu_bound.detail_confirmed");
         assert_eq!(g.finding.detail.args["share"], "90");
-        assert!((g.expected_gain.as_ref().unwrap().avg_fps_change_pct - 40.0).abs() < 1e-9);
+        let gain = g.expected_gain.as_ref().unwrap();
+        assert!((gain.avg_fps_change_pct - 40.0).abs() < 1.0);
+        assert_eq!(gain.runs, 3);
         assert!(d.verdicts[3].expected_gain.is_some());
         // Повторний тест замінює попередній вердикт і доказ, а не дублює.
         apply(&mut d, &r);
@@ -525,23 +547,13 @@ mod tests {
                 .map(|v| v.finding.detail.key.clone())
                 .unwrap()
         };
-        let helps = evaluate(&runs(
-            [100.0, 100.0],
-            [140.0, 140.0],
-            (Some(99.0), Some(80.0)),
-        ))
-        .unwrap();
+        let helps = report_for(100.0, 140.0, (Some(99.0), Some(80.0)));
         let mut d = diagnosis_with(&["summary.gpu", "gpu_bound"]);
         edge(&mut d);
         apply(&mut d, &helps);
         assert_eq!(key(&d), "diag.gpu_bound.detail_edge_confirmed");
 
-        let no = evaluate(&runs(
-            [100.0, 100.0],
-            [101.0, 100.0],
-            (Some(99.0), Some(70.0)),
-        ))
-        .unwrap();
+        let no = report_for(100.0, 100.5, (Some(99.0), Some(70.0)));
         let mut d = diagnosis_with(&["summary.gpu", "gpu_bound"]);
         edge(&mut d);
         apply(&mut d, &no);
@@ -551,12 +563,7 @@ mod tests {
     #[test]
     fn contradicted_gpu_bound_loses_confidence() {
         let mut d = diagnosis_with(&["summary.gpu", "gpu_bound"]);
-        let r = evaluate(&runs(
-            [100.0, 100.0],
-            [101.0, 100.0],
-            (Some(99.0), Some(70.0)),
-        ))
-        .unwrap();
+        let r = report_for(100.0, 100.5, (Some(99.0), Some(70.0)));
         apply(&mut d, &r);
         let g = d
             .verdicts
@@ -572,23 +579,23 @@ mod tests {
     #[test]
     fn every_text_is_localized() {
         let catalog = optimax_core::Catalog::ukrainian().unwrap();
-        let mut capped = runs([144.0, 144.0], [144.0, 144.0], (Some(60.0), Some(40.0)));
+        let (mut capped, capped_est) =
+            test_runs(144.0, 144.0, 0.003, (Some(60.0), Some(40.0)), 100);
         capped[0].frame_capped = true;
         let cases = [
-            runs([100.0, 100.0], [140.0, 140.0], (Some(99.0), Some(80.0))),
-            runs([100.0, 100.0], [101.0, 100.0], (Some(99.0), Some(70.0))),
-            runs([100.0, 100.0], [101.0, 100.0], (None, None)),
-            runs([100.0, 100.0], [100.0, 100.0], (Some(97.0), Some(97.0))),
-            runs([100.0, 100.0], [106.0, 106.0], (Some(99.0), Some(90.0))),
-            capped,
+            report_for(100.0, 140.0, (Some(99.0), Some(80.0))),
+            report_for(100.0, 100.5, (Some(99.0), Some(70.0))),
+            report_for(100.0, 100.5, (None, None)),
+            report_for(100.0, 100.0, (Some(97.0), Some(97.0))),
+            report_for(100.0, 106.0, (Some(99.0), Some(90.0))),
+            evaluate(&capped, &capped_est).unwrap(),
         ];
         let mut outcomes = Vec::new();
-        for c in &cases {
-            let r = evaluate(c).unwrap();
+        for r in &cases {
             outcomes.push(r.outcome);
             let mut d = diagnosis_with(&["summary.gpu", "gpu_bound", "cpu_bound"]);
             // Заголовки «чужих» вердиктів у моку несправжні — перевіряємо лише змінене тестом.
-            apply(&mut d, &r);
+            apply(&mut d, r);
             let mut texts = vec![];
             for v in &d.verdicts {
                 let f = &v.finding;
@@ -623,12 +630,7 @@ mod tests {
     fn unclear_result_changes_nothing_but_adds_its_verdict() {
         let mut d = diagnosis_with(&["summary.gpu", "gpu_bound"]);
         let before = d.verdicts[1].clone();
-        let r = evaluate(&runs(
-            [100.0, 100.0],
-            [106.0, 106.0],
-            (Some(99.0), Some(90.0)),
-        ))
-        .unwrap();
+        let r = report_for(100.0, 106.0, (Some(99.0), Some(90.0)));
         assert_eq!(r.outcome, ResolutionOutcome::Unclear);
         apply(&mut d, &r);
         assert_eq!(d.verdicts[2], before);

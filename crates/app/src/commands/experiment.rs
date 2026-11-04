@@ -1,8 +1,8 @@
-//! Порівняння двох варіантів будь-якої зміни (науковий A/B, рушій — `optimax_experiment`).
+//! Порівняння 2–4 варіантів будь-якої зміни (науковий A/B, рушій — `optimax_experiment`).
 //!
 //! Змінює налаштування сам користувач (у грі, драйвері, BIOS): програма лише веде прогони за
-//! порядком ABBA, підказує в інтерфейсі й оверлеї, який варіант має бути ввімкнений, і після
-//! кожної пари рахує, чи висновок уже певний. Перед першим прогоном — прогрів до сталої
+//! порядком ABBA (для кількох варіантів — ABC CBA…), підказує в інтерфейсі й оверлеї, який
+//! варіант має бути ввімкнений, і після кожного кола рахує, чи висновок уже певний. Перед першим прогоном — прогрів до сталої
 //! температури GPU. Підсумок зберігається в теці даних (`experiments\*.json`). Нічого в системі
 //! не змінює. Подія `exp-progress` — хід прогону, `exp-update` — новий стан (прогрів).
 
@@ -13,7 +13,9 @@ use crate::state::{lock, AppState};
 use optimax_core::Text;
 use optimax_diagnosis::{diagnose, Bottleneck, Context, Timeline};
 use optimax_experiment::thermal::{thermal_state, WARMUP_MAX_S};
-use optimax_experiment::{evaluate, next_arm, Arm, Policy, Report, Run, Status};
+use optimax_experiment::{
+    evaluate, letter, next_variant, Policy, Report, Run, Status, Variant, MAX_VARIANTS,
+};
 use optimax_frametime::{CancelToken, Recording, StartMode, Target};
 use optimax_metrics::{GpuApi, NvmlGpu};
 use std::path::PathBuf;
@@ -39,7 +41,7 @@ struct WarmupState {
 /// Сесія порівняння.
 pub struct ExpSession {
     game: String,
-    names: [String; 2],
+    names: Vec<String>,
     seconds: u32,
     start: StartMode,
     sound: bool,
@@ -49,7 +51,7 @@ pub struct ExpSession {
     phase: ExpPhase,
     warmup: Option<WarmupState>,
     /// Варіант прогону, що йде.
-    running_arm: Option<Arm>,
+    running_arm: Option<Variant>,
     /// Скасування прогону, що йде.
     cancel: Option<CancelToken>,
     saved_id: Option<String>,
@@ -79,11 +81,8 @@ impl ExpSession {
         }
     }
 
-    fn name(&self, arm: Arm) -> &str {
-        match arm {
-            Arm::A => &self.names[0],
-            Arm::B => &self.names[1],
-        }
+    fn name(&self, v: Variant) -> &str {
+        self.names.get(usize::from(v)).map_or("?", String::as_str)
     }
 
     fn reevaluate(&mut self) {
@@ -129,12 +128,16 @@ pub fn exp_start(
     app: AppHandle,
     state: State<'_, AppState>,
     exe: String,
-    name_a: String,
-    name_b: String,
+    names: Vec<String>,
     seconds: u32,
     warmup: bool,
 ) -> CmdResult<ExpView> {
     Target::ProcessName(exe.clone()).validate()?;
+    if !(2..=MAX_VARIANTS).contains(&names.len()) {
+        return Err(CmdError::Failed(format!(
+            "порівнюється від 2 до {MAX_VARIANTS} варіантів"
+        )));
+    }
     if super::lag::is_watching(&state) {
         return Err(super::lag::busy_error());
     }
@@ -154,8 +157,15 @@ pub fn exp_start(
         let st = lock(&state.settings);
         (st.record_start, st.record_sound)
     };
-    let policy = Policy::default();
-    let names = [clean_name(&name_a, "A"), clean_name(&name_b, "B")];
+    let policy = Policy::default().with_variants(names.len());
+    let names: Vec<String> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| {
+            let v = Variant::try_from(i).unwrap_or(0);
+            clean_name(n, &letter(v).to_string())
+        })
+        .collect();
     let warm = warmup.then(|| WarmupState {
         samples: Vec::new(),
         elapsed_s: 0.0,
@@ -184,10 +194,9 @@ pub fn exp_start(
     };
     let view = session.view();
     tracing::info!(
-        "порівняння {}: «{}» проти «{}», прогін {} с",
+        "порівняння {}: {}, прогін {} с",
         session.game,
-        session.names[0],
-        session.names[1],
+        session.names.join(" / "),
         session.seconds
     );
     *slot = Some(session);
@@ -289,8 +298,8 @@ pub fn exp_state(state: State<'_, AppState>) -> Option<ExpView> {
     lock(&state.experiment).as_ref().map(ExpSession::view)
 }
 
-/// Прогін одного варіанта з запису.
-fn run_from(rec: &Recording, arm: Arm) -> CmdResult<Run> {
+/// Прогін одного варіанта з запису (для всіх тестів на рушії порівнянь).
+pub(crate) fn run_from(rec: &Recording, variant: Variant) -> CmdResult<Run> {
     let tl = Timeline::from_recording(rec)
         .ok_or_else(|| CmdError::Failed("у прогоні немає кадрів гри".into()))?;
     let d = diagnose(rec, &Context::default());
@@ -301,7 +310,7 @@ fn run_from(rec: &Recording, arm: Arm) -> CmdResult<Run> {
         .map(f64::from)
         .collect();
     Ok(Run {
-        arm,
+        variant,
         frametimes_ms: tl.frames.iter().map(|f| f.frametime_ms).collect(),
         gpu_temp_avg_c: (!temps.is_empty()).then(|| temps.iter().sum::<f64>() / temps.len() as f64),
         frame_capped: d.bottleneck == Bottleneck::FrameCap,
@@ -309,7 +318,7 @@ fn run_from(rec: &Recording, arm: Arm) -> CmdResult<Run> {
     })
 }
 
-/// Записує наступний прогін (варіант — за порядком ABBA) і перераховує висновок.
+/// Записує наступний прогін (варіант — за порядком рушія) і перераховує висновок.
 #[tauri::command]
 pub async fn exp_run_next(app: AppHandle) -> CmdResult<ExpView> {
     blocking(move || {
@@ -333,7 +342,7 @@ pub async fn exp_run_next(app: AppHandle) -> CmdResult<ExpView> {
                     ))
                 }
             }
-            let arm = next_arm(&s.runs);
+            let arm = next_variant(&s.runs, s.policy.variants);
             let cancel = CancelToken::new();
             s.cancel = Some(cancel.clone());
             s.running_arm = Some(arm);
@@ -428,7 +437,7 @@ pub fn overlay_text(state: &AppState) -> Option<Text> {
     match s.phase {
         ExpPhase::Warmup => Some(Text::new("overlay.exp.warmup")),
         ExpPhase::Ready => {
-            let arm = next_arm(&s.runs);
+            let arm = next_variant(&s.runs, s.policy.variants);
             Some(
                 Text::new("overlay.exp.next")
                     .arg("name", s.name(arm))
@@ -520,6 +529,54 @@ fn save(s: &ExpSession) -> Option<String> {
     }
 }
 
+/// Підсумок, збережений до порівняння кількох варіантів (два варіанти «A»/«B», оцінки на
+/// верхньому рівні звіту), переводиться в теперішній вигляд.
+fn upgrade_legacy(v: &mut serde_json::Value) {
+    use serde_json::{json, Value};
+    let Some(report) = v.get_mut("report").and_then(Value::as_object_mut) else {
+        return;
+    };
+    if report.contains_key("comparisons") {
+        return;
+    }
+    let arm = |x: Option<&Value>| match x.and_then(Value::as_str) {
+        Some("B") => json!(1),
+        Some("A") => json!(0),
+        _ => Value::Null,
+    };
+    let comparison = json!({
+        "variant": 1,
+        "verdict": report.get("verdict").cloned().unwrap_or(json!("unclear")),
+        "avg_fps": report.get("avg_fps").cloned().unwrap_or(Value::Null),
+        "low_1pct": report.get("low_1pct").cloned().unwrap_or(Value::Null),
+    });
+    let next = arm(report.get("next"));
+    report.insert("next".into(), next);
+    report.insert("variants".into(), json!(2));
+    report.insert("comparisons".into(), json!([comparison]));
+    report.insert("more_per_arm".into(), Value::Null);
+    report.insert(
+        "margin_avg_pct".into(),
+        json!(Policy::default().margin_avg_pct),
+    );
+    report.insert(
+        "margin_low_pct".into(),
+        json!(Policy::default().margin_low_pct),
+    );
+    if let Some(runs) = report.get_mut("runs").and_then(Value::as_array_mut) {
+        for r in runs.iter_mut().filter_map(Value::as_object_mut) {
+            let a = arm(r.get("arm"));
+            r.insert("variant".into(), a);
+        }
+    }
+}
+
+fn parse_record(bytes: &[u8]) -> Option<ExpRecord> {
+    let mut v: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    upgrade_legacy(&mut v);
+    serde_json::from_value(v).ok()
+}
+
 fn read_all(d: &std::path::Path) -> Vec<ExpRecord> {
     let Ok(entries) = std::fs::read_dir(d) else {
         return Vec::new();
@@ -528,7 +585,7 @@ fn read_all(d: &std::path::Path) -> Vec<ExpRecord> {
         .filter_map(Result::ok)
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .filter_map(|e| std::fs::read(e.path()).ok())
-        .filter_map(|b| serde_json::from_slice::<ExpRecord>(&b).ok())
+        .filter_map(|b| parse_record(&b))
         .filter(|r| valid_id(&r.id))
         .collect();
     out.sort_by_key(|r| std::cmp::Reverse(r.at_unix_ms));
@@ -579,5 +636,31 @@ mod tests {
         for bad in ["", "..\\x", "a/b", ".hidden", "a b"] {
             assert!(!valid_id(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn two_variant_records_from_before_are_upgraded() {
+        let old =
+            br#"{"id":"1-re9.exe","game":"re9.exe","at_unix_ms":1,"names":["Q","P"],"seconds":30,
+          "report":{"status":"done","next":null,"verdict":"better",
+            "avg_fps":{"a":112,"b":137,"delta_pct":22.4,"ci_low_pct":13.2,"ci_high_pct":31.7,
+              "drift_pct_per_run":0.4,"run_sd_pct":2,"outcome":"better"},
+            "low_1pct":null,"more_pairs":null,"confidence_pct":98.58,
+            "runs":[{"arm":"A","order":0,"avg_fps":112,"low_1pct_fps":84.7,"frames":3400,
+              "duration_s":30,"low_precision_pct":5.3,"excluded":false,"suspect":null},
+              {"arm":"B","order":1,"avg_fps":134.4,"low_1pct_fps":90.8,"frames":4000,
+              "duration_s":30,"low_precision_pct":7.7,"excluded":true,"suspect":"level"}],
+            "warnings":[]}}"#;
+        let r = parse_record(old).expect("старий запис читається");
+        assert_eq!(r.names, ["Q", "P"]);
+        assert_eq!(r.report.variants, 2);
+        let c = r.report.comparison(1).expect("порівняння B");
+        assert_eq!(c.verdict, optimax_experiment::Outcome::Better);
+        assert!((c.avg_fps.expect("оцінка").delta_pct - 22.4).abs() < 1e-9);
+        assert_eq!(r.report.runs[1].variant, 1);
+        assert!(r.report.runs[1].excluded);
+        // Теперішній формат проходить без змін.
+        let now = serde_json::to_vec(&r).expect("json");
+        assert_eq!(parse_record(&now).map(|x| x.report), Some(r.report));
     }
 }

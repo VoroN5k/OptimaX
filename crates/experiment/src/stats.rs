@@ -75,15 +75,16 @@ pub fn t_quantile(p: f64, df: f64) -> f64 {
     z + g1 / df + g2 / df.powi(2) + g3 / df.powi(3) + g4 / df.powi(4)
 }
 
-/// Оцінка моделі `y = рівень + ефект·[варіант B] + дрейф·(номер прогону − середній)`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Оцінка моделі `y = рівень + Σ ефект_k·[варіант k] + дрейф·(номер прогону − середній)`
+/// (варіант 0 — базовий, без власного ефекту).
+#[derive(Debug, Clone, PartialEq)]
 pub struct Fit {
-    /// Рівень варіанта A в середній момент тесту.
-    pub level_a: f64,
-    /// Ефект B − A.
-    pub effect: f64,
-    /// Стандартна похибка ефекту.
-    pub effect_se: f64,
+    /// Рівень базового варіанта в середній момент тесту.
+    pub level: f64,
+    /// Ефекти варіантів 1.. відносно базового (індекс `k − 1`).
+    pub effects: Vec<f64>,
+    /// Стандартні похибки ефектів.
+    pub effect_se: Vec<f64>,
     /// Дрейф за один прогін.
     pub drift: f64,
     /// Ступені свободи залишку.
@@ -92,73 +93,99 @@ pub struct Fit {
     pub residual_sd: f64,
 }
 
-/// Найменші квадрати для трьох параметрів. `points` — (є B, номер прогону, значення).
-/// `None`, якщо точок менше чотирьох або варіант і час не розрізняються (вироджена матриця).
-pub fn fit(points: &[(bool, f64, f64)]) -> Option<Fit> {
+/// Найменші квадрати. `points` — (варіант `0..variants`, номер прогону, значення).
+/// `None`, якщо точок не більше, ніж параметрів, або матриця вироджена (варіант без прогонів,
+/// варіант і час не розрізняються).
+pub fn fit(points: &[(usize, f64, f64)], variants: usize) -> Option<Fit> {
     let n = points.len();
-    if n < 4 {
+    // Параметри: рівень, `variants − 1` ефектів, дрейф.
+    let p = variants + 1;
+    if variants < 2 || n <= p || points.iter().any(|q| q.0 >= variants) {
         return None;
     }
-    let mean_t = points.iter().map(|p| p.1).sum::<f64>() / n as f64;
-    let rows: Vec<([f64; 3], f64)> = points
+    let mean_t = points.iter().map(|q| q.1).sum::<f64>() / n as f64;
+    let rows: Vec<(Vec<f64>, f64)> = points
         .iter()
-        .map(|&(b, t, y)| ([1.0, if b { 1.0 } else { 0.0 }, t - mean_t], y))
+        .map(|&(v, t, y)| {
+            let mut x = vec![0.0; p];
+            x[0] = 1.0;
+            if v > 0 {
+                x[v] = 1.0;
+            }
+            x[p - 1] = t - mean_t;
+            (x, y)
+        })
         .collect();
-    let mut xtx = [[0.0f64; 3]; 3];
-    let mut xty = [0.0f64; 3];
+    let mut xtx = vec![vec![0.0f64; p]; p];
+    let mut xty = vec![0.0f64; p];
     for (x, y) in &rows {
-        for i in 0..3 {
+        for i in 0..p {
             xty[i] += x[i] * y;
-            for j in 0..3 {
+            for j in 0..p {
                 xtx[i][j] += x[i] * x[j];
             }
         }
     }
-    let inv = invert3(&xtx)?;
-    let mut beta = [0.0f64; 3];
-    for (i, b) in beta.iter_mut().enumerate() {
-        *b = (0..3).map(|j| inv[i][j] * xty[j]).sum();
-    }
+    let inv = invert(xtx)?;
+    let beta: Vec<f64> = (0..p)
+        .map(|i| (0..p).map(|j| inv[i][j] * xty[j]).sum())
+        .collect();
     let ssr: f64 = rows
         .iter()
         .map(|(x, y)| {
-            let pred: f64 = (0..3).map(|i| x[i] * beta[i]).sum();
+            let pred: f64 = (0..p).map(|i| x[i] * beta[i]).sum();
             (y - pred).powi(2)
         })
         .sum();
-    let df = (n - 3) as f64;
+    let df = (n - p) as f64;
     let var = ssr / df;
     Some(Fit {
-        level_a: beta[0],
-        effect: beta[1],
-        effect_se: (var * inv[1][1]).max(0.0).sqrt(),
-        drift: beta[2],
+        level: beta[0],
+        effects: beta[1..p - 1].to_vec(),
+        effect_se: (1..p - 1)
+            .map(|k| (var * inv[k][k]).max(0.0).sqrt())
+            .collect(),
+        drift: beta[p - 1],
         df,
         residual_sd: var.sqrt(),
     })
 }
 
-fn invert3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
-    let c =
-        |r0: usize, r1: usize, c0: usize, c1: usize| m[r0][c0] * m[r1][c1] - m[r0][c1] * m[r1][c0];
-    let cof = [
-        [c(1, 2, 1, 2), -c(1, 2, 0, 2), c(1, 2, 0, 1)],
-        [-c(0, 2, 1, 2), c(0, 2, 0, 2), -c(0, 2, 0, 1)],
-        [c(0, 1, 1, 2), -c(0, 1, 0, 2), c(0, 1, 0, 1)],
-    ];
-    let det = m[0][0] * cof[0][0] + m[0][1] * cof[0][1] + m[0][2] * cof[0][2];
+/// Обернена матриця (Гаусс — Жордан з вибором головного елемента). `None` — вироджена.
+fn invert(mut m: Vec<Vec<f64>>) -> Option<Vec<Vec<f64>>> {
+    let n = m.len();
     let scale = m.iter().flatten().fold(0.0f64, |a, v| a.max(v.abs()));
-    if !det.is_finite() || det.abs() <= 1e-9 * scale.powi(3).max(1e-300) {
+    if scale <= 0.0 || !scale.is_finite() {
         return None;
     }
-    // Обернена = транспонована матриця алгебраїчних доповнень / визначник.
-    let mut out = [[0.0f64; 3]; 3];
-    for (i, row) in out.iter_mut().enumerate() {
-        for (j, v) in row.iter_mut().enumerate() {
-            *v = cof[j][i] / det;
+    let mut inv: Vec<Vec<f64>> = (0..n)
+        .map(|i| (0..n).map(|j| if i == j { 1.0 } else { 0.0 }).collect())
+        .collect();
+    for col in 0..n {
+        let pivot = (col..n).max_by(|&a, &b| m[a][col].abs().total_cmp(&m[b][col].abs()))?;
+        if m[pivot][col].abs() <= 1e-9 * scale {
+            return None;
+        }
+        m.swap(col, pivot);
+        inv.swap(col, pivot);
+        let d = m[col][col];
+        for j in 0..n {
+            m[col][j] /= d;
+            inv[col][j] /= d;
+        }
+        for r in 0..n {
+            if r != col {
+                let f = m[r][col];
+                if f != 0.0 {
+                    for j in 0..n {
+                        m[r][j] -= f * m[col][j];
+                        inv[r][j] -= f * inv[col][j];
+                    }
+                }
+            }
         }
     }
-    Some(out)
+    Some(inv)
 }
 
 /// Медіана (порожньо — 0).

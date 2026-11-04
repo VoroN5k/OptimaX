@@ -73,7 +73,7 @@
         gm.watching = false;
         logLocal("info", tk("ui.games.test_watch_stopped"));
       }
-      await api.abStartProfile(exe, 3, 60);
+      await api.abStartProfile(exe, 60);
       ui.screen = "optimization";
     } catch (e) {
       error = asCmdError(e).message;

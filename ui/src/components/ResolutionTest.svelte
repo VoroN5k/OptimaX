@@ -12,8 +12,8 @@
   import Segmented from "./Segmented.svelte";
   import StateView from "./StateView.svelte";
 
-  // Тест чутливості до роздільності: 2 прогони на рідній, 2 на зниженій (AABB).
-  // Уся оцінка — на бекенді; тут лише кроки, хід запису й показ підсумку.
+  // Тест чутливості до роздільності: прогони по черзі на рідній і зниженій (ABBA…), скільки
+  // треба для певного висновку. Уся оцінка — на бекенді; тут лише кроки, хід запису й показ.
   // Заголовок і рамку дає батьківський блок (розкривна картка на екрані діагностики).
   let {
     game,
@@ -29,10 +29,22 @@
   let error = $state<CmdError | null>(null);
 
   const done = $derived(view?.runs.length ?? 0);
-  const total = $derived(view?.order.length ?? 4);
-  const nextReduced = $derived(view ? (view.order[done] ?? null) : null);
-  /** Перед першим прогоном на зниженій роздільності користувач має змінити її в грі. */
-  const switchNow = $derived(view !== null && !running && nextReduced === true && view.runs.every((r) => !r.reduced));
+  const nextReduced = $derived(view?.next_reduced ?? null);
+  const lastReduced = $derived(view?.runs.at(-1)?.reduced ?? false);
+  /** Підказка перед наступним прогоном: змінити роздільність у грі чи лишити. */
+  const prompt = $derived(
+    nextReduced == null || running
+      ? null
+      : nextReduced !== lastReduced
+        ? nextReduced
+          ? "ui.res.switch_now"
+          : "ui.res.switch_back"
+        : done > 0
+          ? "ui.res.keep"
+          : null,
+  );
+  const cmp = $derived(view?.estimate.comparisons[0]?.avg_fps ?? null);
+  const pct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}`;
 
   $effect(() => {
     hasReport = view?.report != null;
@@ -118,24 +130,35 @@
     </div>
   {:else}
     <ol class="steps">
-      {#each view.order as reduced, i (i)}
-        {@const r = view.runs[i]}
-        <li class:done={!!r} class:current={!r && i === done}>
+      {#each view.runs as r, i (i)}
+        <li class="done">
           <span class="n mono">{i + 1}</span>
-          <span>{reduced ? tk("ui.res.step_reduced") : tk("ui.res.step_native")}</span>
-          {#if r}
-            <span class="mono muted">{tk("ui.res.run_value", { avg: fps(r.avg_fps), low: fps(r.low_1pct_fps) })}</span>
-          {/if}
+          <span>{r.reduced ? tk("ui.res.step_reduced") : tk("ui.res.step_native")}</span>
+          <span class="mono muted">{tk("ui.res.run_value", { avg: fps(r.avg_fps), low: fps(r.low_1pct_fps) })}</span>
         </li>
       {/each}
+      {#if nextReduced != null}
+        <li class="current">
+          <span class="n mono">{done + 1}</span>
+          <span>{nextReduced ? tk("ui.res.step_reduced") : tk("ui.res.step_native")}</span>
+        </li>
+      {/if}
     </ol>
 
     {#if running}
       <RecordStatus {progress} game={view.game} />
     {:else if view.report}
       <FindingCard finding={view.report.finding} />
-    {:else if switchNow}
-      <p class="switch" role="status">{tk("ui.res.switch_now")}</p>
+    {:else if prompt}
+      <p class="switch" class:keep={prompt === "ui.res.keep"} role="status">{tk(prompt, { n: done + 1 })}</p>
+    {/if}
+    {#if !view.report && cmp}
+      <p class="small muted">
+        {tk("ui.res.now", { delta: pct(cmp.delta_pct), lo: pct(cmp.ci_low_pct), hi: pct(cmp.ci_high_pct) })}
+        {#if view.estimate.more_per_arm != null}
+          · {tk("ui.res.more", { n: view.estimate.more_per_arm, max: view.max_per_arm })}
+        {/if}
+      </p>
     {/if}
 
     {#if error}
@@ -148,7 +171,7 @@
       {:else}
         <Button variant="secondary" icon="stop" onclick={close}>{tk("ui.res.cancel")}</Button>
         <Button variant="primary" icon="play" loading={running} disabled={running} onclick={runNext}>
-          {tk("ui.res.run", { n: done + 1, total })}
+          {tk("ui.res.run", { n: done + 1 })}
         </Button>
       {/if}
     </div>
@@ -207,8 +230,11 @@
     width: calc(var(--space) * 5);
     text-align: center;
   }
+  .switch.keep {
+    border-color: var(--border-strong);
+  }
   .switch {
-    margin: 0;
+    margin: 0 0 calc(var(--space) * 3);
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
     border: 1px solid var(--warn);
     border-radius: var(--radius-sm);

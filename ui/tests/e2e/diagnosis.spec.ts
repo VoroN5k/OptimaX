@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { expDone, gpuResult } from "./fixtures";
+import { abDone, expDone, gpuResult, resMid } from "./fixtures";
 import { calls, emit, mockBackend } from "./mock";
 import { tk } from "./text";
 
@@ -127,11 +127,17 @@ test.describe("Діагностика", () => {
     await expect(page.getByText(tk("ui.exp.saved_title"))).toBeVisible();
     await page.getByRole("combobox", { name: tk("ui.diag.game") }).fill("re9.exe");
     await page.getByLabel(tk("ui.exp.name_a")).fill("DLSS Якість");
-    await page.getByLabel(tk("ui.exp.name_b")).fill("DLSS Баланс");
+    await page.getByLabel(tk("ui.exp.name_n", { l: "B" }), { exact: true }).fill("DLSS Баланс");
+    // Третій варіант можна додати й прибрати.
+    await page.getByRole("button", { name: tk("ui.exp.add_variant", { l: "C" }) }).click();
+    await page.getByLabel(tk("ui.exp.name_n", { l: "C" }), { exact: true }).fill("DLSS Продуктивність");
+    await expect(page.getByText(tk("ui.exp.how_many", { n: 3 }))).toBeVisible();
+    await page.getByRole("button", { name: tk("ui.exp.remove_variant", { l: "C" }) }).click();
+    await expect(page.getByLabel(tk("ui.exp.name_n", { l: "C" }), { exact: true })).toHaveCount(0);
     await page.getByRole("switch", { name: tk("ui.exp.warmup") }).click();
     await page.getByRole("button", { name: tk("ui.exp.start") }).click();
     const start = (await calls(page)).find((c) => c.cmd === "exp_start");
-    expect(start?.args).toMatchObject({ exe: "re9.exe", nameA: "DLSS Якість", nameB: "DLSS Баланс", seconds: 30, warmup: false });
+    expect(start?.args).toMatchObject({ exe: "re9.exe", names: ["DLSS Якість", "DLSS Баланс"], seconds: 30, warmup: false });
     await expect(page.getByText(tk("ui.exp.keep", { name: "DLSS Якість", n: 1 }))).toBeVisible();
 
     await page.getByRole("button", { name: tk("ui.exp.run", { n: 1 }) }).click();
@@ -144,5 +150,25 @@ test.describe("Діагностика", () => {
     await expect(page.getByText(tk("ui.exp.suspect.level"))).toBeVisible();
     await expect(page.getByText(tk("ui.exp.outcome.unclear"))).toBeVisible();
     await expect(page.getByRole("button", { name: tk("ui.exp.close") })).toBeVisible();
+  });
+
+  test("тест роздільності: підказка повернути роздільність і поточний інтервал", async ({ page }) => {
+    await mockBackend(page, { diag_state: { recording: false, last: gpuResult }, res_state: resMid });
+    await openDiagnosis(page);
+    await expect(page.getByText(tk("ui.res.switch_back", { n: 4 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.res.now", { delta: "+37.5", lo: "+20.1", hi: "+54.9" }), { exact: false })).toBeVisible();
+    await expect(page.getByRole("button", { name: tk("ui.res.run", { n: 4 }) })).toBeVisible();
+  });
+
+  test("A/B оптимізації: прогони з рушія, інтервал і підсумок без приросту", async ({ page }) => {
+    await mockBackend(page, { ab_state: abDone });
+    await page.goto("/");
+    await page.getByRole("button", { name: tk("ui.nav.optimization") }).click();
+    await expect(page.locator("ol.runs li")).toHaveCount(6);
+    await expect(page.getByText(tk("ui.opt.done.no_effect"))).toBeVisible();
+    await expect(page.getByText(tk("ui.exp.outcome.no_effect")).first()).toBeVisible();
+    await page.getByRole("button", { name: tk("ui.opt.finish_revert") }).click();
+    await expect.poll(async () => (await calls(page)).find((c) => c.cmd === "ab_finish")?.args).toEqual({ keep: false });
+    await expect(page.getByText(tk("ui.opt.effect_none"), { exact: false })).toBeVisible();
   });
 });

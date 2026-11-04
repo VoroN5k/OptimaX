@@ -5,7 +5,7 @@ import type { ExpWarmup } from "./ExpWarmup";
 import type { StartMode } from "./StartMode";
 
 /**
- * Стан порівняння двох варіантів для UI.
+ * Стан порівняння варіантів для UI.
  */
 export type ExpView = { 
 /**
@@ -13,9 +13,9 @@ export type ExpView = {
  */
 game: string, 
 /**
- * Назви варіантів A і B (від користувача).
+ * Назви варіантів A, B… (від користувача; A — базовий).
  */
-names: [string, string], 
+names: Array<string>, 
 /**
  * Тривалість прогону, с.
  */

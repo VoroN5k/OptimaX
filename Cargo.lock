@@ -2467,6 +2467,7 @@ dependencies = [
  "flate2",
  "optimax-audit",
  "optimax-core",
+ "optimax-experiment",
  "optimax-frametime",
  "optimax-metrics",
  "optimax-trace",
@@ -2509,6 +2510,7 @@ version = "0.1.6"
 dependencies = [
  "anyhow",
  "optimax-core",
+ "optimax-experiment",
  "optimax-tweaks",
  "optimax-upscale",
  "serde",
@@ -2580,6 +2582,7 @@ dependencies = [
  "anyhow",
  "optimax-core",
  "optimax-diagnosis",
+ "optimax-experiment",
  "optimax-frametime",
  "optimax-metrics",
  "serde",

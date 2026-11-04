@@ -1,6 +1,6 @@
 [package]
 name = "optimax-tweaks"
-description = "Застосування змін із журналом і відкатом, точка відновлення Windows, A/B-тестування ефекту"
+description = "Застосування змін із журналом і відкатом, точка відновлення Windows, A/B-тест (рушій — optimax-experiment)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -27,6 +27,7 @@ anyhow.workspace = true
 optimax-metrics.workspace = true
 optimax-frametime.workspace = true
 optimax-diagnosis.workspace = true
+optimax-experiment.workspace = true
 
 [lints]
 workspace = true

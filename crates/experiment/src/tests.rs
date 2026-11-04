@@ -3,7 +3,7 @@ use crate::stats::{normal_quantile, SplitMix};
 use crate::thermal::thermal_state;
 
 /// Прогін: `frames` кадрів із середнім FPS `fps`, шум кадру ±8 %, кожен 150-й кадр — ривок ×`spike`.
-fn run_with(arm: Arm, fps: f64, frames: usize, spike: f64, seed: u64) -> Run {
+fn run_with(variant: Variant, fps: f64, frames: usize, spike: f64, seed: u64) -> Run {
     let mut rng = SplitMix::new(seed);
     let base = 1000.0 / fps;
     let mut ft: Vec<f64> = (0..frames)
@@ -19,7 +19,7 @@ fn run_with(arm: Arm, fps: f64, frames: usize, spike: f64, seed: u64) -> Run {
         *v *= base / mean;
     }
     Run {
-        arm,
+        variant,
         frametimes_ms: ft,
         gpu_temp_avg_c: Some(70.0),
         frame_capped: false,
@@ -27,18 +27,31 @@ fn run_with(arm: Arm, fps: f64, frames: usize, spike: f64, seed: u64) -> Run {
     }
 }
 
-fn run(arm: Arm, fps: f64, seed: u64) -> Run {
-    run_with(arm, fps, 4000, 2.5, seed)
+fn run(variant: Variant, fps: f64, seed: u64) -> Run {
+    run_with(variant, fps, 4000, 2.5, seed)
 }
 
-/// Прогони за порядком ABBA, рівень FPS прогону — `level(номер, варіант)`.
-fn series(n: usize, level: impl Fn(usize, Arm) -> f64) -> Vec<Run> {
+const A: Variant = 0;
+const B: Variant = 1;
+const C: Variant = 2;
+
+/// Прогони за порядком рушія для `k` варіантів, рівень FPS прогону — `level(номер, варіант)`.
+fn series_k(n: usize, k: usize, level: impl Fn(usize, Variant) -> f64) -> Vec<Run> {
     let mut runs: Vec<Run> = Vec::new();
     for i in 0..n {
-        let arm = next_arm(&runs);
-        runs.push(run(arm, level(i, arm), 1000 + i as u64));
+        let v = next_variant(&runs, k);
+        runs.push(run(v, level(i, v), 1000 + i as u64));
     }
     runs
+}
+
+/// Те саме для двох варіантів (ABBA).
+fn series(n: usize, level: impl Fn(usize, Variant) -> f64) -> Vec<Run> {
+    series_k(n, 2, level)
+}
+
+fn first(rep: &Report) -> &Comparison {
+    &rep.comparisons[0]
 }
 
 /// Детермінований шум прогону ±`amp` (частка).
@@ -66,24 +79,40 @@ fn quantiles_match_reference_tables() {
     assert!((stats::t_quantile(0.995, 4.0) - 4.604).abs() / 4.604 < 0.01);
 }
 
-#[test]
-fn order_is_abba_and_repeats_rebalance() {
+fn order_of(k: usize, n: usize) -> (String, Vec<Run>) {
     let mut runs: Vec<Run> = Vec::new();
     let mut order = String::new();
-    for _ in 0..8 {
-        let arm = next_arm(&runs);
-        order.push(if arm == Arm::A { 'A' } else { 'B' });
-        runs.push(run(arm, 100.0, 1));
+    for _ in 0..n {
+        let v = next_variant(&runs, k);
+        order.push(letter(v));
+        runs.push(run(v, 100.0, 1));
     }
+    (order, runs)
+}
+
+#[test]
+fn order_is_abba_and_repeats_rebalance() {
+    let (order, mut runs) = order_of(2, 8);
     assert_eq!(order, "ABBAABBA");
     // Виключений прогін B — наступним знову B.
     runs[5].excluded = true;
-    assert_eq!(next_arm(&runs), Arm::B);
+    assert_eq!(next_variant(&runs, 2), B);
+}
+
+#[test]
+fn order_for_three_variants_mirrors_each_round() {
+    let (order, mut runs) = order_of(3, 9);
+    assert_eq!(order, "ABCCBAABC");
+    // Виключено C з другого кола (прогін 4) — повторюємо саме C.
+    runs[3].excluded = true;
+    runs.truncate(5);
+    assert_eq!(next_variant(&runs, 3), C);
+    assert_eq!(order_of(4, 8).0, "ABCDDCBA");
 }
 
 #[test]
 fn low1_matches_frame_stats() {
-    let r = run(Arm::A, 120.0, 9);
+    let r = run(A, 120.0, 9);
     let s = optimax_frametime::frame_stats(&r.frametimes_ms).expect("кадри є");
     let got = low1_fps(&mut r.frametimes_ms.clone());
     assert!((got - s.low_1pct_fps).abs() < 1e-9);
@@ -95,20 +124,20 @@ fn linear_drift_is_not_mistaken_for_an_effect() {
     let runs = series(8, |i, _| 100.0 - 2.0 * i as f64);
     // ABBA: на повних четвірках лінійний дрейф ділиться порівну; модель його ще й оцінює.
     let rep = evaluate(&runs, &Policy::default());
-    let avg = rep.avg_fps.expect("оцінка");
+    let avg = first(&rep).avg_fps.expect("оцінка");
     assert!(avg.delta_pct.abs() < 0.3, "{avg:?}");
     assert!((avg.drift_pct_per_run + 2.2).abs() < 0.3, "{avg:?}");
     assert_eq!(avg.outcome, Outcome::NoEffect);
     assert_eq!(rep.status, Status::Done);
-    assert_eq!(rep.verdict, Outcome::NoEffect);
+    assert_eq!(first(&rep).verdict, Outcome::NoEffect);
     assert!(rep.warnings.iter().any(|w| w.key == "exp.warn.drift"));
 }
 
 #[test]
 fn clear_gain_stops_after_minimum_runs() {
-    let runs = series(6, |i, arm| {
+    let runs = series(6, |i, v| {
         let base = 100.0 * (1.0 + noise(i, 0.01));
-        if arm == Arm::B {
+        if v == B {
             base * 1.06
         } else {
             base
@@ -116,8 +145,8 @@ fn clear_gain_stops_after_minimum_runs() {
     });
     let rep = evaluate(&runs, &Policy::default());
     assert_eq!(rep.status, Status::Done, "{rep:?}");
-    assert_eq!(rep.verdict, Outcome::Better);
-    let avg = rep.avg_fps.expect("оцінка");
+    assert_eq!(first(&rep).verdict, Outcome::Better);
+    let avg = first(&rep).avg_fps.expect("оцінка");
     assert!((avg.delta_pct - 6.0).abs() < 2.0, "{avg:?}");
     assert!(avg.ci_low_pct > 0.0);
     assert!(rep.confidence_pct > 98.0);
@@ -125,16 +154,16 @@ fn clear_gain_stops_after_minimum_runs() {
 
 #[test]
 fn clear_loss_is_reported_as_worse() {
-    let runs = series(6, |i, arm| {
+    let runs = series(6, |i, v| {
         let base = 100.0 * (1.0 + noise(i, 0.01));
-        if arm == Arm::B {
+        if v == B {
             base * 0.93
         } else {
             base
         }
     });
     let rep = evaluate(&runs, &Policy::default());
-    assert_eq!(rep.verdict, Outcome::Worse);
+    assert_eq!(first(&rep).verdict, Outcome::Worse);
 }
 
 #[test]
@@ -142,18 +171,18 @@ fn unbalanced_or_too_few_runs_continue_with_next_arm() {
     let runs = series(5, |_, _| 100.0);
     let rep = evaluate(&runs, &Policy::default());
     assert_eq!(rep.status, Status::Continue);
-    assert_eq!(rep.next, Some(Arm::B));
-    assert_eq!(rep.verdict, Outcome::Unclear);
+    assert_eq!(rep.next, Some(B));
+    assert_eq!(first(&rep).verdict, Outcome::Unclear);
     let rep = evaluate(&runs[..4], &Policy::default());
-    assert!(rep.avg_fps.is_none());
-    assert_eq!(rep.next, Some(Arm::A));
+    assert!(first(&rep).avg_fps.is_none());
+    assert_eq!(rep.next, Some(A));
 }
 
 #[test]
 fn noisy_small_effect_asks_for_more_and_ends_unclear_at_max() {
-    let level = |i: usize, arm: Arm| {
+    let level = |i: usize, v: Variant| {
         let base = 100.0 * (1.0 + noise(i, 0.06));
-        if arm == Arm::B {
+        if v == B {
             base * 1.015
         } else {
             base
@@ -161,10 +190,15 @@ fn noisy_small_effect_asks_for_more_and_ends_unclear_at_max() {
     };
     let rep = evaluate(&series(6, level), &Policy::default());
     assert_eq!(rep.status, Status::Continue, "{rep:?}");
-    assert!(rep.more_pairs.is_some_and(|n| n >= 1));
+    assert!(rep.more_per_arm.is_some_and(|n| n >= 1));
     let rep = evaluate(&series(16, level), &Policy::default());
     assert_eq!(rep.status, Status::Done);
-    assert_eq!(rep.verdict, Outcome::Unclear, "{:?}", rep.avg_fps);
+    assert_eq!(
+        first(&rep).verdict,
+        Outcome::Unclear,
+        "{:?}",
+        first(&rep).avg_fps
+    );
     assert!(rep.next.is_none());
 }
 
@@ -172,9 +206,9 @@ fn noisy_small_effect_asks_for_more_and_ends_unclear_at_max() {
 fn different_scene_is_flagged_and_exclusion_is_honoured() {
     let mut runs = series(8, |i, _| 100.0 * (1.0 + noise(i, 0.005)));
     // Прогін 4 (A): інша сцена — FPS на 12 % нижчий.
-    runs[4] = run(Arm::A, 88.0, 4242);
+    runs[4] = run(A, 88.0, 4242);
     // Прогін 5 (B): той самий рівень, але вдвічі більше довгих кадрів.
-    runs[5] = run_with(Arm::B, 100.0, 4000, 6.0, 5151);
+    runs[5] = run_with(B, 100.0, 4000, 6.0, 5151);
     let rep = evaluate(&runs, &Policy::default());
     assert_eq!(rep.runs[4].suspect, Some(Suspect::Level));
     assert_eq!(rep.runs[5].suspect, Some(Suspect::Shape));
@@ -194,16 +228,16 @@ fn different_scene_is_flagged_and_exclusion_is_honoured() {
     assert!(rep.runs[4].excluded && rep.runs[4].suspect.is_none());
     // По 3 на варіант без підозрілих: різниця мала, але інтервал ще ширший за ±1 % —
     // тест просить наступну пару (четверта пара — BA).
-    let avg = rep.avg_fps.expect("оцінка без виключених");
+    let avg = first(&rep).avg_fps.expect("оцінка без виключених");
     assert!(avg.delta_pct.abs() < 1.0, "{avg:?}");
     assert_eq!(rep.status, Status::Continue);
-    assert_eq!(rep.next, Some(Arm::B));
+    assert_eq!(rep.next, Some(B));
 }
 
 #[test]
 fn low_precision_is_deterministic_and_tighter_for_longer_runs() {
-    let short = run_with(Arm::A, 100.0, 1500, 2.5, 3);
-    let long = run_with(Arm::A, 100.0, 12_000, 2.5, 3);
+    let short = run_with(A, 100.0, 1500, 2.5, 3);
+    let long = run_with(A, 100.0, 12_000, 2.5, 3);
     let p1 = low_precision_pct(&short.frametimes_ms, 1).expect("досить кадрів");
     assert_eq!(Some(p1), low_precision_pct(&short.frametimes_ms, 1));
     let p2 = low_precision_pct(&long.frametimes_ms, 1).expect("досить кадрів");
@@ -214,7 +248,7 @@ fn low_precision_is_deterministic_and_tighter_for_longer_runs() {
 #[test]
 fn warnings_cover_conditions() {
     let mut runs = series(6, |_, _| 100.0);
-    for r in runs.iter_mut().filter(|r| r.arm == Arm::B) {
+    for r in runs.iter_mut().filter(|r| r.variant == B) {
         r.gpu_temp_avg_c = Some(78.0);
     }
     runs[0].frame_capped = true;
@@ -262,6 +296,8 @@ fn every_warning_has_a_ukrainian_text() {
             &Text::new(k)
                 .arg("a", 1)
                 .arg("b", 2)
+                .arg("va", "A")
+                .arg("vb", "B")
                 .arg("pct", 3)
                 .arg("min", 4)
                 .arg("max", 5)
@@ -269,5 +305,90 @@ fn every_warning_has_a_ukrainian_text() {
                 .arg("arm", "A"),
         );
         assert!(!rendered.contains('{'), "{k}: {rendered}");
+    }
+}
+
+#[test]
+fn three_variants_are_each_compared_with_the_base() {
+    // B дає +8 %, C — нічого; дрейф −0,5 % за прогін.
+    let level = |i: usize, v: Variant| {
+        let base = 100.0 * (1.0 + noise(i, 0.002)) * (1.0 - 0.005 * i as f64);
+        if v == B {
+            base * 1.08
+        } else {
+            base
+        }
+    };
+    let policy = Policy::default().with_variants(3);
+    let rep = evaluate(&series_k(9, 3, level), &policy);
+    assert_eq!(rep.variants, 3);
+    assert_eq!(rep.comparisons.len(), 2);
+    assert_eq!(rep.status, Status::Done, "{rep:?}");
+    let (b, c) = (&rep.comparisons[0], &rep.comparisons[1]);
+    assert_eq!((b.variant, c.variant), (B, C));
+    assert_eq!(b.verdict, Outcome::Better);
+    let eb = b.avg_fps.expect("оцінка B");
+    assert!((eb.delta_pct - 8.0).abs() < 1.0, "{eb:?}");
+    assert_eq!(c.verdict, Outcome::NoEffect, "{:?}", c.avg_fps);
+    // Два порівняння — кожне на суворішому рівні (Бонферроні).
+    assert!((rep.confidence_pct - (1.0 - POCOCK_ALPHA / 2.0) * 100.0).abs() < 1e-9);
+}
+
+#[test]
+fn three_variants_wait_for_a_full_round() {
+    let policy = Policy::default().with_variants(3);
+    let rep = evaluate(&series_k(8, 3, |_, _| 100.0), &policy);
+    assert_eq!(rep.status, Status::Continue);
+    assert_eq!(rep.next, Some(C));
+}
+
+#[test]
+fn fit_recovers_effects_and_drift_for_many_variants() {
+    // y = 100 + {0, 5, −3, 10}[v] − 0.5·(t − t̄), без шуму.
+    let eff = [0.0, 5.0, -3.0, 10.0];
+    let mut runs = Vec::new();
+    for _ in 0..12 {
+        let v = next_variant(&runs, 4);
+        runs.push(run(v, 100.0, 0));
+    }
+    let mean_t = (runs.len() as f64 - 1.0) / 2.0;
+    let points: Vec<(usize, f64, f64)> = runs
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let t = i as f64;
+            let v = usize::from(r.variant);
+            (v, t, 100.0 + eff[v] - 0.5 * (t - mean_t))
+        })
+        .collect();
+    let f = stats::fit(&points, 4).expect("модель");
+    assert!((f.level - 100.0).abs() < 1e-9);
+    for (got, want) in f.effects.iter().zip(&eff[1..]) {
+        assert!((got - want).abs() < 1e-9, "{f:?}");
+    }
+    assert!((f.drift + 0.5).abs() < 1e-9);
+    // Варіант без прогонів — модель не будується.
+    assert!(stats::fit(&points, 5).is_none());
+}
+
+#[test]
+fn markdown_is_fully_localized() {
+    let c = optimax_core::Catalog::ukrainian().expect("каталог");
+    let names = vec![
+        "Якість".to_string(),
+        "Баланс".into(),
+        "Продуктивність".into(),
+    ];
+    let level =
+        |i: usize, v: Variant| 100.0 * (1.0 + noise(i, 0.005)) * (1.0 + 0.05 * f64::from(v));
+    for k in [2usize, 3] {
+        let mut runs = series_k(3 * k, k, level);
+        runs[0].frame_capped = true;
+        let rep = evaluate(&runs, &Policy::default().with_variants(k));
+        let md = report::render_markdown(&rep, &c, &names, "DLSS", "game.exe", 30);
+        assert!(!md.contains("exp."), "сирий ключ:\n{md}");
+        assert!(!md.contains('{'), "незаповнений аргумент:\n{md}");
+        assert!(md.contains("game.exe") && md.contains("Баланс"));
+        assert_eq!(md.matches("\n| ").count(), k + 1, "{md}");
     }
 }

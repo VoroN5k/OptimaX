@@ -20,9 +20,17 @@ avg_fps_change_pct: number,
  */
 low_1pct_change_pct: number, 
 /**
- * Найбільший розкид середнього FPS між двома повторами однієї роздільності, %.
+ * Інтервал зміни середнього FPS: нижня межа, %.
  */
-spread_pct: number, 
+ci_low_pct: number, 
+/**
+ * Верхня межа, %.
+ */
+ci_high_pct: number, 
+/**
+ * Прогонів на кожну роздільність.
+ */
+runs_per_arm: number, 
 /**
  * Знахідка для показу.
  */

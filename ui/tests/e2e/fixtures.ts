@@ -19,6 +19,9 @@ import type { BlackBoxView } from "../../src/lib/bindings/BlackBoxView";
 import type { LagView } from "../../src/lib/bindings/LagView";
 import type { LastGame } from "../../src/lib/bindings/LastGame";
 import type { ProcessEntry } from "../../src/lib/bindings/ProcessEntry";
+import type { AbFinal } from "../../src/lib/bindings/AbFinal";
+import type { AbView } from "../../src/lib/bindings/AbView";
+import type { ExpReport } from "../../src/lib/bindings/ExpReport";
 import type { ResView } from "../../src/lib/bindings/ResView";
 import type { ScanView } from "../../src/lib/bindings/ScanView";
 import type { Settings } from "../../src/lib/bindings/Settings";
@@ -58,6 +61,8 @@ export interface Responses {
   exp_start: ExpView;
   exp_run_next: ExpView;
   exp_close: null;
+  ab_state: AbView | null;
+  ab_finish: AbFinal;
 }
 
 const GIB = 1073741824;
@@ -313,14 +318,15 @@ export const driverCheck: Extract<DriverCheck, { kind: "checked" }> = {
   newer: true,
 };
 
-const expRun = (order: number, arm: "A" | "B", avg: number, suspect: "level" | null = null) => ({
-  arm,
+const expRun = (order: number, variant: number, avg: number, suspect: "level" | null = null) => ({
+  variant,
   order,
   avg_fps: avg,
   low_1pct_fps: avg * 0.62,
   frames: Math.round(avg * 30),
   duration_s: 30,
   low_precision_pct: 2.4,
+  frame_capped: false,
   excluded: false,
   suspect,
 });
@@ -335,12 +341,13 @@ export const expReady: ExpView = {
   warmup: null,
   report: {
     status: "continue",
-    next: "A",
-    verdict: "unclear",
-    avg_fps: null,
-    low_1pct: null,
-    more_pairs: null,
+    next: 0,
+    variants: 2,
+    comparisons: [{ variant: 1, verdict: "unclear", avg_fps: null, low_1pct: null }],
+    more_per_arm: null,
     confidence_pct: 98.58,
+    margin_avg_pct: 1,
+    margin_low_pct: 2,
     runs: [],
     warnings: [],
   },
@@ -356,8 +363,12 @@ export const expDone: ExpView = {
   report: {
     status: "done",
     next: null,
-    verdict: "better",
-    avg_fps: {
+    variants: 2,
+    comparisons: [
+      {
+        variant: 1,
+        verdict: "better",
+        avg_fps: {
       a: 120,
       b: 127.2,
       delta_pct: 6.0,
@@ -366,29 +377,140 @@ export const expDone: ExpView = {
       drift_pct_per_run: -0.4,
       run_sd_pct: 0.9,
       outcome: "better",
-    },
-    low_1pct: {
-      a: 74,
-      b: 77,
-      delta_pct: 4.1,
-      ci_low_pct: -1.5,
-      ci_high_pct: 9.7,
-      drift_pct_per_run: -0.3,
-      run_sd_pct: 2.1,
-      outcome: "unclear",
-    },
-    more_pairs: null,
+        },
+        low_1pct: {
+          a: 74,
+          b: 77,
+          delta_pct: 4.1,
+          ci_low_pct: -1.5,
+          ci_high_pct: 9.7,
+          drift_pct_per_run: -0.3,
+          run_sd_pct: 2.1,
+          outcome: "unclear",
+        },
+      },
+    ],
+    more_per_arm: null,
     confidence_pct: 98.58,
+    margin_avg_pct: 1,
+    margin_low_pct: 2,
     runs: [
-      expRun(0, "A", 120.1),
-      expRun(1, "B", 127.5),
-      expRun(2, "B", 126.9),
-      expRun(3, "A", 119.6),
-      expRun(4, "A", 108.0, "level"),
-      expRun(5, "B", 127.3),
+      expRun(0, 0, 120.1),
+      expRun(1, 1, 127.5),
+      expRun(2, 1, 126.9),
+      expRun(3, 0, 119.6),
+      expRun(4, 0, 108.0, "level"),
+      expRun(5, 1, 127.3),
     ],
     warnings: [{ key: "exp.warn.suspect_level", args: { n: "5", arm: "A" } }],
   },
+};
+
+/** Оцінка рушія «зміна проти базового» з одним порівнянням. */
+function report2(
+  runs: [number, number][],
+  done: boolean,
+  delta: number,
+  lo: number,
+  hi: number,
+  outcome: "better" | "worse" | "no_effect" | "unclear",
+  margin = 1,
+): ExpReport {
+  const est = (d: number, l: number, h: number) => ({
+    a: 100,
+    b: 100 + d,
+    delta_pct: d,
+    ci_low_pct: l,
+    ci_high_pct: h,
+    drift_pct_per_run: 0.2,
+    run_sd_pct: 1.1,
+    outcome,
+  });
+  return {
+    status: done ? "done" : "continue",
+    next: done ? null : 0,
+    variants: 2,
+    comparisons: [
+      {
+        variant: 1,
+        verdict: done ? outcome : "unclear",
+        avg_fps: est(delta, lo, hi),
+        low_1pct: est(delta, lo - 2, hi + 2),
+      },
+    ],
+    more_per_arm: done ? null : 1,
+    confidence_pct: 98.58,
+    margin_avg_pct: margin,
+    margin_low_pct: margin * 2,
+    runs: runs.map(([variant, avg], order) => expRun(order, variant, avg)),
+    warnings: [],
+  };
+}
+
+/** Тест роздільності після трьох прогонів (A B B): далі — назад на рідну. */
+export const resMid: ResView = {
+  game: "re9.exe",
+  seconds: 30,
+  start: "auto",
+  runs: [
+    { reduced: false, avg_fps: 100, low_1pct_fps: 70, gpu_util_avg: 99, frame_capped: false, frames: 3000 },
+    { reduced: true, avg_fps: 138, low_1pct_fps: 95, gpu_util_avg: 85, frame_capped: false, frames: 4140 },
+    { reduced: true, avg_fps: 137, low_1pct_fps: 94, gpu_util_avg: 85, frame_capped: false, frames: 4110 },
+  ],
+  next_reduced: false,
+  max_per_arm: 6,
+  estimate: report2(
+    [
+      [0, 100],
+      [1, 138],
+      [1, 137],
+    ],
+    false,
+    37.5,
+    20.1,
+    54.9,
+    "better",
+    3,
+  ),
+  running: false,
+  report: null,
+};
+
+/** A/B схеми живлення: 3 + 3 прогони, ефекту немає. */
+export const abDone: AbView = {
+  game: "re9.exe",
+  plan: {
+    info: {
+      id: "power_scheme",
+      title: { key: "tweak.power_scheme.title", args: {} },
+      what: { key: "tweak.power_scheme.what", args: {} },
+      performance: { key: "tweak.power_scheme.performance", args: {} },
+      heat: { key: "tweak.power_scheme.heat", args: {} },
+      safety: { key: "tweak.power_scheme.safety", args: {} },
+      restart_game_between_runs: false,
+      requires_reboot: false,
+    },
+    changes: [],
+  },
+  seconds: 60,
+  start: "auto",
+  report: report2(
+    [
+      [0, 120.1],
+      [1, 120.4],
+      [1, 119.8],
+      [0, 120.3],
+      [0, 119.9],
+      [1, 120.2],
+    ],
+    true,
+    0.1,
+    -0.6,
+    0.8,
+    "no_effect",
+  ),
+  max_per_arm: 8,
+  profile: false,
 };
 
 export function defaults(): Responses {
@@ -424,5 +546,7 @@ export function defaults(): Responses {
     exp_start: structuredClone(expReady),
     exp_run_next: structuredClone(expDone),
     exp_close: null,
+    ab_state: null,
+    ab_finish: { report: structuredClone(abDone.report), markdown: "### OptimaX: порівняння", kept: false },
   };
 }

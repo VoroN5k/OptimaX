@@ -2,8 +2,7 @@
   import { onMount } from "svelte";
   import { api, asCmdError, on } from "../lib/api";
   import type { CmdError } from "../lib/bindings/CmdError";
-  import type { ExpArm } from "../lib/bindings/ExpArm";
-  import type { ExpEstimate } from "../lib/bindings/ExpEstimate";
+  import type { ExpComparison } from "../lib/bindings/ExpComparison";
   import type { ExpRecord } from "../lib/bindings/ExpRecord";
   import type { ExpReport } from "../lib/bindings/ExpReport";
   import type { ExpView } from "../lib/bindings/ExpView";
@@ -13,18 +12,19 @@
   import { flashBg, logLocal, ui } from "../lib/state.svelte";
   import Button from "./Button.svelte";
   import Card from "./Card.svelte";
+  import ExpEstimates from "./ExpEstimates.svelte";
   import ProcessPicker from "./ProcessPicker.svelte";
   import RecordStatus from "./RecordStatus.svelte";
   import Segmented from "./Segmented.svelte";
   import StateView from "./StateView.svelte";
   import Toggle from "./Toggle.svelte";
 
-  // Порівняння двох варіантів будь-якої зміни (науковий A/B). Порядок прогонів, оцінку й
+  // Порівняння 2–4 варіантів будь-якої зміни (науковий A/B). Порядок прогонів, оцінку й
   // рішення «досить чи ще» дає бекенд (`optimax_experiment`); тут — кроки, підказки й показ.
   let { game = $bindable("") }: { game?: string } = $props();
 
-  let nameA = $state("");
-  let nameB = $state("");
+  const MAX_VARIANTS = 4;
+  let names = $state<string[]>(["", ""]);
   let seconds = $state(30);
   let warmup = $state(true);
   let view = $state<ExpView | null>(null);
@@ -35,11 +35,14 @@
 
   const running = $derived(view?.phase === "running");
   const report = $derived(view?.report ?? null);
-  const nameOf = (arm: ExpArm, names: [string, string]) => (arm === "A" ? names[0] : names[1]);
+  const letter = (v: number) => String.fromCharCode(65 + v);
+  const nameOf = (v: number, list: string[]) => list[v] ?? letter(v);
   const included = $derived(report ? report.runs.filter((r) => !r.excluded) : []);
   const nextArm = $derived(report?.next ?? null);
   /** Варіант треба перемкнути в грі перед наступним прогоном. */
-  const mustSwitch = $derived(nextArm != null && included.length > 0 && included[included.length - 1]?.arm !== nextArm);
+  const mustSwitch = $derived(
+    nextArm != null && included.length > 0 && included[included.length - 1]?.variant !== nextArm,
+  );
 
   $effect(() => {
     ui.measuring = view?.phase === "running" || view?.phase === "warmup";
@@ -74,7 +77,7 @@
   async function begin() {
     error = null;
     try {
-      view = await api.expStart(game.trim(), nameA, nameB, seconds, warmup);
+      view = await api.expStart(game.trim(), names, seconds, warmup);
     } catch (e) {
       error = asCmdError(e);
     }
@@ -89,7 +92,7 @@
     try {
       view = await api.expRunNext();
       if (view.phase === "done") {
-        flashBg(view.report.verdict === "worse" ? "warn" : "ok");
+        flashBg(view.report.comparisons.some((c) => c.verdict === "worse") ? "warn" : "ok");
         logLocal("info", tk("ui.exp.done_log", { game: view.game }));
         void loadSaved();
       }
@@ -137,51 +140,35 @@
   const pct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}`;
   const fps = (v: number) => v.toFixed(1);
 
-  /** Підсумковий рядок порівняння (той самий для активного й збереженого). */
-  function verdictText(r: ExpReport, names: [string, string]): string {
-    const avg = r.avg_fps;
-    const args = {
-      a: names[0],
-      b: names[1],
+  /** Рядок висновку одного порівняння (той самий для активного й збереженого). */
+  function verdictText(c: ExpComparison, list: string[]): string {
+    const avg = c.avg_fps;
+    return tk(`ui.exp.verdict.${c.verdict}`, {
+      a: nameOf(0, list),
+      b: nameOf(c.variant, list),
       d: avg ? pct(avg.delta_pct) : "—",
       lo: avg ? pct(avg.ci_low_pct) : "—",
       hi: avg ? pct(avg.ci_high_pct) : "—",
-      low: r.low_1pct ? pct(r.low_1pct.delta_pct) : "—",
-    };
-    return tk(`ui.exp.verdict.${r.verdict}`, args);
+      low: c.low_1pct ? pct(c.low_1pct.delta_pct) : "—",
+    });
   }
 
-  /** Шкала інтервалу: нуль, смуга «без ефекту» (±поріг) і інтервал з точкою. */
-  function bar(e: ExpEstimate, margin: number) {
-    const lo = Math.min(e.ci_low_pct, -margin * 3);
-    const hi = Math.max(e.ci_high_pct, margin * 3);
-    const at = (v: number) => ((v - lo) / (hi - lo)) * 100;
-    return {
-      zero: at(0),
-      band: [at(-margin), at(margin)] as const,
-      ci: [at(e.ci_low_pct), at(e.ci_high_pct)] as const,
-      point: at(e.delta_pct),
-    };
+  /** Найгірший висновок серед порівнянь — для кольору рамки й рядка. */
+  function worst(r: ExpReport): string {
+    const v = r.comparisons.map((c) => c.verdict);
+    return v.includes("worse") ? "worse" : v.includes("better") ? "better" : (v[0] ?? "unclear");
+  }
+
+  function title(list: string[]): string {
+    return tk("ui.exp.title", {
+      a: nameOf(0, list),
+      b: list
+        .slice(1)
+        .map((n) => `«${n}»`)
+        .join(", "),
+    });
   }
 </script>
-
-{#snippet estimate(label: string, e: ExpEstimate, margin: number)}
-  {@const b = bar(e, margin)}
-  <div class="est">
-    <div class="est-head">
-      <span class="small muted">{label}</span>
-      <span class="mono">{pct(e.delta_pct)} %</span>
-      <span class="small dim mono">{tk("ui.exp.ci", { lo: pct(e.ci_low_pct), hi: pct(e.ci_high_pct) })}</span>
-      <span class="out small {e.outcome}">{tk(`ui.exp.outcome.${e.outcome}`)}</span>
-    </div>
-    <div class="scale" aria-hidden="true">
-      <i class="band" style:left="{b.band[0]}%" style:width="{b.band[1] - b.band[0]}%"></i>
-      <i class="zero" style:left="{b.zero}%"></i>
-      <i class="ci {e.outcome}" style:left="{b.ci[0]}%" style:width="{Math.max(b.ci[1] - b.ci[0], 0.5)}%"></i>
-      <i class="pt" style:left="{b.point}%"></i>
-    </div>
-  </div>
-{/snippet}
 
 <div class="exp">
   {#if !view}
@@ -201,21 +188,45 @@
         </div>
       </div>
       <div class="names">
-        <label class="field">
-          <span class="small muted">{tk("ui.exp.name_a")}</span>
-          <input bind:value={nameA} maxlength="32" placeholder={tk("ui.exp.name_a_ph")} autocomplete="off" />
-        </label>
-        <label class="field">
-          <span class="small muted">{tk("ui.exp.name_b")}</span>
-          <input bind:value={nameB} maxlength="32" placeholder={tk("ui.exp.name_b_ph")} autocomplete="off" />
-        </label>
+        {#each names as _, i (i)}
+          <div class="field">
+            <label class="small muted" for="exp-name-{i}">
+              {i === 0 ? tk("ui.exp.name_a") : tk("ui.exp.name_n", { l: letter(i) })}
+            </label>
+            <div class="name-row">
+              <input
+                id="exp-name-{i}"
+                bind:value={names[i]}
+                maxlength="32"
+                placeholder={tk(i === 0 ? "ui.exp.name_a_ph" : i === 1 ? "ui.exp.name_b_ph" : "ui.exp.name_more_ph")}
+                autocomplete="off"
+              />
+              {#if i >= 2}
+                <Button
+                  small
+                  variant="ghost"
+                  icon="close"
+                  label={tk("ui.exp.remove_variant", { l: letter(i) })}
+                  onclick={() => names.splice(i, 1)}
+                />
+              {/if}
+            </div>
+          </div>
+        {/each}
       </div>
+      {#if names.length < MAX_VARIANTS}
+        <div class="add">
+          <Button small variant="secondary" icon="plus" onclick={() => names.push("")}>
+            {tk("ui.exp.add_variant", { l: letter(names.length) })}
+          </Button>
+        </div>
+      {/if}
       <div class="row">
         <Toggle bind:checked={warmup} label={tk("ui.exp.warmup")} />
         <span class="small">{tk("ui.exp.warmup")}</span>
         <span class="small dim">{tk("ui.exp.warmup_hint")}</span>
       </div>
-      <p class="small dim">{tk("ui.exp.how")}</p>
+      <p class="small dim">{tk(names.length > 2 ? "ui.exp.how_many" : "ui.exp.how", { n: names.length })}</p>
       {#if error}<StateView kind="error" title={tk("ui.common.error")} text={error.message} />{/if}
       <div class="actions">
         <Button variant="primary" icon="play" disabled={!game.trim()} onclick={begin}>{tk("ui.exp.start")}</Button>
@@ -229,8 +240,10 @@
             <li>
               <div>
                 <strong>{r.game}</strong>
-                <span class="small muted">· {r.names[0]} → {r.names[1]} · {dateTime(r.at_unix_ms / 1000)}</span>
-                <p class="small verdict {r.report.verdict}">{verdictText(r.report, r.names)}</p>
+                <span class="small muted">· {r.names.join(" · ")} · {dateTime(r.at_unix_ms / 1000)}</span>
+                {#each r.report.comparisons as c (c.variant)}
+                  <p class="small verdict {c.verdict}">{verdictText(c, r.names)}</p>
+                {/each}
               </div>
               <Button small variant="secondary" icon="trash" onclick={() => remove(r.id)}>{tk("ui.exp.delete")}</Button>
             </li>
@@ -240,14 +253,14 @@
     {/if}
   {:else if report}
     <Card
-      title={tk("ui.exp.title", { a: view.names[0], b: view.names[1] })}
+      title={title(view.names)}
       subtitle={tk("ui.exp.subtitle", { game: view.game, s: view.seconds, max: view.max_per_arm })}
     >
       {#if view.phase === "warmup" && view.warmup}
         {@const w = view.warmup}
         <div class="box" role="status" aria-live="polite">
           <strong>{tk("ui.exp.warmup_now")}</strong>
-          <span class="small">{tk("ui.exp.warmup_play", { name: view.names[0] })}</span>
+          <span class="small">{tk("ui.exp.warmup_play", { name: nameOf(0, view.names) })}</span>
           <span class="small mono muted">
             {#if w.has_temp && w.thermal.last_c != null}
               {tk("ui.exp.warmup_temp", {
@@ -263,10 +276,10 @@
         </div>
       {:else if view.phase === "running"}
         <RecordStatus {progress} game={view.game} />
-        {#if nextArm}
+        {#if nextArm != null}
           <p class="small muted">{tk("ui.exp.running_arm", { name: nameOf(nextArm, view.names) })}</p>
         {/if}
-      {:else if view.phase === "ready" && nextArm}
+      {:else if view.phase === "ready" && nextArm != null}
         <div class="box" class:switch={mustSwitch} role="status">
           <strong>
             {tk(mustSwitch ? "ui.exp.switch_to" : "ui.exp.keep", {
@@ -277,23 +290,15 @@
           <span class="small muted">{tk("ui.exp.same_scene")}</span>
         </div>
       {:else if view.phase === "done"}
-        <div class="box done {report.verdict}" role="status">
-          <strong>{verdictText(report, view.names)}</strong>
+        <div class="box done {worst(report)}" role="status">
+          {#each report.comparisons as c (c.variant)}<strong>{verdictText(c, view.names)}</strong>{/each}
           {#if view.saved_id}<span class="small dim">{tk("ui.exp.saved")}</span>{/if}
         </div>
       {/if}
 
-      {#if report.avg_fps && report.low_1pct}
-        <div class="ests">
-          {@render estimate(tk("ui.exp.avg"), report.avg_fps, 1)}
-          {@render estimate(tk("ui.exp.low"), report.low_1pct, 2)}
-        </div>
-        <p class="small dim">
-          {tk("ui.exp.method", { conf: report.confidence_pct.toFixed(1), drift: pct(report.avg_fps.drift_pct_per_run) })}
-        </p>
-      {/if}
-      {#if view.phase !== "done" && report.more_pairs != null}
-        <p class="small muted">{tk("ui.exp.more_pairs", { n: report.more_pairs })}</p>
+      <ExpEstimates {report} names={view.names} />
+      {#if view.phase !== "done" && report.more_per_arm != null}
+        <p class="small muted">{tk("ui.exp.more_runs", { n: report.more_per_arm })}</p>
       {/if}
 
       {#if report.runs.length}
@@ -312,7 +317,7 @@
             {#each report.runs as r, i (i)}
               <tr class:excluded={r.excluded}>
                 <td class="mono">{r.order + 1}</td>
-                <td><span class="arm {r.arm}">{r.arm}</span> {nameOf(r.arm, view.names)}</td>
+                <td><span class="arm" class:base={r.variant === 0}>{letter(r.variant)}</span> {nameOf(r.variant, view.names)}</td>
                 <td class="mono">{fps(r.avg_fps)}</td>
                 <td class="mono">{fps(r.low_1pct_fps)}</td>
                 <td class="mono dim">{r.low_precision_pct != null ? `±${r.low_precision_pct.toFixed(1)} %` : "—"}</td>
@@ -383,6 +388,17 @@
     display: grid;
     gap: calc(var(--space) * 2);
   }
+  .name-row {
+    display: flex;
+    gap: calc(var(--space) * 2);
+  }
+  .name-row input {
+    flex: 1;
+    min-width: 0;
+  }
+  .add {
+    margin-top: calc(var(--space) * 3);
+  }
   .field input {
     height: 38px;
     padding: 0 calc(var(--space) * 3);
@@ -436,69 +452,6 @@
     height: 100%;
     background: linear-gradient(90deg, var(--accent-from), var(--accent-to));
   }
-  .ests {
-    display: grid;
-    gap: calc(var(--space) * 3);
-    margin-bottom: calc(var(--space) * 2);
-  }
-  .est {
-    display: grid;
-    gap: calc(var(--space) * 2);
-  }
-  .est-head {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: calc(var(--space) * 3);
-  }
-  .out {
-    margin-left: auto;
-    color: var(--text-muted);
-  }
-  .out.better {
-    color: var(--ok);
-  }
-  .out.worse {
-    color: var(--danger);
-  }
-  .scale {
-    position: relative;
-    height: 14px;
-    border-radius: var(--radius-sm);
-    background: var(--bg-input);
-  }
-  .scale i {
-    position: absolute;
-    top: 0;
-    height: 100%;
-  }
-  .band {
-    background: var(--border);
-  }
-  .zero {
-    width: 1px;
-    background: var(--text-dim);
-  }
-  .ci {
-    top: 4px !important;
-    height: 6px !important;
-    border-radius: 3px;
-    background: var(--text-muted);
-  }
-  .ci.better {
-    background: var(--ok);
-  }
-  .ci.worse {
-    background: var(--danger);
-  }
-  .ci.no_effect {
-    background: var(--accent-from);
-  }
-  .pt {
-    width: 2px;
-    margin-left: -1px;
-    background: var(--text);
-  }
   .runs {
     width: 100%;
     border-collapse: collapse;
@@ -533,7 +486,7 @@
     background: var(--bg-input);
     border: 1px solid var(--border-strong);
   }
-  .arm.B {
+  .arm:not(.base) {
     border-color: var(--accent-from);
   }
   .suspect {

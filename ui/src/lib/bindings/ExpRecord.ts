@@ -18,9 +18,9 @@ game: string,
  */
 at_unix_ms: number, 
 /**
- * Назви варіантів A і B.
+ * Назви варіантів A, B….
  */
-names: [string, string], 
+names: Array<string>, 
 /**
  * Тривалість прогону, с.
  */

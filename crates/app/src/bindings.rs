@@ -82,6 +82,8 @@ fn export_typescript_bindings() {
         RollbackResult,
         AbView,
         ResView,
+        ExpView,
+        ExpRecord,
         LagCapture,
         LagView,
         AbFinal,

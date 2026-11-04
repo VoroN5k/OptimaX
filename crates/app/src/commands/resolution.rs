@@ -43,6 +43,9 @@ pub fn res_start(state: State<'_, AppState>, exe: String, seconds: u32) -> CmdRe
     if super::lag::is_watching(&state) {
         return Err(super::lag::busy_error());
     }
+    if super::experiment::is_active(&state) {
+        return Err(super::experiment::busy_error());
+    }
     if lock(&state.recording).is_some() || lock(&state.ab).is_some() {
         return Err(CmdError::Failed(
             "уже йде запис або A/B-тест — дочекайся кінця".into(),

@@ -5,6 +5,8 @@ import type { ConfigSummary } from "../../src/lib/bindings/ConfigSummary";
 import type { DiagnosisResult } from "../../src/lib/bindings/DiagnosisResult";
 import type { DiagnosisState } from "../../src/lib/bindings/DiagnosisState";
 import type { DiskSummary } from "../../src/lib/bindings/DiskSummary";
+import type { ExpRecord } from "../../src/lib/bindings/ExpRecord";
+import type { ExpView } from "../../src/lib/bindings/ExpView";
 import type { Finding } from "../../src/lib/bindings/Finding";
 import type { HistoryEntry } from "../../src/lib/bindings/HistoryEntry";
 import type { HistoryView } from "../../src/lib/bindings/HistoryView";
@@ -51,6 +53,11 @@ export interface Responses {
   driver_check: DriverCheck;
   driver_open_page: null;
   blackbox_state: BlackBoxView;
+  exp_state: ExpView | null;
+  exp_list: ExpRecord[];
+  exp_start: ExpView;
+  exp_run_next: ExpView;
+  exp_close: null;
 }
 
 const GIB = 1073741824;
@@ -306,6 +313,84 @@ export const driverCheck: Extract<DriverCheck, { kind: "checked" }> = {
   newer: true,
 };
 
+const expRun = (order: number, arm: "A" | "B", avg: number, suspect: "level" | null = null) => ({
+  arm,
+  order,
+  avg_fps: avg,
+  low_1pct_fps: avg * 0.62,
+  frames: Math.round(avg * 30),
+  duration_s: 30,
+  low_precision_pct: 2.4,
+  excluded: false,
+  suspect,
+});
+
+/** Порівняння щойно почалось: прогрів пропущено, перший прогін — A. */
+export const expReady: ExpView = {
+  game: "re9.exe",
+  names: ["DLSS Якість", "DLSS Баланс"],
+  seconds: 30,
+  start: "auto",
+  phase: "ready",
+  warmup: null,
+  report: {
+    status: "continue",
+    next: "A",
+    verdict: "unclear",
+    avg_fps: null,
+    low_1pct: null,
+    more_pairs: null,
+    confidence_pct: 98.58,
+    runs: [],
+    warnings: [],
+  },
+  max_per_arm: 8,
+  saved_id: null,
+};
+
+/** Висновок після 3 + 3 прогонів: «Баланс» дає +6 %, один прогін підозрілий. */
+export const expDone: ExpView = {
+  ...expReady,
+  phase: "done",
+  saved_id: "1793700000000-re9.exe",
+  report: {
+    status: "done",
+    next: null,
+    verdict: "better",
+    avg_fps: {
+      a: 120,
+      b: 127.2,
+      delta_pct: 6.0,
+      ci_low_pct: 3.1,
+      ci_high_pct: 8.9,
+      drift_pct_per_run: -0.4,
+      run_sd_pct: 0.9,
+      outcome: "better",
+    },
+    low_1pct: {
+      a: 74,
+      b: 77,
+      delta_pct: 4.1,
+      ci_low_pct: -1.5,
+      ci_high_pct: 9.7,
+      drift_pct_per_run: -0.3,
+      run_sd_pct: 2.1,
+      outcome: "unclear",
+    },
+    more_pairs: null,
+    confidence_pct: 98.58,
+    runs: [
+      expRun(0, "A", 120.1),
+      expRun(1, "B", 127.5),
+      expRun(2, "B", 126.9),
+      expRun(3, "A", 119.6),
+      expRun(4, "A", 108.0, "level"),
+      expRun(5, "B", 127.3),
+    ],
+    warnings: [{ key: "exp.warn.suspect_level", args: { n: "5", arm: "A" } }],
+  },
+};
+
 export function defaults(): Responses {
   return {
     app_info: { version: "0.0.0-test", elevated: true, presentmon_version: "2.6.0" },
@@ -334,5 +419,10 @@ export function defaults(): Responses {
     driver_check: structuredClone(driverCheck),
     driver_open_page: null,
     blackbox_state: { active: null, last: null },
+    exp_state: null,
+    exp_list: [],
+    exp_start: structuredClone(expReady),
+    exp_run_next: structuredClone(expDone),
+    exp_close: null,
   };
 }

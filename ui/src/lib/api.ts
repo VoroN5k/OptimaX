@@ -10,6 +10,8 @@ import type { AuditReport } from "./bindings/AuditReport";
 import type { CmdError } from "./bindings/CmdError";
 import type { ConfigSummary } from "./bindings/ConfigSummary";
 import type { DiskSummary } from "./bindings/DiskSummary";
+import type { ExpRecord } from "./bindings/ExpRecord";
+import type { ExpView } from "./bindings/ExpView";
 import type { HistoryView } from "./bindings/HistoryView";
 import type { RecordComparison } from "./bindings/RecordComparison";
 import type { Regression } from "./bindings/Regression";
@@ -108,6 +110,15 @@ export const api = {
   resState: () => invoke<ResView | null>("res_state"),
   resRunNext: () => invoke<ResView>("res_run_next"),
   resCancel: () => invoke<void>("res_cancel"),
+  expStart: (exe: string, nameA: string, nameB: string, seconds: number, warmup: boolean) =>
+    invoke<ExpView>("exp_start", { exe, nameA, nameB, seconds, warmup }),
+  expSkipWarmup: () => invoke<ExpView>("exp_skip_warmup"),
+  expState: () => invoke<ExpView | null>("exp_state"),
+  expRunNext: () => invoke<ExpView>("exp_run_next"),
+  expExclude: (index: number, excluded: boolean) => invoke<ExpView>("exp_exclude", { index, excluded }),
+  expClose: () => invoke<void>("exp_close"),
+  expList: () => invoke<ExpRecord[]>("exp_list"),
+  expDelete: (id: string) => invoke<void>("exp_delete", { id }),
   lagStart: (exe: string) => invoke<LagView>("lag_start", { exe }),
   lagState: () => invoke<LagView | null>("lag_state"),
   lagCapture: () => invoke<void>("lag_capture"),
@@ -177,6 +188,8 @@ type Events = {
   "diag-progress": RecordProgress;
   "ab-progress": RecordProgress;
   "res-progress": RecordProgress;
+  "exp-progress": RecordProgress;
+  "exp-update": ExpView;
   "lag-status": WatchStatus;
   "lag-update": LagView;
   "diag-done": DiagnosisResult;

@@ -78,6 +78,8 @@ pub struct AppState {
     pub ab: Mutex<Option<crate::commands::ab::AbSession>>,
     /// Тест чутливості до роздільності.
     pub res_test: Mutex<Option<crate::commands::resolution::ResSession>>,
+    /// Порівняння варіантів (науковий A/B).
+    pub experiment: Mutex<Option<crate::commands::experiment::ExpSession>>,
     /// «Щойно лагнуло»: стеження з кільцевим буфером.
     pub lag: Mutex<Option<crate::commands::lag::LagSession>>,
     /// Чорна скринька (сесія режиму гри з автоматичними знімками фризів).
@@ -134,6 +136,7 @@ impl AppState {
             record_progress: Mutex::new(None),
             ab: Mutex::new(None),
             res_test: Mutex::new(None),
+            experiment: Mutex::new(None),
             lag: Mutex::new(None),
             blackbox: Mutex::new(None),
             blackbox_seq: Mutex::new(0),

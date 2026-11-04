@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { gpuResult } from "./fixtures";
+import { expDone, gpuResult } from "./fixtures";
 import { calls, emit, mockBackend } from "./mock";
 import { tk } from "./text";
 
@@ -105,5 +105,44 @@ test.describe("Діагностика", () => {
     await expect(page.locator(".readout")).toContainText(tk("ui.anatomy.main.page_in"));
     await expect(page.locator(".readout")).toContainText("nvlddmkm.sys: 1.20");
     await expect(page.locator(".readout")).toContainText(tk("ui.tl.frame", { ft: "60.0", cpu: "42.0", gpu: "7.4", q: "3.2" }));
+  });
+
+  test("порівняння: старт з назвами, підказка варіанта, висновок з інтервалом", async ({ page }) => {
+    await mockBackend(page, {
+      exp_list: [
+        {
+          id: "1793600000000-re9.exe",
+          game: "re9.exe",
+          at_unix_ms: 1793600000000,
+          names: ["RT вимк.", "RT увімк."],
+          seconds: 30,
+          report: structuredClone(expDone.report),
+        },
+      ],
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: tk("ui.nav.diagnosis") }).click();
+    await page.getByRole("radio", { name: tk("ui.exp.tab") }).click();
+    // Збережене порівняння видно до старту нового.
+    await expect(page.getByText(tk("ui.exp.saved_title"))).toBeVisible();
+    await page.getByRole("combobox", { name: tk("ui.diag.game") }).fill("re9.exe");
+    await page.getByLabel(tk("ui.exp.name_a")).fill("DLSS Якість");
+    await page.getByLabel(tk("ui.exp.name_b")).fill("DLSS Баланс");
+    await page.getByRole("switch", { name: tk("ui.exp.warmup") }).click();
+    await page.getByRole("button", { name: tk("ui.exp.start") }).click();
+    const start = (await calls(page)).find((c) => c.cmd === "exp_start");
+    expect(start?.args).toMatchObject({ exe: "re9.exe", nameA: "DLSS Якість", nameB: "DLSS Баланс", seconds: 30, warmup: false });
+    await expect(page.getByText(tk("ui.exp.keep", { name: "DLSS Якість", n: 1 }))).toBeVisible();
+
+    await page.getByRole("button", { name: tk("ui.exp.run", { n: 1 }) }).click();
+    await expect(
+      page.getByText(
+        tk("ui.exp.verdict.better", { a: "DLSS Якість", b: "DLSS Баланс", d: "+6.0", lo: "+3.1", hi: "+8.9", low: "+4.1" }),
+      ).first(),
+    ).toBeVisible();
+    await expect(page.locator("table.runs tbody tr")).toHaveCount(6);
+    await expect(page.getByText(tk("ui.exp.suspect.level"))).toBeVisible();
+    await expect(page.getByText(tk("ui.exp.outcome.unclear"))).toBeVisible();
+    await expect(page.getByRole("button", { name: tk("ui.exp.close") })).toBeVisible();
   });
 });

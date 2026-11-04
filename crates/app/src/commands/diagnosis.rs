@@ -167,6 +167,9 @@ pub fn diag_start(
     if super::lag::is_watching(&state) {
         return Err(super::lag::busy_error());
     }
+    if super::experiment::is_active(&state) {
+        return Err(super::experiment::busy_error());
+    }
     if super::resolution::is_running(&state) {
         return Err(CmdError::Failed(
             "іде прогін тесту роздільності — дочекайся кінця або скасуй тест".into(),

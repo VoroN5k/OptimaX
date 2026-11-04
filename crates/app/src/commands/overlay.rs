@@ -172,7 +172,12 @@ fn run(app: &AppHandle, stop: &AtomicBool) {
         }
         match live.latest().filter(|_| !hidden) {
             Some(s) => {
-                overlay.show(lines(&catalog, &s, current_mark(&state)));
+                let mut l = lines(&catalog, &s, current_mark(&state));
+                if let Some(t) = super::experiment::overlay_text(&state) {
+                    let at = usize::from(l.len() > 4);
+                    l.insert(at, OverlayLine::normal(catalog.render(&t)));
+                }
+                overlay.show(l);
                 shown = true;
             }
             None if shown => {

@@ -10,6 +10,7 @@
   import Card from "../components/Card.svelte";
   import Fold from "../components/Fold.svelte";
   import CrashView from "../components/CrashView.svelte";
+  import Experiment from "../components/Experiment.svelte";
   import Page from "../components/Page.svelte";
   import ProcessPicker from "../components/ProcessPicker.svelte";
   import RecordHistory from "../components/RecordHistory.svelte";
@@ -25,7 +26,7 @@
   import { EXAMPLE_RESULT } from "../lib/tourExample";
 
   /** Вкладка: «Чому лагає?» (запис гри), «Щойно лагнуло?» (стеження з буфером) чи «Чому вилітає?». */
-  let tab = $state<"lag" | "watch" | "history" | "crash">("lag");
+  let tab = $state<"lag" | "watch" | "compare" | "history" | "crash">("lag");
   /** Налаштування запису згортаються, коли є результат: зверху має бути відповідь. */
   let setupOpen = $state(true);
   let resOpen = $state(false);
@@ -44,6 +45,12 @@
   onMount(() => {
     // З «Головної» попросили порівняти записи — одразу вкладка історії.
     if (ui.pendingCompare) tab = "history";
+    void api
+      .expState()
+      .then((v) => {
+        if (v) tab = "compare";
+      })
+      .catch(() => undefined);
     // Повернення на сторінку: показати останній результат і хід запису, якщо він іде.
     void api
       .diagState()
@@ -140,6 +147,7 @@
       options={[
         { value: "lag", label: tk("ui.crash.tab_lag") },
         { value: "watch", label: tk("ui.crash.tab_watch") },
+        { value: "compare", label: tk("ui.exp.tab") },
         { value: "history", label: tk("ui.history.tab") },
         { value: "crash", label: tk("ui.crash.tab_crash") },
       ]}
@@ -152,6 +160,8 @@
     <CrashView />
   {:else if tab === "history"}
     <RecordHistory />
+  {:else if tab === "compare"}
+    <Experiment bind:game={exe} />
   {:else if tab === "watch"}
     <div class="stack">
       <Card>

@@ -47,7 +47,7 @@ const BOOTSTRAP_BLOCK: usize = 128;
 
 /// Варіант: A — як було, B — зі зміною.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ExpArm"))]
 pub enum Arm {
     /// Як було.
     A,
@@ -57,7 +57,7 @@ pub enum Arm {
 
 /// Правила тесту.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ExpPolicy"))]
 pub struct Policy {
     /// Найменше прогонів на варіант до першого висновку.
     pub min_per_arm: usize,
@@ -100,7 +100,7 @@ pub struct Run {
 
 /// Чому прогін схожий на іншу сцену.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ExpSuspect"))]
 #[serde(rename_all = "snake_case")]
 pub enum Suspect {
     /// Середній FPS помітно інший, ніж у решти прогонів цього варіанта.
@@ -111,7 +111,7 @@ pub enum Suspect {
 
 /// Підсумок одного прогону.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ExpRunSummary"))]
 pub struct RunSummary {
     /// Варіант.
     pub arm: Arm,
@@ -135,7 +135,7 @@ pub struct RunSummary {
 
 /// Висновок за однією метрикою.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ExpOutcome"))]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
     /// Стало краще.
@@ -150,7 +150,7 @@ pub enum Outcome {
 
 /// Оцінка ефекту за однією метрикою.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ExpEstimate"))]
 pub struct Estimate {
     /// Рівень A в середній момент тесту (без дрейфу).
     pub a: f64,
@@ -172,7 +172,7 @@ pub struct Estimate {
 
 /// Стан тесту.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ExpStatus"))]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     /// Потрібні ще прогони ([`Report::next`]).
@@ -183,7 +183,7 @@ pub enum Status {
 
 /// Звіт рушія після чергового прогону.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "ExpReport"))]
 pub struct Report {
     /// Продовжувати чи вже все.
     pub status: Status,

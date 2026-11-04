@@ -422,3 +422,74 @@ pub struct ProfilePreview {
     /// Що виправлено й чому.
     pub warnings: Vec<Text>,
 }
+
+/// Етап порівняння варіантів.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum ExpPhase {
+    /// Прогрів: гра йде, чекаємо сталої температури GPU.
+    Warmup,
+    /// Чекає наступного прогону.
+    Ready,
+    /// Іде прогін.
+    Running,
+    /// Висновок певний або прогонів досить.
+    Done,
+}
+
+/// Хід прогріву.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ExpWarmup {
+    /// Минуло, с.
+    pub elapsed_s: f64,
+    /// Найдовше, с.
+    pub max_s: f64,
+    /// Температура й нахил (немає температури — прогрів за часом).
+    pub thermal: optimax_experiment::thermal::Thermal,
+    /// Температура GPU доступна.
+    pub has_temp: bool,
+}
+
+/// Стан порівняння двох варіантів для UI.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ExpView {
+    /// Гра.
+    pub game: String,
+    /// Назви варіантів A і B (від користувача).
+    pub names: [String; 2],
+    /// Тривалість прогону, с.
+    pub seconds: u32,
+    /// Спосіб старту прогонів.
+    pub start: optimax_frametime::StartMode,
+    /// Етап.
+    pub phase: ExpPhase,
+    /// Прогрів (поки триває або якщо був).
+    pub warmup: Option<ExpWarmup>,
+    /// Оцінка за поточними прогонами.
+    pub report: optimax_experiment::Report,
+    /// Найбільше прогонів на варіант.
+    pub max_per_arm: u32,
+    /// Ідентифікатор збереженого результату (після завершення).
+    pub saved_id: Option<String>,
+}
+
+/// Збережене порівняння.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ExpRecord {
+    /// Ідентифікатор (ім'я файлу).
+    pub id: String,
+    /// Гра.
+    pub game: String,
+    /// Коли завершено, Unix-мс.
+    pub at_unix_ms: i64,
+    /// Назви варіантів A і B.
+    pub names: [String; 2],
+    /// Тривалість прогону, с.
+    pub seconds: u32,
+    /// Підсумок.
+    pub report: optimax_experiment::Report,
+}

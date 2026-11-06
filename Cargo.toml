@@ -71,3 +71,8 @@ missing_docs = "warn"
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+
+# Навантаження тестів стабільності без оптимізації слабше в 3–7 разів (заміряно 2026-11-06), тож у
+# debug-збірці тест перевіряв би не те, що в релізі.
+[profile.dev.package.optimax-stability]
+opt-level = 3

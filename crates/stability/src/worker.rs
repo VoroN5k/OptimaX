@@ -135,9 +135,16 @@ pub fn run(kind: crate::protocol::TestKind, seconds: u32) {
         });
         return;
     }
-    if kind == crate::protocol::TestKind::Cpu {
-        crate::cpu::run(seconds, &stop, &mut emit);
-        return;
+    match kind {
+        crate::protocol::TestKind::Cpu => {
+            crate::cpu::run(seconds, &stop, &mut emit);
+            return;
+        }
+        crate::protocol::TestKind::Ram => {
+            crate::ram::run(seconds, &stop, &mut emit);
+            return;
+        }
+        crate::protocol::TestKind::Gpu => {}
     }
     let mut load = match crate::gpu::GpuLoad::new(&crate::gpu::GpuParams::default()) {
         Ok(l) => l,

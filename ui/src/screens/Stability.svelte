@@ -29,8 +29,9 @@
   let stopping = $state(false);
   let error = $state<CmdError | null>(null);
 
-  const noSensor = $derived(info != null && (kind === "cpu" || !info.has_sensor));
-  const canStart = $derived(info != null && (!noSensor || acceptNoSensor));
+  const noSensor = $derived(info != null && (kind !== "gpu" || !info.has_sensor));
+  const ramLow = $derived(kind === "ram" && info != null && info.ram_test_mb === 0);
+  const canStart = $derived(info != null && !ramLow && (!noSensor || acceptNoSensor));
   const BAD = new Set(["errors", "device_lost", "worker_crashed", "hardware_events"]);
 
   $effect(() => {
@@ -98,21 +99,30 @@
   const num = (v: number | null | undefined, unit: string) =>
     v != null ? `${Math.round(v)} ${unit}` : "—";
   const durationLabel = (s: number) => tk("ui.stab.minutes", { n: s / 60 });
-  /** Текст підсумку: для процесора деякі звучать інакше. */
-  const outcomeText = (r: StabRecord) =>
-    tk(
-      r.kind === "cpu" && (r.outcome === "errors" || r.outcome === "worker_crashed")
-        ? `ui.stab.outcome.${r.outcome}.text_cpu`
-        : `ui.stab.outcome.${r.outcome}.text`,
-      { min: (r.elapsed_s / 60).toFixed(1), n: r.mismatches, limit: info?.limit_c ?? "" },
-    );
+  /** Текст підсумку: для процесора й пам'яті деякі звучать інакше. */
+  const outcomeText = (r: StabRecord) => {
+    const own =
+      (r.kind === "cpu" && (r.outcome === "errors" || r.outcome === "worker_crashed")) ||
+      (r.kind === "ram" && (r.outcome === "errors" || r.outcome === "worker_crashed" || r.outcome === "no_errors"));
+    return tk(`ui.stab.outcome.${r.outcome}.text${own ? `_${r.kind}` : ""}`, {
+      min: (r.elapsed_s / 60).toFixed(1),
+      n: r.mismatches,
+      limit: info?.limit_c ?? "",
+    });
+  };
+  const mismatchesLabel = (k: TestKind) => tk(k === "ram" ? "ui.stab.mismatches_ram" : "ui.stab.mismatches");
+  const checkedLabel = (k: TestKind) => tk(k === "ram" ? "ui.stab.checked_ram" : "ui.stab.checked");
+  const adapterName = (a: string, k: TestKind) => (k === "ram" ? tk("ui.stab.ram_name") : a);
   const coreList = (cores: number[]) => cores.join(", ");
 </script>
 
 <Page title={tk("ui.stab.title")} subtitle={tk("ui.stab.subtitle")}>
   <div class="stack">
     {#if view}
-      <Card title={tk("ui.stab.running_title")} subtitle={view.adapter || tk("ui.stab.starting")}>
+      <Card
+        title={tk("ui.stab.running_title")}
+        subtitle={view.adapter ? adapterName(view.adapter, view.kind) : tk("ui.stab.starting")}
+      >
         <div role="status" aria-live="polite" class="now">
           <strong class="mono time">{clock(view.elapsed_s)} / {clock(view.planned_s)}</strong>
           {#if view.kind === "cpu" && view.total_cores > 0}
@@ -124,15 +134,15 @@
           {/if}
           <div class="progress"><i style:width="{Math.min(100, (view.elapsed_s / view.planned_s) * 100)}%"></i></div>
           {#if view.mismatches > 0}
-            <p class="bad"><strong>{tk("ui.stab.found_errors", { n: view.mismatches })}</strong></p>
+            <p class="bad"><strong>{tk(view.kind === "ram" ? "ui.stab.found_errors_ram" : "ui.stab.found_errors", { n: view.mismatches })}</strong></p>
             {#if view.bad_cores.length}
               <p class="bad">{tk("ui.stab.bad_cores", { cores: coreList(view.bad_cores) })}</p>
             {/if}
           {/if}
         </div>
         <dl class="grid">
-          <div><dt class="small muted">{tk("ui.stab.checked")}</dt><dd class="mono">{view.checked}</dd></div>
-          <div><dt class="small muted">{tk("ui.stab.mismatches")}</dt><dd class="mono" class:bad={view.mismatches > 0}>{view.mismatches}</dd></div>
+          <div><dt class="small muted">{checkedLabel(view.kind)}</dt><dd class="mono">{view.checked}</dd></div>
+          <div><dt class="small muted">{mismatchesLabel(view.kind)}</dt><dd class="mono" class:bad={view.mismatches > 0}>{view.mismatches}</dd></div>
           {#if view.kind === "gpu"}
             <div>
               <dt class="small muted">{tk("ui.stab.temp")}</dt>
@@ -145,6 +155,8 @@
         </dl>
         {#if view.kind === "gpu" && view.tested_mb > 0}
           <p class="small dim">{tk("ui.stab.tested", { mb: view.tested_mb, vram: view.vram_mb })}</p>
+        {:else if view.kind === "ram" && view.tested_mb > 0}
+          <p class="small dim">{tk("ui.stab.tested_ram", { mb: view.tested_mb, total: view.vram_mb })}</p>
         {/if}
         {#if view.no_sensor}<p class="small warn">{tk("ui.stab.no_sensor_running")}</p>{/if}
         <div class="actions">
@@ -159,19 +171,22 @@
             <p>{outcomeText(r)}</p>
           </div>
           <dl class="grid">
-            <div><dt class="small muted">{tk("ui.stab.checked")}</dt><dd class="mono">{r.checked}</dd></div>
-            <div><dt class="small muted">{tk("ui.stab.mismatches")}</dt><dd class="mono" class:bad={r.mismatches > 0}>{r.mismatches}</dd></div>
+            <div><dt class="small muted">{checkedLabel(r.kind)}</dt><dd class="mono">{r.checked}</dd></div>
+            <div><dt class="small muted">{mismatchesLabel(r.kind)}</dt><dd class="mono" class:bad={r.mismatches > 0}>{r.mismatches}</dd></div>
             {#if r.kind === "gpu"}
               <div><dt class="small muted">{tk("ui.stab.max_temp")}</dt><dd class="mono">{num(r.stats.max_temp_c, "°C")}</dd></div>
               <div><dt class="small muted">{tk("ui.stab.avg_util")}</dt><dd class="mono">{num(r.stats.avg_util_pct, "%")}</dd></div>
               <div><dt class="small muted">{tk("ui.stab.avg_clock")}</dt><dd class="mono">{num(r.stats.avg_clock_mhz, tk("ui.stab.mhz"))}</dd></div>
               <div><dt class="small muted">{tk("ui.stab.avg_power")}</dt><dd class="mono">{num(r.stats.avg_power_w, tk("ui.stab.watt"))}</dd></div>
-            {:else}
+            {:else if r.kind === "cpu"}
               <div><dt class="small muted">{tk("ui.stab.cores_tested")}</dt><dd class="mono">{r.total_cores}</dd></div>
+            {:else}
+              <div><dt class="small muted">{tk("ui.stab.tested_ram_label")}</dt><dd class="mono">{r.tested_mb} {tk("ui.stab.mb")}</dd></div>
             {/if}
           </dl>
           <ul class="notes small">
             {#if r.kind === "gpu" && r.tested_mb > 0}<li class="dim">{tk("ui.stab.tested", { mb: r.tested_mb, vram: r.vram_mb })}</li>{/if}
+            {#if r.kind === "ram" && r.tested_mb > 0}<li class="dim">{tk("ui.stab.tested_ram", { mb: r.tested_mb, total: r.vram_mb })}</li>{/if}
             {#if r.bad_cores.length}<li class="bad">{tk("ui.stab.bad_cores", { cores: coreList(r.bad_cores) })}</li>{/if}
             {#if r.kind === "cpu" && r.outcome === "worker_crashed" && r.last_core != null}
               <li class="warn">{tk("ui.stab.crash_core", { n: r.last_core })}</li>
@@ -198,12 +213,15 @@
               options={[
                 { value: "gpu", label: tk("ui.stab.kind_gpu") },
                 { value: "cpu", label: tk("ui.stab.kind_cpu") },
+                { value: "ram", label: tk("ui.stab.kind_ram") },
               ]}
             />
           </div>
           <p class="small muted">
             {#if kind === "cpu"}
               {tk("ui.stab.cpu", { name: info.cpu, cores: info.cpu_cores })}
+            {:else if kind === "ram"}
+              {#if !ramLow}{tk("ui.stab.ram", { total: info.ram_mb, mb: info.ram_test_mb })}{/if}
             {:else}
               {info.gpu ? tk("ui.stab.gpu", { name: info.gpu }) : tk("ui.stab.gpu_unknown")}
             {/if}
@@ -216,10 +234,11 @@
               options={info.durations_s.map((s) => ({ value: s, label: durationLabel(s) }))}
             />
           </div>
+          {#if ramLow}<p class="small warn">{tk("ui.stab.ram_low")}</p>{/if}
           <p class="small dim">{tk("ui.stab.duration_hint")}</p>
           {#if noSensor}
             <div class="box-warn">
-              <p class="small">{tk(kind === "cpu" ? "ui.stab.no_sensor_cpu" : "ui.stab.no_sensor")}</p>
+              <p class="small">{tk(kind === "gpu" ? "ui.stab.no_sensor" : `ui.stab.no_sensor_${kind}`)}</p>
               <div class="row">
                 <Toggle bind:checked={acceptNoSensor} label={tk("ui.stab.accept_no_sensor")} />
                 <span class="small">{tk("ui.stab.accept_no_sensor")}</span>
@@ -244,7 +263,7 @@
               <div>
                 <strong class:bad={BAD.has(r.outcome)}>{tk(`ui.stab.outcome.${r.outcome}.title`)}</strong>
                 <span class="small muted">
-                  · {r.adapter || "—"} · {clock(r.elapsed_s)} · {dateTime(r.started_unix_ms / 1000)}
+                  · {adapterName(r.adapter, r.kind) || "—"} · {clock(r.elapsed_s)} · {dateTime(r.started_unix_ms / 1000)}
                   {#if r.bad_cores.length}· {tk("ui.stab.bad_cores", { cores: coreList(r.bad_cores) })}{/if}
                 </span>
               </div>

@@ -40,6 +40,7 @@ const EVENTS_SETTLE: Duration = Duration::from_secs(2);
 const KEEP_RECORDS: usize = 50;
 /// Позначка тесту, що йде.
 const MARKER: &str = "running.json";
+const MIB: u64 = 1024 * 1024;
 
 /// Сесія тесту.
 pub struct StabSession {
@@ -94,10 +95,13 @@ pub async fn stab_info() -> CmdResult<StabInfo> {
     blocking(|| {
         let mut gpu = NvmlGpu::open();
         let (temp, busiest) = read_sensors(&mut gpu);
+        let (ram_total, ram_free) = optimax_stability::ram::memory().unwrap_or((0, 0));
         Ok(StabInfo {
             gpu: busiest.map(|s| s.name),
             cpu: optimax_stability::cpu::brand(),
             cpu_cores: u32::try_from(optimax_stability::cpu::topology().len()).unwrap_or(0),
+            ram_mb: ram_total / MIB,
+            ram_test_mb: optimax_stability::ram::test_bytes(ram_total, ram_free) / MIB,
             has_sensor: temp.is_some(),
             limit_c: GPU_STOP_TEMP_C,
             durations_s: DURATIONS_S.to_vec(),
@@ -106,7 +110,7 @@ pub async fn stab_info() -> CmdResult<StabInfo> {
     .await
 }
 
-/// Запускає тест. Без датчика температури (CPU завжди) — лише з `accept_no_sensor`.
+/// Запускає тест. Без датчика температури (CPU і RAM завжди) — лише з `accept_no_sensor`.
 #[tauri::command]
 pub async fn stab_start(
     app: AppHandle,
@@ -144,7 +148,7 @@ fn start(
     let d = dir()?;
     // Незавершений попередній тест спершу стає результатом, щоб не загубити його позначку.
     recover(&d);
-    // Датчиків CPU без драйвера ядра немає, тож і NVML для тесту CPU не потрібен.
+    // Датчиків CPU й RAM без драйвера ядра немає, тож і NVML для цих тестів не потрібен.
     let mut gpu = (kind == TestKind::Gpu).then(NvmlGpu::open).flatten();
     let (temp, _) = read_sensors(&mut gpu);
     let has_sensor = temp.is_some();

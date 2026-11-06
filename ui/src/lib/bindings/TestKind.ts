@@ -3,4 +3,4 @@
 /**
  * Що перевіряє тест.
  */
-export type TestKind = "gpu" | "cpu";
+export type TestKind = "gpu" | "cpu" | "ram";

@@ -381,6 +381,8 @@ export const stabInfo: StabInfo = {
   gpu: "NVIDIA GeForce RTX 4070 SUPER",
   cpu: "AMD Ryzen 7 5800X 8-Core Processor",
   cpu_cores: 8,
+  ram_mb: 32768,
+  ram_test_mb: 12000,
   has_sensor: true,
   limit_c: 85,
   durations_s: [120, 600, 1800],

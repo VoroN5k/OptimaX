@@ -23,6 +23,8 @@ pub enum TestKind {
     Gpu,
     /// Процесор.
     Cpu,
+    /// Оперативна пам'ять.
+    Ram,
 }
 
 impl TestKind {
@@ -31,6 +33,7 @@ impl TestKind {
         match self {
             Self::Gpu => "gpu",
             Self::Cpu => "cpu",
+            Self::Ram => "ram",
         }
     }
 }
@@ -41,11 +44,11 @@ impl TestKind {
 pub enum WorkerMessage {
     /// Пристрій створено, навантаження починається.
     Started {
-        /// Назва відеокарти.
+        /// Назва відеокарти чи процесора («RAM» для тесту пам'яті).
         adapter: String,
-        /// Обсяг її пам'яті, МБ.
+        /// Обсяг відеопам'яті або, для тесту пам'яті, оперативної, МБ.
         vram_mb: u64,
-        /// Скільки відеопам'яті перевіряє тест, МБ.
+        /// Скільки пам'яті перевіряє тест, МБ.
         tested_mb: u64,
     },
     /// Хід тесту (не рідше ніж раз на секунду, поки процес живий).
@@ -113,6 +116,7 @@ pub fn parse_worker_args(args: &[String]) -> Option<(TestKind, u32)> {
     let kind = match args.get(1)?.as_str() {
         "gpu" => TestKind::Gpu,
         "cpu" => TestKind::Cpu,
+        "ram" => TestKind::Ram,
         _ => return None,
     };
     let seconds = args.get(2)?.parse::<u32>().ok()?;
@@ -125,9 +129,10 @@ mod tests {
 
     #[test]
     fn worker_args_round_trip_and_stay_in_range() {
-        use TestKind::{Cpu, Gpu};
+        use TestKind::{Cpu, Gpu, Ram};
         assert_eq!(parse_worker_args(&worker_args(Gpu, 600)), Some((Gpu, 600)));
         assert_eq!(parse_worker_args(&worker_args(Cpu, 600)), Some((Cpu, 600)));
+        assert_eq!(parse_worker_args(&worker_args(Ram, 600)), Some((Ram, 600)));
         assert_eq!(
             parse_worker_args(&worker_args(Cpu, 1)),
             Some((Cpu, MIN_SECONDS))
@@ -144,7 +149,7 @@ mod tests {
         assert_eq!(parse_worker_args(&[WORKER_ARG.into()]), None);
         assert_eq!(parse_worker_args(&[WORKER_ARG.into(), "gpu".into()]), None);
         assert_eq!(
-            parse_worker_args(&[WORKER_ARG.into(), "ram".into(), "5".into()]),
+            parse_worker_args(&[WORKER_ARG.into(), "disk".into(), "5".into()]),
             None
         );
     }

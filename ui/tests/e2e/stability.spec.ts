@@ -118,6 +118,49 @@ test.describe("Стабільність", () => {
     await expect(page.getByText(tk("ui.stab.crash_core", { n: 5 }))).toBeVisible();
   });
 
+  test("пам'ять: згода, чесний обсяг і запуск", async ({ page }) => {
+    await mockBackend(page);
+    await open(page);
+    await page.getByRole("radio", { name: tk("ui.stab.kind_ram") }).click();
+    await expect(page.getByText(tk("ui.stab.ram", { total: 32768, mb: 12000 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.no_sensor_ram"))).toBeVisible();
+    const start = page.getByRole("button", { name: tk("ui.stab.start") });
+    await expect(start).toBeDisabled();
+    await page.getByRole("switch", { name: tk("ui.stab.accept_no_sensor") }).click();
+    await start.click();
+    await expect(page.getByText(tk("ui.stab.confirm.ram.text", { min: 10 }))).toBeVisible();
+    await page.getByRole("button", { name: tk("ui.stab.confirm_ok"), exact: true }).click();
+    await expect
+      .poll(async () => (await calls(page)).find((c) => c.cmd === "stab_start")?.args)
+      .toEqual({ kind: "ram", seconds: 600, acceptNoSensor: true });
+  });
+
+  test("пам'ять: замало вільної — запуск недоступний і видно чому", async ({ page }) => {
+    await mockBackend(page, { stab_info: { ...stabInfo, ram_test_mb: 0 } });
+    await open(page);
+    await page.getByRole("radio", { name: tk("ui.stab.kind_ram") }).click();
+    await expect(page.getByText(tk("ui.stab.ram_low"))).toBeVisible();
+    await page.getByRole("switch", { name: tk("ui.stab.accept_no_sensor") }).click();
+    await expect(page.getByRole("button", { name: tk("ui.stab.start") })).toBeDisabled();
+  });
+
+  test("пам'ять: підсумок каже про перевірений обсяг і не радить про відеокарту", async ({ page }) => {
+    const ram = { kind: "ram" as const, adapter: "RAM", tested_mb: 12000, vram_mb: 32768 };
+    await mockBackend(page, {
+      stab_state: { ...stabRunning, ...ram, mismatches: 4 },
+    });
+    await open(page);
+    await expect(page.getByText(tk("ui.stab.ram_name"))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.found_errors_ram", { n: 4 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.tested_ram", { mb: 12000, total: 32768 }))).toBeVisible();
+    await emit(page, "stab-done", { ...stabDone, ...ram, outcome: "errors", mismatches: 4 });
+    await expect(page.getByText(tk("ui.stab.outcome.errors.text_ram", { n: 4 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.tested_ram", { mb: 12000, total: 32768 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.max_temp"))).toHaveCount(0);
+    await emit(page, "stab-done", { ...stabDone, ...ram });
+    await expect(page.getByText(tk("ui.stab.outcome.no_errors.text_ram", { min: "10.0" }))).toBeVisible();
+  });
+
   test("збережені результати видно й можна видалити", async ({ page }) => {
     await mockBackend(page, { stab_list: [{ ...stabDone, outcome: "interrupted" }] });
     await open(page);

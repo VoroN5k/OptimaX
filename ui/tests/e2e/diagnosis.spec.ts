@@ -177,9 +177,11 @@ test.describe("Діагностика", () => {
     await openDiagnosis(page);
     await page.getByRole("button", { name: tk("ui.lat.title") }).click();
     await expect(page.getByText(tk("ui.lat.summary", { ms: "18.4" }))).toBeVisible();
-    await expect(page.getByText(tk("ui.lat.detail", { p95: "44.6", n: 812 }))).toBeVisible();
-    await expect(page.getByText(tk("ui.lat.none_click"))).toBeVisible();
+    await expect(page.getByText(tk("ui.lat.detail", { p95: "27.1", n: 3700 }))).toBeVisible();
     await expect(page.getByText(tk("ui.lat.none_pcl"))).toBeVisible();
     await expect(page.getByText(tk("ui.lat.honest"))).toBeVisible();
+    // Ввід → екран занижує затримку: лише довідково, із застереженням.
+    await expect(page.getByText(tk("ui.lat.ref_value", { v: "31.2", n: 812 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.lat.reference_note"))).toBeVisible();
   });
 });

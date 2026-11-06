@@ -63,8 +63,9 @@ pub struct FramePipeline {
     /// `MsInPresentAPI`: скільки тривав сам виклик Present.
     #[serde(default)]
     pub in_present: Option<f64>,
-    /// `MsAllInputToPhotonLatency`: від найранішого вводу (клавіатура, миша), що вплинув на цей
-    /// кадр, до показу (`None` — такого вводу не було).
+    /// `MsAllInputToPhotonLatency`: від вводу (клавіатура, миша), який Windows прочитала перед
+    /// цим кадром, до показу (`None` — вводу не було). Гра могла врахувати його лише в наступному
+    /// кадрі, тож значення занижує затримку.
     #[serde(default)]
     pub input_to_photon: Option<f64>,
     /// `MsClickToPhotonLatency`: те саме від кліку миші.

@@ -122,9 +122,11 @@
     {@const lat = result.diagnosis.latency}
     <Fold
       title={tk("ui.lat.title")}
-      summary={lat.frame_to_display
-        ? tk("ui.lat.summary", { ms: lat.frame_to_display.median_ms.toFixed(1) })
-        : tk("ui.lat.summary_input")}
+      summary={lat.pc_latency
+        ? tk("ui.lat.summary_pcl", { ms: lat.pc_latency.median_ms.toFixed(1) })
+        : lat.frame_to_display
+          ? tk("ui.lat.summary", { ms: lat.frame_to_display.median_ms.toFixed(1) })
+          : tk("ui.lat.summary_input")}
     >
       <LatencyCard latency={lat} frameGen={result.diagnosis.frame_gen != null} />
     </Fold>

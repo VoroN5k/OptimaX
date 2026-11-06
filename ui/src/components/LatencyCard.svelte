@@ -12,6 +12,10 @@
     { label: tk("ui.lat.gpu_start"), value: latency.gpu_start_ms },
     { label: tk("ui.lat.until_displayed"), value: latency.until_displayed_ms },
   ]);
+  const refs = $derived([
+    { label: tk("ui.lat.input_to_photon"), stat: latency.input_to_photon },
+    { label: tk("ui.lat.click_to_photon"), stat: latency.click_to_photon },
+  ]);
 </script>
 
 {#snippet tile(label: string, s: LatencyStat | null, none: string)}
@@ -30,10 +34,8 @@
 
 <div class="lat">
   <div class="tiles">
-    {@render tile(tk("ui.lat.frame_to_display"), latency.frame_to_display, tk("ui.lat.none_frames"))}
-    {@render tile(tk("ui.lat.input_to_photon"), latency.input_to_photon, tk("ui.lat.none_input"))}
-    {@render tile(tk("ui.lat.click_to_photon"), latency.click_to_photon, tk("ui.lat.none_click"))}
     {@render tile(tk("ui.lat.pc_latency"), latency.pc_latency, tk("ui.lat.none_pcl"))}
+    {@render tile(tk("ui.lat.frame_to_display"), latency.frame_to_display, tk("ui.lat.none_frames"))}
   </div>
   <dl class="parts">
     {#each parts as p (p.label)}
@@ -44,6 +46,18 @@
     {/each}
   </dl>
   <p class="small muted">{tk("ui.lat.honest")}</p>
+  <div class="reference">
+    <span class="small">{tk("ui.lat.reference")}</span>
+    <dl class="parts">
+      {#each refs as r (r.label)}
+        <div>
+          <dt class="small muted">{r.label}</dt>
+          <dd class="mono">{r.stat ? tk("ui.lat.ref_value", { v: ms(r.stat.median_ms), n: r.stat.samples }) : "—"}</dd>
+        </div>
+      {/each}
+    </dl>
+    <p class="small muted">{tk("ui.lat.reference_note")}</p>
+  </div>
   {#if frameGen}<p class="small warn">{tk("ui.lat.frame_gen")}</p>{/if}
 </div>
 
@@ -80,6 +94,12 @@
   }
   .parts dd {
     margin: 0;
+  }
+  .reference {
+    display: grid;
+    gap: calc(var(--space) * 2);
+    padding-top: calc(var(--space) * 3);
+    border-top: 1px solid var(--border);
   }
   .warn {
     color: var(--warn);

@@ -3,6 +3,11 @@
 //! Одне завдання: шейдер заповнює буфер із числа завдання, двічі перетворює його (ціла арифметика,
 //! дробова арифметика, випадкове читання відеопам'яті) і згортає результат у невеликий відбиток.
 //! Шейдер не залежить від порядку виконання потоків, тож результат має бути однаковим до біта.
+//! Далі растеризація: багато повноекранних трикутників із текстурами, обчисленнями в піксельному
+//! шейдері й блендингом у дробову текстуру (порядок блендингу гарантує API), і цей кадр теж іде у
+//! відбиток. Лише обчислення навантажують карту значно слабше за гру (RTX 4070 SUPER: 136 Вт і
+//! 52 °C за 10 хв проти 70+ °C в іграх), бо не задіюють текстурні блоки й ROP; із растеризацією
+//! — до ≈211 Вт із 220 Вт.
 //!
 //! Робота ділиться на короткі порції, що чекають на GPU: одна порція не наближається до межі TDR
 //! (2 с), тож скидання драйвера під час тесту означає збій, а не надто довгу команду.
@@ -14,6 +19,7 @@ use std::time::{Duration, Instant};
 use windows::core::{Interface, PCSTR};
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::Fxc::{D3DCompile, D3DCOMPILE_OPTIMIZATION_LEVEL3};
+use windows::Win32::Graphics::Direct3D::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 use windows::Win32::Graphics::Direct3D::{
     ID3DBlob, D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0,
 };
@@ -24,6 +30,17 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_FLAG, D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ,
     D3D11_QUERY_DESC, D3D11_QUERY_EVENT, D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, D3D11_SDK_VERSION,
     D3D11_USAGE_DEFAULT, D3D11_USAGE_STAGING,
+};
+use windows::Win32::Graphics::Direct3D11::{
+    ID3D11BlendState, ID3D11PixelShader, ID3D11RenderTargetView, ID3D11SamplerState,
+    ID3D11Texture2D, ID3D11VertexShader, D3D11_BIND_RENDER_TARGET, D3D11_BLEND_DESC,
+    D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD, D3D11_COLOR_WRITE_ENABLE_ALL, D3D11_COMPARISON_NEVER,
+    D3D11_FILTER_ANISOTROPIC, D3D11_FLOAT32_MAX, D3D11_RENDER_TARGET_BLEND_DESC,
+    D3D11_SAMPLER_DESC, D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE2D_DESC, D3D11_TEXTURE_ADDRESS_WRAP,
+    D3D11_VIEWPORT,
+};
+use windows::Win32::Graphics::Dxgi::Common::{
+    DXGI_FORMAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, IDXGIAdapter, IDXGIAdapter1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
@@ -88,8 +105,59 @@ void transform(uint3 id : SV_DispatchThreadID, uint index : SV_GroupIndex, uint3
         InterlockedAdd(digest[absolute % 64], h);
     }
 }
+
+// ---- Растеризація: параметри ті самі, `inner` — ітерацій на піксель ----
+Texture2D<float4> pattern : register(t1);
+Texture2D<float4> frame : register(t2);
+SamplerState pattern_sampler : register(s0);
+
+struct Vertex {
+    float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
+};
+
+Vertex vs_main(uint id : SV_VertexID) {
+    float2 p = float2((id << 1) & 2, id & 2);
+    float angle = float(seed & 1023u) / 1023.0 * 6.28318548;
+    float2 turned = float2(p.x * cos(angle) - p.y * sin(angle), p.x * sin(angle) + p.y * cos(angle));
+    Vertex v;
+    v.uv = turned * (1.5 + float(seed & 7u) * 0.25);
+    v.position = float4(p * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+    return v;
+}
+
+float4 ps_main(Vertex input) : SV_Target {
+    float2 uv = input.uv;
+    float2 dx = ddx(uv);
+    float2 dy = ddy(uv);
+    float4 sum = float4(0.0, 0.0, 0.0, 0.0);
+    [loop] for (uint k = 0; k < inner; k++) {
+        float4 t = pattern.SampleGrad(pattern_sampler, uv, dx, dy);
+        uv = uv * 1.31 + t.xy * 0.17 + float2(0.013, 0.007);
+        sum = sum * 0.93 + t * sin(t.w * 6.28318548 + sum.x);
+    }
+    uint4 memory_word = src[asuint(sum.y) % count];
+    return float4(frac(sum.xyz + float(memory_word.x & 255u) / 255.0), 1.0) * 0.02;
+}
+
+[numthreads(256, 1, 1)]
+void hash_frame(uint3 id : SV_DispatchThreadID, uint index : SV_GroupIndex, uint3 group : SV_GroupID) {
+    uint width = inner;
+    float4 c = frame.Load(int3(id.x % width, id.x / width, 0));
+    group_hash[index] = (asuint(c.x) * 16777619u) ^ asuint(c.y) ^ (asuint(c.z) * 2166136261u) ^ asuint(c.w);
+    GroupMemoryBarrierWithGroupSync();
+    if (index == 0) {
+        uint h = 2166136261u;
+        for (uint j = 0; j < 256; j++) {
+            h = (h ^ group_hash[j]) * 16777619u;
+        }
+        InterlockedAdd(digest[group.x % 64], h);
+    }
+}
 "#;
 
+/// Сторона текстури-візерунка, текселів.
+const PATTERN_SIZE: u32 = 1024;
 /// Потоків у групі шейдера.
 const GROUP_THREADS: u32 = 256;
 /// Розмір елемента буфера, байт.
@@ -112,14 +180,26 @@ pub struct GpuParams {
     pub inner: u32,
     /// Бажана тривалість порції.
     pub slice: Duration,
+    /// Ширина кадру растеризації, пікселів.
+    pub frame_width: u32,
+    /// Висота кадру (добуток із шириною має ділитися на 256).
+    pub frame_height: u32,
+    /// Повноекранних трикутників на завдання.
+    pub draws: u32,
+    /// Ітерацій на піксель.
+    pub pixel_inner: u32,
 }
 
 impl Default for GpuParams {
     fn default() -> Self {
         Self {
             buffer_mb: 1024,
-            inner: 64,
+            inner: 32,
             slice: Duration::from_millis(100),
+            frame_width: 2560,
+            frame_height: 1440,
+            draws: 512,
+            pixel_inner: 16,
         }
     }
 }
@@ -161,6 +241,15 @@ pub struct GpuLoad {
     digest_uav: ID3D11UnorderedAccessView,
     staging: ID3D11Buffer,
     query: ID3D11Query,
+    vs: ID3D11VertexShader,
+    ps: ID3D11PixelShader,
+    hash_frame: ID3D11ComputeShader,
+    pattern: ID3D11ShaderResourceView,
+    sampler: ID3D11SamplerState,
+    blend: ID3D11BlendState,
+    frame_rtv: ID3D11RenderTargetView,
+    frame_srv: ID3D11ShaderResourceView,
+    batch: u32,
     groups: u32,
     elements: u32,
     params: GpuParams,
@@ -199,7 +288,7 @@ fn best_adapter() -> Result<(IDXGIAdapter1, String, u64), LoadError> {
     best.ok_or_else(|| LoadError::Other("апаратної відеокарти не знайдено".into()))
 }
 
-fn compile(entry: PCSTR) -> Result<Vec<u8>, LoadError> {
+fn compile(entry: PCSTR, target: PCSTR) -> Result<Vec<u8>, LoadError> {
     let mut code: Option<ID3DBlob> = None;
     let mut errors: Option<ID3DBlob> = None;
     // SAFETY: джерело — статичний рядок (вказівник і довжина узгоджені), результати пишуться в
@@ -212,7 +301,7 @@ fn compile(entry: PCSTR) -> Result<Vec<u8>, LoadError> {
             None,
             None,
             entry,
-            windows::core::s!("cs_5_0"),
+            target,
             D3DCOMPILE_OPTIMIZATION_LEVEL3,
             0,
             &mut code,
@@ -267,7 +356,7 @@ impl GpuLoad {
         };
 
         let shader = |entry: PCSTR| -> Result<ID3D11ComputeShader, LoadError> {
-            let code = compile(entry)?;
+            let code = compile(entry, windows::core::s!("cs_5_0"))?;
             let mut out = None;
             // SAFETY: байткод щойно скомпільований для цієї стадії.
             unsafe { device.CreateComputeShader(&code, None, Some(&mut out)) }
@@ -276,6 +365,108 @@ impl GpuLoad {
         };
         let fill = shader(windows::core::s!("fill"))?;
         let transform = shader(windows::core::s!("transform"))?;
+        let hash_frame = shader(windows::core::s!("hash_frame"))?;
+
+        let code = compile(windows::core::s!("vs_main"), windows::core::s!("vs_5_0"))?;
+        let mut vs = None;
+        // SAFETY: байткод щойно скомпільований для цієї стадії.
+        unsafe { device.CreateVertexShader(&code, None, Some(&mut vs)) }
+            .map_err(os("CreateVertexShader"))?;
+        let vs = vs.ok_or_else(|| missing("CreateVertexShader"))?;
+        let code = compile(windows::core::s!("ps_main"), windows::core::s!("ps_5_0"))?;
+        let mut ps = None;
+        // SAFETY: байткод щойно скомпільований для цієї стадії.
+        unsafe { device.CreatePixelShader(&code, None, Some(&mut ps)) }
+            .map_err(os("CreatePixelShader"))?;
+        let ps = ps.ok_or_else(|| missing("CreatePixelShader"))?;
+
+        // Фіксований візерунок: той самий у кожному завданні й кожному запуску.
+        let mut word = 0x6F70_7478u32;
+        let texels: Vec<u32> = (0..PATTERN_SIZE * PATTERN_SIZE)
+            .map(|_| {
+                word ^= word << 13;
+                word ^= word >> 17;
+                word ^= word << 5;
+                word
+            })
+            .collect();
+        let pattern_tex = texture(
+            &device,
+            PATTERN_SIZE,
+            PATTERN_SIZE,
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            Some(&texels),
+        )?;
+        let frame_tex = texture(
+            &device,
+            params.frame_width,
+            params.frame_height,
+            DXGI_FORMAT_R16G16B16A16_FLOAT,
+            (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+            None,
+        )?;
+        let tex_srv = |t: &ID3D11Texture2D| -> Result<ID3D11ShaderResourceView, LoadError> {
+            let mut out = None;
+            // SAFETY: текстура дійсна; без опису вид охоплює її всю.
+            unsafe { device.CreateShaderResourceView(t, None, Some(&mut out)) }
+                .map_err(os("CreateShaderResourceView"))?;
+            out.ok_or_else(|| missing("CreateShaderResourceView"))
+        };
+        let pattern = tex_srv(&pattern_tex)?;
+        let frame_srv = tex_srv(&frame_tex)?;
+        let mut frame_rtv = None;
+        // SAFETY: текстуру створено як ціль рендера; без опису вид охоплює її всю.
+        unsafe { device.CreateRenderTargetView(&frame_tex, None, Some(&mut frame_rtv)) }
+            .map_err(os("CreateRenderTargetView"))?;
+        let frame_rtv = frame_rtv.ok_or_else(|| missing("CreateRenderTargetView"))?;
+
+        let mut sampler = None;
+        // SAFETY: опис живе на час виклику.
+        unsafe {
+            device.CreateSamplerState(
+                &D3D11_SAMPLER_DESC {
+                    Filter: D3D11_FILTER_ANISOTROPIC,
+                    AddressU: D3D11_TEXTURE_ADDRESS_WRAP,
+                    AddressV: D3D11_TEXTURE_ADDRESS_WRAP,
+                    AddressW: D3D11_TEXTURE_ADDRESS_WRAP,
+                    MipLODBias: 0.0,
+                    MaxAnisotropy: 16,
+                    ComparisonFunc: D3D11_COMPARISON_NEVER,
+                    BorderColor: [0.0; 4],
+                    MinLOD: 0.0,
+                    MaxLOD: D3D11_FLOAT32_MAX,
+                },
+                Some(&mut sampler),
+            )
+        }
+        .map_err(os("CreateSamplerState"))?;
+        let sampler = sampler.ok_or_else(|| missing("CreateSamplerState"))?;
+
+        let target = D3D11_RENDER_TARGET_BLEND_DESC {
+            BlendEnable: true.into(),
+            SrcBlend: D3D11_BLEND_ONE,
+            DestBlend: D3D11_BLEND_ONE,
+            BlendOp: D3D11_BLEND_OP_ADD,
+            SrcBlendAlpha: D3D11_BLEND_ONE,
+            DestBlendAlpha: D3D11_BLEND_ONE,
+            BlendOpAlpha: D3D11_BLEND_OP_ADD,
+            RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8,
+        };
+        let mut blend = None;
+        // SAFETY: опис живе на час виклику.
+        unsafe {
+            device.CreateBlendState(
+                &D3D11_BLEND_DESC {
+                    AlphaToCoverageEnable: false.into(),
+                    IndependentBlendEnable: false.into(),
+                    RenderTarget: [target; 8],
+                },
+                Some(&mut blend),
+            )
+        }
+        .map_err(os("CreateBlendState"))?;
+        let blend = blend.ok_or_else(|| missing("CreateBlendState"))?;
 
         let buffer = |desc: &D3D11_BUFFER_DESC| -> Result<ID3D11Buffer, LoadError> {
             let mut out = None;
@@ -371,6 +562,15 @@ impl GpuLoad {
             digest_uav,
             staging,
             query,
+            vs,
+            ps,
+            hash_frame,
+            pattern,
+            sampler,
+            blend,
+            frame_rtv,
+            frame_srv,
+            batch: 1,
             groups: MIN_GROUPS,
             elements: tested_bytes / ELEMENT_BYTES,
             params: params.clone(),
@@ -498,6 +698,102 @@ impl GpuLoad {
         Ok(finished)
     }
 
+    /// Растеризація кадру порціями трикутників і згортка кадру у відбиток. `Ok(false)` — попросили
+    /// зупинитись.
+    fn raster(&mut self, seed: u32, stop: &mut dyn FnMut() -> bool) -> Result<bool, LoadError> {
+        let (width, height) = (self.params.frame_width, self.params.frame_height);
+        let elements = self.elements;
+        let inner = self.params.pixel_inner;
+        // SAFETY: усі об'єкти створені на цьому пристрої й живуть довше за виклики; контекст
+        // використовує один потік; кадр не прив'язаний як вхід, поки він ціль рендера.
+        unsafe {
+            let ctx = &self.context;
+            ctx.ClearRenderTargetView(&self.frame_rtv, &[0.0; 4]);
+            ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            ctx.VSSetShader(&self.vs, None);
+            ctx.PSSetShader(&self.ps, None);
+            ctx.VSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
+            ctx.PSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
+            ctx.PSSetShaderResources(
+                0,
+                Some(&[Some(self.srv[0].clone()), Some(self.pattern.clone())]),
+            );
+            ctx.PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
+            ctx.RSSetViewports(Some(&[D3D11_VIEWPORT {
+                TopLeftX: 0.0,
+                TopLeftY: 0.0,
+                Width: width as f32,
+                Height: height as f32,
+                MinDepth: 0.0,
+                MaxDepth: 1.0,
+            }]));
+            ctx.OMSetBlendState(&self.blend, None, u32::MAX);
+            ctx.OMSetRenderTargets(Some(&[Some(self.frame_rtv.clone())]), None);
+        }
+        let mut drawn = 0u32;
+        let mut finished = true;
+        while drawn < self.params.draws {
+            if stop() {
+                finished = false;
+                break;
+            }
+            let batch = self.batch.min(self.params.draws - drawn);
+            let started = Instant::now();
+            for i in 0..batch {
+                let values = [seed.wrapping_add(drawn + i), 0, elements, inner];
+                // SAFETY: буфер констант на 16 байт, `values` — стільки ж; трикутник без вершинних
+                // буферів (координати з номера вершини).
+                unsafe {
+                    self.context.UpdateSubresource(
+                        &self.constants,
+                        0,
+                        None,
+                        values.as_ptr().cast(),
+                        0,
+                        0,
+                    );
+                    self.context.Draw(3, 0);
+                }
+            }
+            self.wait()?;
+            drawn += batch;
+            if batch == self.batch {
+                let ratio =
+                    self.params.slice.as_secs_f64() / started.elapsed().as_secs_f64().max(1e-4);
+                self.batch = next_batch(self.batch, ratio);
+            }
+        }
+        let none_rtv: [Option<ID3D11RenderTargetView>; 1] = [None];
+        let none_srv2: [Option<ID3D11ShaderResourceView>; 2] = [None, None];
+        // SAFETY: відв'язуємо кадр як ціль і буфер як вхід перед згорткою.
+        unsafe {
+            self.context.OMSetRenderTargets(Some(&none_rtv), None);
+            self.context.PSSetShaderResources(0, Some(&none_srv2));
+        }
+        if !finished {
+            return Ok(false);
+        }
+        let values = [seed, 0, 0, width];
+        let uavs = [None, Some(self.digest_uav.clone())];
+        let none_uavs: [Option<ID3D11UnorderedAccessView>; 2] = [None, None];
+        let none_srv: [Option<ID3D11ShaderResourceView>; 1] = [None];
+        // SAFETY: кадр уже не ціль рендера; розмір кадру кратний групі, тож читання лишається в
+        // його межах; після згортки все відв'язується.
+        unsafe {
+            let ctx = &self.context;
+            ctx.UpdateSubresource(&self.constants, 0, None, values.as_ptr().cast(), 0, 0);
+            ctx.CSSetShader(&self.hash_frame, None);
+            ctx.CSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
+            ctx.CSSetShaderResources(2, Some(&[Some(self.frame_srv.clone())]));
+            ctx.CSSetUnorderedAccessViews(0, 2, Some(uavs.as_ptr()), None);
+            ctx.Dispatch(width * height / GROUP_THREADS, 1, 1);
+            ctx.CSSetUnorderedAccessViews(0, 2, Some(none_uavs.as_ptr()), None);
+            ctx.CSSetShaderResources(2, Some(&none_srv));
+        }
+        self.wait()?;
+        Ok(true)
+    }
+
     /// Підлаштовує порцію під бажану тривалість, не більш ніж удвічі за раз.
     fn adapt(&mut self, took: Duration, groups: u32) {
         if groups < self.groups {
@@ -512,6 +808,55 @@ impl GpuLoad {
 fn next_groups(groups: u32, ratio: f64) -> u32 {
     let next = f64::from(groups) * ratio.clamp(0.5, 2.0);
     (next as u32).clamp(MIN_GROUPS, MAX_GROUPS)
+}
+
+/// Наступна порція трикутників: не менше одного й не більш ніж удвічі за раз.
+fn next_batch(batch: u32, ratio: f64) -> u32 {
+    let next = f64::from(batch) * ratio.clamp(0.5, 2.0);
+    (next as u32).clamp(1, 256)
+}
+
+/// Створює текстуру (без початкових даних, якщо `data` немає).
+fn texture(
+    device: &ID3D11Device,
+    width: u32,
+    height: u32,
+    format: DXGI_FORMAT,
+    bind: u32,
+    data: Option<&[u32]>,
+) -> Result<ID3D11Texture2D, LoadError> {
+    let desc = D3D11_TEXTURE2D_DESC {
+        Width: width,
+        Height: height,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: format,
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
+        Usage: D3D11_USAGE_DEFAULT,
+        BindFlags: bind,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
+    };
+    let initial = data.map(|d| D3D11_SUBRESOURCE_DATA {
+        pSysMem: d.as_ptr().cast(),
+        SysMemPitch: width * 4,
+        SysMemSlicePitch: 0,
+    });
+    let mut out = None;
+    // SAFETY: опис і початкові дані живуть на час виклику; `data` містить width·height слів для
+    // формату на 4 байти (викликає лише `GpuLoad::new`).
+    unsafe {
+        device.CreateTexture2D(
+            &desc,
+            initial.as_ref().map(|i| &raw const *i),
+            Some(&mut out),
+        )
+    }
+    .map_err(os("CreateTexture2D"))?;
+    out.ok_or_else(|| missing("CreateTexture2D"))
 }
 
 /// Відбиток порожній, тобто GPU не виконав роботу (інакше порожні результати «збігалися» б).
@@ -538,6 +883,9 @@ impl Load for GpuLoad {
         // Другий прохід читає вже записане: перевіряє й пам'ять, і перший прохід. Відбиток рахує
         // сума обох.
         if !self.pass(&transform, seed, 1, 0, stop)? {
+            return Ok(None);
+        }
+        if !self.raster(seed, stop)? {
             return Ok(None);
         }
         // SAFETY: обидва буфери однакового розміру, контекст використовує один потік.
@@ -581,6 +929,10 @@ mod tests {
             buffer_mb: 16,
             inner: 8,
             slice: Duration::from_millis(20),
+            frame_width: 256,
+            frame_height: 256,
+            draws: 8,
+            pixel_inner: 4,
         }) {
             Ok(g) => Some(g),
             Err(e) => {
@@ -622,6 +974,26 @@ mod tests {
     }
 
     #[test]
+    fn raster_batches_do_not_change_the_result() {
+        let Some(mut g) = small() else { return };
+        let mut never = || false;
+        g.batch = 1;
+        let one_by_one = g
+            .round(SEEDS[3], &mut never)
+            .expect("завдання")
+            .expect("завершено");
+        g.batch = 8;
+        let all_at_once = g
+            .round(SEEDS[3], &mut never)
+            .expect("завдання")
+            .expect("завершено");
+        assert_eq!(one_by_one, all_at_once);
+        assert_eq!(next_batch(1, 100.0), 2);
+        assert_eq!(next_batch(1, 0.01), 1);
+        assert_eq!(next_batch(256, 2.0), 256);
+    }
+
+    #[test]
     fn slices_never_exceed_what_direct3d_accepts() {
         assert_eq!(next_groups(100, 2.0), 200);
         assert_eq!(next_groups(100, 100.0), 200, "не більш ніж удвічі");
@@ -642,6 +1014,10 @@ mod tests {
             buffer_mb: 320,
             inner: 1,
             slice: Duration::from_millis(50),
+            frame_width: 256,
+            frame_height: 256,
+            draws: 2,
+            pixel_inner: 1,
         }) else {
             return;
         };

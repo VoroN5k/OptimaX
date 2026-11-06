@@ -22,7 +22,8 @@ click_to_photon: LatencyStat | null,
  */
 pc_latency: LatencyStat | null, 
 /**
- * Медіана: CPU готує кадр, мс.
+ * Медіана `MsCPUBusy`: від початку кадру до Present, мс. Імовірно, містить і очікування GPU:
+ * у RE9 без апскейлу значення подвоїлося (7,1 → 13,7 мс).
  */
 cpu_busy_ms: number | null, 
 /**

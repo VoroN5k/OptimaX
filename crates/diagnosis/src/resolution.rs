@@ -254,6 +254,10 @@ const GPU_BOUND_CONFIRMED_MAX: u8 = 95;
 /// попереднього), уточнена впевненість GPU-bound і виміряний ефект там, де його обіцяють.
 pub fn apply(d: &mut Diagnosis, report: &ResolutionReport) {
     d.verdicts.retain(|v| !v.finding.id.starts_with("res."));
+    // Підказка про Reflex спирається на те, що обмежує відеокарта, а тест цього не підтвердив.
+    if report.outcome == ResolutionOutcome::NoHelp {
+        d.verdicts.retain(|v| v.finding.id != "latency_queue");
+    }
     let gain = MeasuredGain {
         avg_fps_change_pct: report.avg_fps_change_pct,
         low_1pct_change_pct: report.low_1pct_change_pct,
@@ -559,6 +563,22 @@ mod tests {
         edge(&mut d);
         apply(&mut d, &no);
         assert_eq!(key(&d), "diag.gpu_bound.detail_edge_contradicted");
+    }
+
+    #[test]
+    fn contradicted_gpu_bound_drops_reflex_hint() {
+        let hint = |outcome_fps: f64| {
+            let (runs, est) = test_runs(60.0, outcome_fps, 0.0, (Some(60.0), Some(40.0)), 100);
+            let report = evaluate(&runs, &est).expect("висновок");
+            let mut d = diagnosis_with(&["summary.gpu", "gpu_bound", "latency_queue"]);
+            apply(&mut d, &report);
+            (
+                report.outcome,
+                d.verdicts.iter().any(|v| v.finding.id == "latency_queue"),
+            )
+        };
+        assert_eq!(hint(60.0), (ResolutionOutcome::NoHelp, false));
+        assert_eq!(hint(90.0), (ResolutionOutcome::Helps, true));
     }
 
     #[test]

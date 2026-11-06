@@ -184,4 +184,22 @@ test.describe("Діагностика", () => {
     await expect(page.getByText(tk("ui.lat.ref_value", { v: "31.2", n: 812 }))).toBeVisible();
     await expect(page.getByText(tk("ui.lat.reference_note"))).toBeVisible();
   });
+
+  test("затримка: PC Latency у заголовку і підказка про Reflex без обіцянки приросту", async ({ page }) => {
+    const last = structuredClone(gpuResult);
+    last.diagnosis.latency!.pc_latency = { median_ms: 47.1, p95_ms: 52.6, samples: 3700 };
+    const hint = structuredClone(last.diagnosis.verdicts.at(-1)!);
+    hint.finding.id = "latency_queue";
+    hint.finding.confidence = 60;
+    hint.finding.title = { key: "diag.latency_queue.title", args: { gap: "19.2", frames: "1.4" } };
+    hint.finding.detail = { key: "diag.latency_queue.detail", args: { gap: "19.2", frames: "1.4" } };
+    hint.finding.advice = { key: "diag.latency_queue.advice", args: {} };
+    last.diagnosis.verdicts.push(hint);
+    await mockBackend(page, { diag_state: { recording: false, last } });
+    await openDiagnosis(page);
+    await expect(page.getByText(tk("ui.lat.summary_pcl", { ms: "47.1" }))).toBeVisible();
+    const title = tk("diag.latency_queue.title", { gap: "19.2", frames: "1.4" });
+    await page.getByRole("button", { name: title }).click();
+    await expect(page.getByText(tk("diag.latency_queue.advice"))).toBeVisible();
+  });
 });

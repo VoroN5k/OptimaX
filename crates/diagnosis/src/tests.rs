@@ -1703,6 +1703,62 @@ fn thread_load_counts_only_counted_play() {
     assert!(crate::timeline::threads_timeline(&short).is_none());
 }
 
+// ---- Затримка ----
+
+/// Кадр 8 мс: кадр → екран 14 мс, PC Latency 30 мс (надлишок 2 кадри).
+fn with_latency_columns(tl: &mut Timeline) {
+    for f in &mut tl.frames {
+        f.cpu_busy_ms = Some(7.0);
+        f.pipeline.until_displayed = Some(7.0);
+        f.pipeline.pc_latency = Some(30.0);
+    }
+}
+
+fn gpu_at_limit() -> SamplePoint {
+    let mut s = base_sample();
+    if let Some(g) = s.gpu.as_mut() {
+        g.util = Some(99);
+    }
+    s
+}
+
+#[test]
+fn reflex_hint_only_when_gpu_limits() {
+    let mut tl = timeline(&jittery(8.0, 3000), |_, _| gpu_at_limit());
+    with_latency_columns(&mut tl);
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert_eq!(d.bottleneck, Bottleneck::Gpu);
+    assert_eq!(ids(&d).last(), Some(&"latency_queue"));
+    assert_eq!(
+        find(&d, "latency_queue").unwrap().confidence,
+        Confidence::new(60)
+    );
+
+    let mut tl = timeline(&jittery(8.0, 3000), |_, _| base_sample());
+    with_latency_columns(&mut tl);
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert_ne!(d.bottleneck, Bottleneck::Gpu);
+    assert!(d.latency.is_some_and(|l| l.pc_latency.is_some()));
+    assert!(find(&d, "latency_queue").is_none());
+}
+
+#[test]
+fn no_reflex_hint_with_frame_generation() {
+    let mut tl = framegen_timeline(true);
+    with_latency_columns(&mut tl);
+    for s in &mut tl.samples {
+        *s = SamplePoint {
+            t_ms: s.t_ms,
+            ..gpu_at_limit()
+        };
+    }
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert!(d.frame_gen.is_some());
+    assert_eq!(d.bottleneck, Bottleneck::Gpu);
+    assert!(d.latency.is_some_and(|l| l.pc_latency.is_some()));
+    assert!(find(&d, "latency_queue").is_none());
+}
+
 // ---- Анатомія кадру (стовпці PresentMon 2.x) ----
 
 #[test]

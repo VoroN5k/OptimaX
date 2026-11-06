@@ -192,6 +192,8 @@ pub fn diagnose_timeline(tl: &Timeline, ctx: &Context) -> Diagnosis {
         return diagnose_frames(tl, ctx);
     };
     let mut d = diagnose_frames(&visible, ctx);
+    // Час кадру тут — показаний, а не справжній, а генерація кадрів зазвичай сама вмикає Reflex.
+    d.verdicts.retain(|v| v.finding.id != "latency_queue");
     let id = match fg.series {
         FrameGenSeries::Display => "framegen.display",
         FrameGenSeries::Real => "framegen.real",
@@ -306,6 +308,14 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
     });
 
     found.extend(upscale_advice(bottleneck, primary_conf));
+    let latency = latency::latency_summary(&a.timeline.frames);
+    if bottleneck == Bottleneck::Gpu {
+        found.extend(
+            latency
+                .as_ref()
+                .and_then(|l| latency::reflex_hint(l, a.stats.median_frametime_ms)),
+        );
+    }
 
     let mut head = summary(
         summary_id,
@@ -322,7 +332,6 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
     let mut verdicts: Vec<Verdict> = vec![head.into()];
     verdicts.extend(found.into_iter().map(Verdict::from));
     let anatomy = anatomy::frame_anatomy(&a);
-    let latency = latency::latency_summary(&a.timeline.frames);
     Diagnosis {
         game: tl.game_name.clone(),
         stats: Some(a.stats),

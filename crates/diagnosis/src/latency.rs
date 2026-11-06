@@ -13,13 +13,26 @@
 //!   затримку; вердикти на ньому не будувати.
 //!
 //! Жоден вимір не містить затримки миші, USB і самого монітора: без апаратного датчика їх не
-//! виміряти. Тут лише опис вимірів; висновків і порогів немає.
+//! виміряти.
+//!
+//! Черга перед початком кадру видна лише в PC Latency: у RE9 з GPU у стелі Reflex On + Boost знизив
+//! її з 47,1 до 32,9 мс, а кадр → екран лишився 27,9 мс. Звідси єдиний висновок модуля —
+//! [`reflex_hint`]; це підказка, а не обіцянка: дані — по одному запису на варіант в одній грі.
 
 use crate::timeline::FramePoint;
+use optimax_core::{Category, Finding, FindingBuilder, Impact, Text};
 use serde::{Deserialize, Serialize};
 
 /// Менше значень — статистику не показуємо (випадкові кілька кліків нічого не доводять).
 pub const MIN_SAMPLES: usize = 10;
+/// З якого надлишку PC Latency над кадром → екран (у кадрах) є сенс пропонувати Reflex. У RE9 з GPU
+/// у стелі: 1,4 кадра без Reflex, 0,35 — з ним.
+pub const QUEUE_GAP_FRAMES: f64 = 1.0;
+/// PC Latency порівнюємо з кадром → екран лише якщо вона є щонайменше в такій частці кадрів.
+const PC_LATENCY_MIN_COVERAGE: f64 = 0.5;
+/// Впевненість підказки: ознака не доводить чергу (при ≈134 FPS надлишок 1,2 кадра Reflex не
+/// прибрав), а виміряно її лише в одній грі.
+const REFLEX_HINT_CONFIDENCE: u8 = 60;
 
 /// Розподіл одного виміру затримки, мс.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -45,7 +58,8 @@ pub struct LatencySummary {
     pub click_to_photon: Option<LatencyStat>,
     /// PC Latency (гра передає розмітку).
     pub pc_latency: Option<LatencyStat>,
-    /// Медіана: CPU готує кадр, мс.
+    /// Медіана `MsCPUBusy`: від початку кадру до Present, мс. Імовірно, містить і очікування GPU:
+    /// у RE9 без апскейлу значення подвоїлося (7,1 → 13,7 мс).
     pub cpu_busy_ms: Option<f64>,
     /// Медіана: від початку кадру до початку роботи GPU над ним, мс (перекривається з CPU).
     pub gpu_start_ms: Option<f64>,
@@ -106,10 +120,96 @@ pub fn latency_summary(frames: &[FramePoint]) -> Option<LatencySummary> {
     })
 }
 
+/// Підказка увімкнути Reflex: PC Latency більша за кадр → екран щонайменше на
+/// [`QUEUE_GAP_FRAMES`]. Викликати лише коли обмежує відеокарта: в іншому разі черги, яку прибирає
+/// Reflex, може не бути. `frame_ms` — медіана часу кадру.
+pub fn reflex_hint(s: &LatencySummary, frame_ms: f64) -> Option<Finding> {
+    let pcl = s.pc_latency?;
+    let display = s.frame_to_display?;
+    if frame_ms <= 0.0 || f64::from(pcl.samples) < f64::from(s.frames) * PC_LATENCY_MIN_COVERAGE {
+        return None;
+    }
+    let gap = pcl.median_ms - display.median_ms;
+    let frames = gap / frame_ms;
+    if frames < QUEUE_GAP_FRAMES {
+        return None;
+    }
+    let value = |v: f64| Text::new("value.ms").arg("v", format!("{v:.1}"));
+    Some(
+        FindingBuilder::new(
+            "diag",
+            "latency_queue",
+            Category::Gpu,
+            Impact::Info,
+            REFLEX_HINT_CONFIDENCE,
+        )
+        .arg("gap", format!("{gap:.1}"))
+        .arg("frames", format!("{frames:.1}"))
+        .advice()
+        .evidence(Text::new("diag.ev.pc_latency"), value(pcl.median_ms))
+        .evidence(
+            Text::new("diag.ev.frame_to_display"),
+            value(display.median_ms),
+        )
+        .build(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use optimax_frametime::FramePipeline;
+
+    /// Записи RE9 (2026-11-06): PC Latency, кадр → екран, час кадру.
+    fn re9(pcl: f64, display: f64, frames: u32) -> LatencySummary {
+        let s = |median_ms| LatencyStat {
+            median_ms,
+            p95_ms: median_ms,
+            samples: frames,
+        };
+        LatencySummary {
+            frame_to_display: Some(s(display)),
+            input_to_photon: None,
+            click_to_photon: None,
+            pc_latency: Some(s(pcl)),
+            cpu_busy_ms: None,
+            gpu_start_ms: None,
+            until_displayed_ms: None,
+            frames,
+        }
+    }
+
+    #[test]
+    fn reflex_hint_fires_without_reflex_and_stays_quiet_with_it() {
+        // GPU у стелі, без Reflex: надлишок 19,2 мс ≈ 1,4 кадра.
+        let f = reflex_hint(&re9(47.1, 27.9, 4303), 14.1).expect("підказка");
+        assert_eq!(f.id, "latency_queue");
+        assert_eq!(f.title.args["gap"], "19.2");
+        assert_eq!(f.title.args["frames"], "1.4");
+        assert!(f.advice.is_some());
+        assert_eq!(f.evidence.len(), 2);
+        // Те саме з Reflex On + Boost: 5,0 мс ≈ 0,35 кадра.
+        assert!(reflex_hint(&re9(32.9, 27.9, 4230), 14.2).is_none());
+    }
+
+    #[test]
+    fn reflex_hint_needs_pc_latency_in_most_frames() {
+        let mut s = re9(47.1, 27.9, 4303);
+        s.pc_latency = None;
+        assert!(
+            reflex_hint(&s, 14.1).is_none(),
+            "без PC Latency чергу не видно"
+        );
+        let mut s = re9(47.1, 27.9, 4303);
+        if let Some(p) = s.pc_latency.as_mut() {
+            p.samples = 2000;
+        }
+        assert!(
+            reflex_hint(&s, 14.1).is_none(),
+            "значення лише в частині кадрів"
+        );
+        assert!(reflex_hint(&re9(47.1, 27.9, 4303), 0.0).is_none());
+    }
 
     fn frame(i: usize) -> FramePoint {
         FramePoint {

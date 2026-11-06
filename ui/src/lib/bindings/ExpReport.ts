@@ -41,6 +41,10 @@ margin_avg_pct: number,
  */
 margin_low_pct: number, 
 /**
+ * Поріг для PC Latency, % (`None` — затримку не оцінювали).
+ */
+margin_latency_pct: number | null, 
+/**
  * Прогони в порядку виконання.
  */
 runs: Array<ExpRunSummary>, 

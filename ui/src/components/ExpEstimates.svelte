@@ -54,9 +54,17 @@
         {/if}
         {#if c.avg_fps}{@render estimate(tk("ui.exp.avg"), c.avg_fps, report.margin_avg_pct)}{/if}
         {#if c.low_1pct}{@render estimate(tk("ui.exp.low"), c.low_1pct, report.margin_low_pct)}{/if}
+        {#if c.pc_latency && report.margin_latency_pct != null}
+          {@render estimate(
+            tk("ui.exp.latency", { a: c.pc_latency.a.toFixed(1), b: c.pc_latency.b.toFixed(1) }),
+            c.pc_latency,
+            report.margin_latency_pct,
+          )}
+        {/if}
       </div>
     {/each}
   </div>
+  {#if shown.some((c) => c.pc_latency)}<p class="small dim">{tk("ui.exp.latency_note")}</p>{/if}
   <p class="small dim">
     {tk(report.variants > 2 ? "ui.exp.method_many" : "ui.exp.method", {
       conf: report.confidence_pct.toFixed(1),

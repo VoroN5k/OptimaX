@@ -72,6 +72,23 @@ fn verdict_line(c: &Catalog, cmp: &Comparison, names: &[String]) -> String {
     )
 }
 
+fn latency_line(c: &Catalog, cmp: &Comparison, names: &[String]) -> Option<String> {
+    let e = cmp.pc_latency.as_ref()?;
+    Some(
+        c.render(
+            &Text::new("exp.md.latency")
+                .arg("a", name(names, 0))
+                .arg("b", name(names, cmp.variant))
+                .arg("va", format!("{:.1}", e.a))
+                .arg("vb", format!("{:.1}", e.b))
+                .arg("delta", signed(e.delta_pct))
+                .arg("lo", signed(e.ci_low_pct))
+                .arg("hi", signed(e.ci_high_pct))
+                .arg("outcome", c.render(&Text::new(outcome_key(e.outcome)))),
+        ),
+    )
+}
+
 /// Звіт у Markdown. `names` — назви варіантів за номером, `title` — що порівнювали.
 pub fn render_markdown(
     report: &Report,
@@ -124,6 +141,7 @@ pub fn render_markdown(
     md.push(String::new());
     for cmp in &report.comparisons {
         md.push(verdict_line(c, cmp, names));
+        md.extend(latency_line(c, cmp, names));
     }
     for w in &report.warnings {
         md.push(format!("> ⚠ {}", c.render(w)));

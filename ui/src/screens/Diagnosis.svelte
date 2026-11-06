@@ -36,6 +36,7 @@
     if (resActive) resOpen = true;
   });
   let exe = $state("");
+  let expPreset = $state<string[] | null>(null);
   let seconds = $state(60);
   let recording = $state(false);
   let progress = $state<RecordProgress | null>(null);
@@ -127,6 +128,12 @@
   });
 
   /** Тест роздільності має сенс, коли вузьке місце — GPU чи CPU (а не ліміт кадрів). */
+  function compareReflex(game: string) {
+    exe = game;
+    expPreset = [tk("ui.exp.preset.reflex_off"), tk("ui.exp.preset.reflex_on")];
+    tab = "compare";
+  }
+
   const modeLabel = $derived(tk(ui.settings.record_start === "hotkey" ? "ui.rec.mode.hotkey" : "ui.rec.mode.auto"));
   const setupSummary = $derived(
     [exe.trim() || tk("ui.diag.no_game"), `${seconds} с`, modeLabel, ui.scene.trim()].filter(Boolean).join(" · "),
@@ -161,7 +168,7 @@
   {:else if tab === "history"}
     <RecordHistory />
   {:else if tab === "compare"}
-    <Experiment bind:game={exe} />
+    <Experiment bind:game={exe} bind:preset={expPreset} />
   {:else if tab === "watch"}
     <div class="stack">
       <Card>
@@ -221,7 +228,12 @@
       {/if}
 
       {#if shown}
-        <ResultView result={shown} {example} hideResFindings={resShown}>
+        <ResultView
+          result={shown}
+          {example}
+          hideResFindings={resShown}
+          onCompareReflex={example ? undefined : () => compareReflex(shown.diagnosis.game)}
+        >
           {#snippet after()}
             {#if resTestable && result}
               <Fold title={tk("ui.res.title")} summary={tk("ui.res.subtitle")} bind:open={resOpen} keep>

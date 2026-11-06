@@ -18,6 +18,7 @@
     example = false,
     hideResFindings = false,
     after,
+    onCompareReflex,
   }: {
     result: DiagnosisResult;
     /** Позначений приклад знайомства (не виміряні дані). */
@@ -26,6 +27,8 @@
     hideResFindings?: boolean;
     /** Що показати після радара (напр. тест роздільності). */
     after?: Snippet;
+    /** Відкрити «Порівняння» з Reflex (немає в історії й прикладі). */
+    onCompareReflex?: () => void;
   } = $props();
 
   let chartOpen = $state(false);
@@ -128,7 +131,7 @@
           ? tk("ui.lat.summary", { ms: lat.frame_to_display.median_ms.toFixed(1) })
           : tk("ui.lat.summary_input")}
     >
-      <LatencyCard latency={lat} frameGen={result.diagnosis.frame_gen != null} />
+      <LatencyCard latency={lat} frameGen={result.diagnosis.frame_gen != null} {onCompareReflex} />
     </Fold>
   {/if}
   {#if result.diagnosis.view && result.diagnosis.view.frames.t.length}

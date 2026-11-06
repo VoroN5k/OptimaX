@@ -21,7 +21,14 @@
 
   // Порівняння 2–4 варіантів будь-якої зміни (науковий A/B). Порядок прогонів, оцінку й
   // рішення «досить чи ще» дає бекенд (`optimax_experiment`); тут — кроки, підказки й показ.
-  let { game = $bindable("") }: { game?: string } = $props();
+  let {
+    game = $bindable(""),
+    preset = $bindable(null),
+  }: {
+    game?: string;
+    /** Готові назви варіантів (напр. з картки «Затримка»): заповнюють форму, не запускають тест. */
+    preset?: string[] | null;
+  } = $props();
 
   const MAX_VARIANTS = 4;
   let names = $state<string[]>(["", ""]);
@@ -39,6 +46,7 @@
   const nameOf = (v: number, list: string[]) => list[v] ?? letter(v);
   const included = $derived(report ? report.runs.filter((r) => !r.excluded) : []);
   const nextArm = $derived(report?.next ?? null);
+  const hasLatency = $derived(report?.runs.some((r) => r.pc_latency_ms != null) ?? false);
   /** Варіант треба перемкнути в грі перед наступним прогоном. */
   const mustSwitch = $derived(
     nextArm != null && included.length > 0 && included[included.length - 1]?.variant !== nextArm,
@@ -57,6 +65,10 @@
   }
 
   onMount(() => {
+    if (preset) {
+      names = [...preset];
+      preset = null;
+    }
     void api
       .expState()
       .then((v) => {
@@ -92,7 +104,7 @@
     try {
       view = await api.expRunNext();
       if (view.phase === "done") {
-        flashBg(view.report.comparisons.some((c) => c.verdict === "worse") ? "warn" : "ok");
+        flashBg(worst(view.report) === "worse" ? "warn" : "ok");
         logLocal("info", tk("ui.exp.done_log", { game: view.game }));
         void loadSaved();
       }
@@ -153,9 +165,31 @@
     });
   }
 
+  /** Рядок про PC Latency (окрема оцінка, висновок про FPS вона не змінює). */
+  function latencyText(c: ExpComparison): string | null {
+    const e = c.pc_latency;
+    if (!e) return null;
+    return tk("ui.exp.verdict_latency", {
+      a: e.a.toFixed(1),
+      b: e.b.toFixed(1),
+      d: pct(e.delta_pct),
+      lo: pct(e.ci_low_pct),
+      hi: pct(e.ci_high_pct),
+      outcome: tk(`ui.exp.outcome.${e.outcome}`),
+    });
+  }
+
+  /** Колір порівняння: якщо FPS і затримка показують у різні боки, це компроміс, а не «гірше». */
+  function tone(c: ExpComparison): string {
+    const l = c.pc_latency?.outcome;
+    const clear = (o: string | undefined) => o === "better" || o === "worse";
+    if (clear(c.verdict) && clear(l) && c.verdict !== l) return "unclear";
+    return clear(c.verdict) ? c.verdict : clear(l) ? (l as string) : c.verdict;
+  }
+
   /** Найгірший висновок серед порівнянь — для кольору рамки й рядка. */
   function worst(r: ExpReport): string {
-    const v = r.comparisons.map((c) => c.verdict);
+    const v = r.comparisons.map(tone);
     return v.includes("worse") ? "worse" : v.includes("better") ? "better" : (v[0] ?? "unclear");
   }
 
@@ -243,6 +277,8 @@
                 <span class="small muted">· {r.names.join(" · ")} · {dateTime(r.at_unix_ms / 1000)}</span>
                 {#each r.report.comparisons as c (c.variant)}
                   <p class="small verdict {c.verdict}">{verdictText(c, r.names)}</p>
+                  {@const lat = latencyText(c)}
+                  {#if lat}<p class="small verdict {c.pc_latency?.outcome}">{lat}</p>{/if}
                 {/each}
               </div>
               <Button small variant="secondary" icon="trash" onclick={() => remove(r.id)}>{tk("ui.exp.delete")}</Button>
@@ -291,7 +327,11 @@
         </div>
       {:else if view.phase === "done"}
         <div class="box done {worst(report)}" role="status">
-          {#each report.comparisons as c (c.variant)}<strong>{verdictText(c, view.names)}</strong>{/each}
+          {#each report.comparisons as c (c.variant)}
+            {@const lat = latencyText(c)}
+            <strong>{verdictText(c, view.names)}</strong>
+            {#if lat}<strong>{lat}</strong>{/if}
+          {/each}
           {#if view.saved_id}<span class="small dim">{tk("ui.exp.saved")}</span>{/if}
         </div>
       {/if}
@@ -310,6 +350,7 @@
               <th>{tk("ui.exp.col.avg")}</th>
               <th>1% low</th>
               <th>{tk("ui.exp.col.precision")}</th>
+              {#if hasLatency}<th>{tk("ui.exp.col.latency")}</th>{/if}
               <th></th>
             </tr>
           </thead>
@@ -321,6 +362,7 @@
                 <td class="mono">{fps(r.avg_fps)}</td>
                 <td class="mono">{fps(r.low_1pct_fps)}</td>
                 <td class="mono dim">{r.low_precision_pct != null ? `±${r.low_precision_pct.toFixed(1)} %` : "—"}</td>
+                {#if hasLatency}<td class="mono">{r.pc_latency_ms != null ? r.pc_latency_ms.toFixed(1) : "—"}</td>{/if}
                 <td class="act">
                   {#if r.suspect && !r.excluded}<span class="suspect small">{tk(`ui.exp.suspect.${r.suspect}`)}</span>{/if}
                   <Button small variant="secondary" disabled={running} onclick={() => exclude(i, !r.excluded)}>

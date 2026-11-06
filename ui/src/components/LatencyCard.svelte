@@ -2,9 +2,15 @@
   import type { LatencyStat } from "../lib/bindings/LatencyStat";
   import type { LatencySummary } from "../lib/bindings/LatencySummary";
   import { tk } from "../lib/i18n";
+  import Button from "./Button.svelte";
 
   // Виміри затримки за запис. Усі значення рахує бекенд (`optimax_diagnosis::latency`).
-  let { latency, frameGen = false }: { latency: LatencySummary; frameGen?: boolean } = $props();
+  // `onCompareReflex` — відкрити «Порівняння» з готовими варіантами (є лише на сторінці запису).
+  let {
+    latency,
+    frameGen = false,
+    onCompareReflex,
+  }: { latency: LatencySummary; frameGen?: boolean; onCompareReflex?: () => void } = $props();
 
   const ms = (v: number | null) => (v != null ? v.toFixed(1) : "—");
   const parts = $derived([
@@ -59,6 +65,12 @@
     <p class="small muted">{tk("ui.lat.reference_note")}</p>
   </div>
   {#if frameGen}<p class="small warn">{tk("ui.lat.frame_gen")}</p>{/if}
+  {#if onCompareReflex && latency.pc_latency && !frameGen}
+    <div class="compare">
+      <Button small variant="secondary" onclick={onCompareReflex}>{tk("ui.lat.compare_reflex")}</Button>
+      <span class="small muted">{tk("ui.lat.compare_reflex_hint")}</span>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -100,6 +112,12 @@
     gap: calc(var(--space) * 2);
     padding-top: calc(var(--space) * 3);
     border-top: 1px solid var(--border);
+  }
+  .compare {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(var(--space) * 3);
   }
   .warn {
     color: var(--warn);

@@ -69,6 +69,14 @@ pub struct LatencySummary {
     pub frames: u32,
 }
 
+impl LatencySummary {
+    /// PC Latency, якщо вона є в більшості кадрів: лише тоді значення описує запис загалом.
+    pub fn reliable_pc_latency(&self) -> Option<LatencyStat> {
+        self.pc_latency
+            .filter(|p| f64::from(p.samples) >= f64::from(self.frames) * PC_LATENCY_MIN_COVERAGE)
+    }
+}
+
 /// Перцентиль методом найближчого рангу (`sorted` не порожній).
 fn nearest_rank(sorted: &[f64], p: f64) -> f64 {
     let rank = (sorted.len() as f64 * p).ceil() as usize;
@@ -124,9 +132,9 @@ pub fn latency_summary(frames: &[FramePoint]) -> Option<LatencySummary> {
 /// [`QUEUE_GAP_FRAMES`]. Викликати лише коли обмежує відеокарта: в іншому разі черги, яку прибирає
 /// Reflex, може не бути. `frame_ms` — медіана часу кадру.
 pub fn reflex_hint(s: &LatencySummary, frame_ms: f64) -> Option<Finding> {
-    let pcl = s.pc_latency?;
+    let pcl = s.reliable_pc_latency()?;
     let display = s.frame_to_display?;
-    if frame_ms <= 0.0 || f64::from(pcl.samples) < f64::from(s.frames) * PC_LATENCY_MIN_COVERAGE {
+    if frame_ms <= 0.0 {
         return None;
     }
     let gap = pcl.median_ms - display.median_ms;

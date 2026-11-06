@@ -15,6 +15,8 @@
 //! - Висновок має чотири чесні варіанти: стало краще / гірше (інтервал не перетинає нуль і
 //!   ефект не менший за поріг), ефекту немає (увесь інтервал у межах ±порогу) або «не ясно»
 //!   (даних замало — так і кажемо).
+//! - PC Latency, якщо її ввімкнено в [`Policy`], оцінюється тією самою моделлю, але окремо: нижче —
+//!   краще, і загальний висновок (`Comparison::verdict`) вона не змінює, бо лишається про FPS.
 //! - Прогони, що відрізняються від решти свого варіанта рівнем FPS чи формою розподілу кадрів
 //!   (схоже на іншу сцену), позначаються ([`scene`]); виключає їх лише користувач.
 //!
@@ -36,6 +38,9 @@ use stats::{fit, t_quantile, SplitMix};
 pub const POCOCK_ALPHA: f64 = 0.0142;
 /// Найбільше варіантів в одному порівнянні.
 pub const MAX_VARIANTS: usize = 4;
+/// Найменший ефект на PC Latency, який вважаємо помітним, %. Припущення: повторюваність між
+/// прогонами ще не вимірювали (у RE9 різниця 0,9 % там, де ефекту не було, і 30 % від Reflex).
+pub const LATENCY_MARGIN_PCT: f64 = 5.0;
 /// Менше кадрів у прогоні — замало для надійного 1% low.
 pub const MIN_FRAMES_PER_RUN: usize = 1000;
 /// Дрейф FPS за прогін, з якого попереджаємо (схоже, система ще прогрівається), %.
@@ -74,6 +79,8 @@ pub struct Policy {
     pub margin_avg_pct: f64,
     /// Те саме для 1% low (він шумніший), %.
     pub margin_low_pct: f64,
+    /// Те саме для PC Latency; `None` — затримку не оцінюємо.
+    pub margin_latency_pct: Option<f64>,
     /// Рівень значущості однієї перевірки (на всі порівняння разом).
     pub alpha: f64,
 }
@@ -86,6 +93,7 @@ impl Default for Policy {
             max_per_arm: 8,
             margin_avg_pct: 1.0,
             margin_low_pct: 2.0,
+            margin_latency_pct: None,
             alpha: POCOCK_ALPHA,
         }
     }
@@ -96,6 +104,14 @@ impl Policy {
     pub fn with_variants(self, n: usize) -> Self {
         Self {
             variants: n.clamp(2, MAX_VARIANTS),
+            ..self
+        }
+    }
+
+    /// Ті самі правила з оцінкою PC Latency.
+    pub fn with_latency(self) -> Self {
+        Self {
+            margin_latency_pct: Some(LATENCY_MARGIN_PCT),
             ..self
         }
     }
@@ -119,6 +135,8 @@ pub struct Run {
     pub frametimes_ms: Vec<f64>,
     /// Середня температура GPU, °C.
     pub gpu_temp_avg_c: Option<f64>,
+    /// Медіана PC Latency, мс (гра може не передавати цю розмітку).
+    pub pc_latency_ms: Option<f64>,
     /// FPS упирався в ліміт кадрів (зміна могла не проявитися).
     pub frame_capped: bool,
     /// Користувач виключив прогін (напр. після позначки «інша сцена»).
@@ -154,6 +172,8 @@ pub struct RunSummary {
     pub duration_s: f64,
     /// Точність 1% low цього прогону (половина 95 % інтервалу, блочний bootstrap), %.
     pub low_precision_pct: Option<f64>,
+    /// Медіана PC Latency, мс.
+    pub pc_latency_ms: Option<f64>,
     /// FPS упирався в ліміт кадрів.
     #[serde(default)]
     pub frame_capped: bool,
@@ -212,6 +232,8 @@ pub struct Comparison {
     pub avg_fps: Option<Estimate>,
     /// 1% low.
     pub low_1pct: Option<Estimate>,
+    /// PC Latency (нижче — краще): окрема оцінка, на `verdict` не впливає.
+    pub pc_latency: Option<Estimate>,
 }
 
 /// Стан тесту.
@@ -245,6 +267,8 @@ pub struct Report {
     pub margin_avg_pct: f64,
     /// Поріг для 1% low, %.
     pub margin_low_pct: f64,
+    /// Поріг для PC Latency, % (`None` — затримку не оцінювали).
+    pub margin_latency_pct: Option<f64>,
     /// Прогони в порядку виконання.
     pub runs: Vec<RunSummary>,
     /// Попередження про умови тесту.
@@ -348,6 +372,7 @@ fn summarize(order: usize, r: &Run) -> RunSummary {
         frames: u32::try_from(r.frametimes_ms.len()).unwrap_or(u32::MAX),
         duration_s: stats.as_ref().map_or(0.0, |s| s.duration_ms / 1000.0),
         low_precision_pct: low_precision_pct(&r.frametimes_ms, 0x5EED ^ order as u64),
+        pc_latency_ms: r.pc_latency_ms.filter(|v| v.is_finite() && *v > 0.0),
         frame_capped: r.frame_capped,
         excluded: r.excluded,
         suspect: None,
@@ -366,20 +391,29 @@ fn classify(delta: f64, lo: f64, hi: f64, margin: f64) -> Outcome {
     }
 }
 
-/// Оцінки всіх змін за однією метрикою (індекс `k − 1`).
+/// Напрям метрики.
+#[derive(Clone, Copy, PartialEq)]
+enum Better {
+    Higher,
+    Lower,
+}
+
+/// Оцінки всіх змін за однією метрикою (індекс `k − 1`). Метрика має бути в кожному прогоні,
+/// інакше оцінки немає: дрейф і ефект рахувалися б за різними прогонами.
 fn estimates(
     runs: &[RunSummary],
-    value: fn(&RunSummary) -> f64,
+    value: fn(&RunSummary) -> Option<f64>,
     margin: f64,
+    better: Better,
     policy: &Policy,
 ) -> Vec<Option<Estimate>> {
     let k = policy.variants.clamp(2, MAX_VARIANTS);
-    let points: Vec<(usize, f64, f64)> = runs
+    let points: Option<Vec<(usize, f64, f64)>> = runs
         .iter()
         .filter(|r| !r.excluded)
-        .map(|r| (usize::from(r.variant), f64::from(r.order), value(r)))
+        .map(|r| Some((usize::from(r.variant), f64::from(r.order), value(r)?)))
         .collect();
-    let Some(f) = fit(&points, k).filter(|f| f.level > 0.0) else {
+    let Some(f) = points.and_then(|p| fit(&p, k)).filter(|f| f.level > 0.0) else {
         return vec![None; k - 1];
     };
     let t = t_quantile(1.0 - policy.alpha_per_comparison() / 2.0, f.df);
@@ -398,7 +432,10 @@ fn estimates(
                 ci_high_pct: hi,
                 drift_pct_per_run: pct(f.drift),
                 run_sd_pct: pct(f.residual_sd),
-                outcome: classify(delta, lo, hi, margin),
+                outcome: match better {
+                    Better::Higher => classify(delta, lo, hi, margin),
+                    Better::Lower => classify(-delta, -hi, -lo, margin),
+                },
             })
         })
         .collect()
@@ -433,6 +470,12 @@ fn decided(avg: &Estimate, low: &Estimate, policy: &Policy) -> bool {
         && (low.outcome != Outcome::Unclear || low.delta_pct > -policy.margin_low_pct)
 }
 
+/// Чи PC Latency не тримає тест. Як і 1% low: «не ясно» тримає лише тоді, коли оцінка вказує на
+/// помітну зміну (збираємо ще прогони, щоб її підтвердити чи зняти).
+fn latency_settled(e: Option<&Estimate>, margin: f64) -> bool {
+    e.is_none_or(|e| e.outcome != Outcome::Unclear || e.delta_pct.abs() < margin)
+}
+
 /// Оцінює прогони: чи вже є висновок, і якщо ні — який варіант запускати далі.
 pub fn evaluate(runs: &[Run], policy: &Policy) -> Report {
     let k = policy.variants.clamp(2, MAX_VARIANTS);
@@ -451,28 +494,50 @@ pub fn evaluate(runs: &[Run], policy: &Policy) -> Report {
     let enough = lo_n >= policy.min_per_arm;
     let (avg, low) = if enough {
         (
-            estimates(&summaries, |r| r.avg_fps, policy.margin_avg_pct, policy),
             estimates(
                 &summaries,
-                |r| r.low_1pct_fps,
+                |r| Some(r.avg_fps),
+                policy.margin_avg_pct,
+                Better::Higher,
+                policy,
+            ),
+            estimates(
+                &summaries,
+                |r| Some(r.low_1pct_fps),
                 policy.margin_low_pct,
+                Better::Higher,
                 policy,
             ),
         )
     } else {
         (vec![None; k - 1], vec![None; k - 1])
     };
-    let all_decided = avg.iter().zip(&low).all(|pair| match pair {
-        (Some(a), Some(l)) => decided(a, l, policy),
-        _ => false,
+    let latency = match policy.margin_latency_pct {
+        Some(margin) if enough => estimates(
+            &summaries,
+            |r| r.pc_latency_ms,
+            margin,
+            Better::Lower,
+            policy,
+        ),
+        _ => vec![None; k - 1],
+    };
+    let latency_margin = policy.margin_latency_pct.unwrap_or(0.0);
+    let all_decided = avg.iter().zip(&low).zip(&latency).all(|(pair, lat)| {
+        latency_settled(lat.as_ref(), latency_margin)
+            && match pair {
+                (Some(a), Some(l)) => decided(a, l, policy),
+                _ => false,
+            }
     });
     let at_max = lo_n >= policy.max_per_arm;
     let done = balanced && enough && (all_decided || at_max);
     let comparisons: Vec<Comparison> = avg
         .iter()
         .zip(&low)
+        .zip(&latency)
         .enumerate()
-        .map(|(i, (a, l))| Comparison {
+        .map(|(i, ((a, l), lat))| Comparison {
             variant: Variant::try_from(i + 1).unwrap_or(Variant::MAX),
             verdict: if done {
                 overall(a.as_ref(), l.as_ref())
@@ -481,6 +546,7 @@ pub fn evaluate(runs: &[Run], policy: &Policy) -> Report {
             },
             avg_fps: *a,
             low_1pct: *l,
+            pc_latency: *lat,
         })
         .collect();
     let more = avg
@@ -493,12 +559,19 @@ pub fn evaluate(runs: &[Run], policy: &Policy) -> Report {
         status: if done { Status::Done } else { Status::Continue },
         next: (!done).then(|| next_variant(runs, k)),
         variants: u8::try_from(k).unwrap_or(2),
-        warnings: warnings(runs, &summaries, &avg, k),
+        warnings: warnings(
+            runs,
+            &summaries,
+            &avg,
+            k,
+            policy.margin_latency_pct.is_some(),
+        ),
         comparisons,
         more_per_arm: more,
         confidence_pct: (1.0 - policy.alpha_per_comparison()) * 100.0,
         margin_avg_pct: policy.margin_avg_pct,
         margin_low_pct: policy.margin_low_pct,
+        margin_latency_pct: policy.margin_latency_pct,
         runs: summaries,
     }
 }
@@ -530,6 +603,7 @@ fn warnings(
     sums: &[RunSummary],
     avg: &[Option<Estimate>],
     variants: usize,
+    latency: bool,
 ) -> Vec<Text> {
     let mut out = Vec::new();
     let included = || runs.iter().zip(sums).filter(|(r, _)| !r.excluded);
@@ -565,6 +639,12 @@ fn warnings(
                 Text::new("exp.warn.drift").arg("pct", format!("{:+.1}", e.drift_pct_per_run)),
             );
         }
+    }
+    if latency
+        && included().any(|(_, s)| s.pc_latency_ms.is_some())
+        && included().any(|(_, s)| s.pc_latency_ms.is_none())
+    {
+        out.push(Text::new("exp.warn.latency_partial"));
     }
     if included().any(|(r, _)| r.frame_capped) {
         out.push(Text::new("exp.warn.capped"));

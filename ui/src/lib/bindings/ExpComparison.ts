@@ -21,4 +21,8 @@ avg_fps: ExpEstimate | null,
 /**
  * 1% low.
  */
-low_1pct: ExpEstimate | null, };
+low_1pct: ExpEstimate | null, 
+/**
+ * PC Latency (нижче — краще): окрема оцінка, на `verdict` не впливає.
+ */
+pc_latency: ExpEstimate | null, };

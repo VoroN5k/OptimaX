@@ -152,6 +152,7 @@ mod app {
                     frametimes_ms: frames.frames.iter().map(|f| f.frametime_ms).collect(),
                     gpu_temp_avg_c: (!temps.is_empty())
                         .then(|| temps.iter().sum::<f64>() / temps.len() as f64),
+                    pc_latency_ms: None,
                     frame_capped: d.bottleneck == Bottleneck::FrameCap,
                     excluded: false,
                 });

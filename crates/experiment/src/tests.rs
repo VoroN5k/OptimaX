@@ -22,6 +22,7 @@ fn run_with(variant: Variant, fps: f64, frames: usize, spike: f64, seed: u64) ->
         variant,
         frametimes_ms: ft,
         gpu_temp_avg_c: Some(70.0),
+        pc_latency_ms: None,
         frame_capped: false,
         excluded: false,
     }
@@ -391,4 +392,146 @@ fn markdown_is_fully_localized() {
         assert!(md.contains("game.exe") && md.contains("Баланс"));
         assert_eq!(md.matches("\n| ").count(), k + 1, "{md}");
     }
+}
+
+// ---- PC Latency ----
+
+/// Той самий FPS у всіх варіантах, PC Latency прогону — `latency(номер, варіант)`.
+fn latency_series(n: usize, k: usize, latency: impl Fn(usize, Variant) -> Option<f64>) -> Vec<Run> {
+    let mut runs = series_k(n, k, |_, _| 100.0);
+    for (i, r) in runs.iter_mut().enumerate() {
+        r.pc_latency_ms = latency(i, r.variant);
+    }
+    runs
+}
+
+fn with_latency() -> Policy {
+    Policy::default().with_latency()
+}
+
+#[test]
+fn lower_latency_is_better_and_does_not_change_the_fps_verdict() {
+    // Числа RE9: 47,1 мс без Reflex і 32,9 мс із ним, розкид ±0,5 мс.
+    let runs = latency_series(6, 2, |i, v| {
+        let base = if v == A { 47.1 } else { 32.9 };
+        Some(base + [0.5, -0.5, 0.2, -0.2, 0.4, -0.4][i])
+    });
+    let rep = evaluate(&runs, &with_latency());
+    assert_eq!(rep.status, Status::Done);
+    let c = first(&rep);
+    let e = c.pc_latency.expect("оцінка затримки");
+    assert_eq!(e.outcome, Outcome::Better);
+    assert!((e.delta_pct + 30.1).abs() < 1.0, "{e:?}");
+    assert!(
+        (e.a - 47.1).abs() < 0.5 && (e.b - 32.9).abs() < 0.5,
+        "{e:?}"
+    );
+    assert_eq!(c.verdict, Outcome::NoEffect, "висновок лишається про FPS");
+    assert_eq!(rep.margin_latency_pct, Some(LATENCY_MARGIN_PCT));
+    assert!((rep.runs[0].pc_latency_ms.expect("прогін") - 47.6).abs() < 1e-9);
+}
+
+#[test]
+fn higher_latency_is_worse_and_small_change_is_no_effect() {
+    let wobble = |i: usize| [0.1, -0.1, 0.05, -0.05, 0.1, -0.1][i];
+    let worse = latency_series(6, 2, |i, v| {
+        Some(if v == A { 30.0 } else { 40.0 } + wobble(i))
+    });
+    let e = evaluate(&worse, &with_latency()).comparisons[0].pc_latency;
+    assert_eq!(e.expect("оцінка").outcome, Outcome::Worse);
+
+    // Як у RE9 при ≈134 FPS: 23,3 і 23,1 мс.
+    let same = latency_series(6, 2, |i, v| {
+        Some(if v == A { 23.3 } else { 23.1 } + wobble(i))
+    });
+    let e = evaluate(&same, &with_latency()).comparisons[0].pc_latency;
+    assert_eq!(e.expect("оцінка").outcome, Outcome::NoEffect);
+}
+
+#[test]
+fn latency_is_only_estimated_when_asked_and_present_in_every_run() {
+    let all = latency_series(6, 2, |_, v| Some(if v == A { 47.0 } else { 33.0 }));
+    let rep = evaluate(&all, &Policy::default());
+    assert!(
+        rep.comparisons[0].pc_latency.is_none(),
+        "інші тести без неї"
+    );
+    assert_eq!(rep.margin_latency_pct, None);
+    assert!(rep
+        .warnings
+        .iter()
+        .all(|w| w.key != "exp.warn.latency_partial"));
+
+    let none = latency_series(6, 2, |_, _| None);
+    let rep = evaluate(&none, &with_latency());
+    assert!(rep.comparisons[0].pc_latency.is_none());
+    assert_eq!(rep.status, Status::Done, "гра без розмітки не тримає тест");
+    assert!(rep
+        .warnings
+        .iter()
+        .all(|w| w.key != "exp.warn.latency_partial"));
+
+    // У одному прогоні значення немає: оцінки немає, і користувач про це знає.
+    let mut partial = all;
+    partial[2].pc_latency_ms = None;
+    let rep = evaluate(&partial, &with_latency());
+    assert!(rep.comparisons[0].pc_latency.is_none());
+    assert!(rep
+        .warnings
+        .iter()
+        .any(|w| w.key == "exp.warn.latency_partial"));
+    // Виключений прогін не враховується.
+    partial[2].excluded = true;
+    partial.push(run(next_variant(&partial, 2), 100.0, 77));
+    if let Some(r) = partial.last_mut() {
+        r.pc_latency_ms = Some(if r.variant == A { 47.0 } else { 33.0 });
+    }
+    let e = evaluate(&partial, &with_latency()).comparisons[0].pc_latency;
+    assert!(e.is_some());
+}
+
+#[test]
+fn noticeable_but_uncertain_latency_asks_for_more_runs() {
+    let noisy = latency_series(6, 2, |i, v| {
+        Some(if v == A { 30.0 } else { 32.0 } + [3.0, -3.0, 2.0, -2.0, -3.0, 3.0][i])
+    });
+    let rep = evaluate(&noisy, &with_latency());
+    let e = rep.comparisons[0].pc_latency.expect("оцінка");
+    assert_eq!(e.outcome, Outcome::Unclear, "{e:?}");
+    assert_eq!(rep.status, Status::Continue);
+    assert_eq!(evaluate(&noisy, &Policy::default()).status, Status::Done);
+    // На максимумі прогонів тест усе одно закінчується.
+    let long = latency_series(16, 2, |i, v| {
+        Some(if v == A { 30.0 } else { 32.0 } + if i % 3 == 0 { 3.0 } else { -3.0 })
+    });
+    assert_eq!(evaluate(&long, &with_latency()).status, Status::Done);
+}
+
+#[test]
+fn markdown_has_a_latency_line_only_with_an_estimate() {
+    let names = [
+        "Reflex вимкнено".to_string(),
+        "Reflex увімкнено".to_string(),
+    ];
+    let catalog = optimax_core::Catalog::ukrainian().expect("каталог");
+    let runs = latency_series(6, 2, |_, v| Some(if v == A { 47.1 } else { 32.9 }));
+    let md = report::render_markdown(
+        &evaluate(&runs, &with_latency()),
+        &catalog,
+        &names,
+        "t",
+        "g",
+        30,
+    );
+    assert!(md.contains("47.1 → 32.9"), "{md}");
+    assert!(!md.contains('{'), "{md}");
+    let md = report::render_markdown(
+        &evaluate(&runs, &Policy::default()),
+        &catalog,
+        &names,
+        "t",
+        "g",
+        30,
+    );
+    assert!(!md.contains("PC Latency"), "{md}");
 }

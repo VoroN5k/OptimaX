@@ -202,4 +202,60 @@ test.describe("Діагностика", () => {
     await page.getByRole("button", { name: title }).click();
     await expect(page.getByText(tk("diag.latency_queue.advice"))).toBeVisible();
   });
+
+  test("затримка: кнопка відкриває «Порівняння» з готовими варіантами, але не запускає його", async ({ page }) => {
+    const last = structuredClone(gpuResult);
+    last.diagnosis.latency!.pc_latency = { median_ms: 47.1, p95_ms: 52.6, samples: 3700 };
+    await mockBackend(page, { diag_state: { recording: false, last } });
+    await openDiagnosis(page);
+    await page.getByRole("button", { name: tk("ui.lat.title") }).click();
+    await page.getByRole("button", { name: tk("ui.lat.compare_reflex") }).click();
+    await expect(page.getByLabel(tk("ui.exp.name_a"))).toHaveValue(tk("ui.exp.preset.reflex_off"));
+    await expect(page.getByLabel(tk("ui.exp.name_n", { l: "B" }), { exact: true })).toHaveValue(tk("ui.exp.preset.reflex_on"));
+    await expect(page.getByRole("combobox", { name: tk("ui.diag.game") })).toHaveValue(last.diagnosis.game);
+    expect((await calls(page)).some((c) => c.cmd === "exp_start")).toBe(false);
+  });
+
+  test("затримка: без PC Latency кнопки порівняння немає", async ({ page }) => {
+    await mockBackend(page, { diag_state: { recording: false, last: gpuResult } });
+    await openDiagnosis(page);
+    await page.getByRole("button", { name: tk("ui.lat.title") }).click();
+    await expect(page.getByText(tk("ui.lat.none_pcl"))).toBeVisible();
+    await expect(page.getByRole("button", { name: tk("ui.lat.compare_reflex") })).toHaveCount(0);
+  });
+
+  test("порівняння: PC Latency окремо від висновку про FPS, компроміс не фарбується як «гірше»", async ({ page }) => {
+    const view = structuredClone(expDone);
+    view.report.margin_latency_pct = 5;
+    const c = view.report.comparisons[0]!;
+    c.verdict = "worse";
+    c.avg_fps = { ...c.avg_fps!, delta_pct: -1.7, ci_low_pct: -2.4, ci_high_pct: -1.0, outcome: "worse" };
+    c.pc_latency = {
+      a: 47.1,
+      b: 32.9,
+      delta_pct: -30.1,
+      ci_low_pct: -33.0,
+      ci_high_pct: -27.0,
+      drift_pct_per_run: 0.1,
+      run_sd_pct: 1.2,
+      outcome: "better",
+    };
+    view.report.runs[0]!.pc_latency_ms = 47.2;
+    await mockBackend(page, { exp_state: view });
+    await page.goto("/");
+    await page.getByRole("button", { name: tk("ui.nav.diagnosis") }).click();
+    const line = tk("ui.exp.verdict_latency", {
+      a: "47.1",
+      b: "32.9",
+      d: "-30.1",
+      lo: "-33.0",
+      hi: "-27.0",
+      outcome: tk("ui.exp.outcome.better"),
+    });
+    await expect(page.getByText(line)).toBeVisible();
+    await expect(page.locator(".box.done.worse")).toHaveCount(0);
+    await expect(page.getByRole("columnheader", { name: tk("ui.exp.col.latency") })).toBeVisible();
+    await expect(page.locator("table.runs tbody tr").first()).toContainText("47.2");
+    await expect(page.getByText(tk("ui.exp.latency_note"))).toBeVisible();
+  });
 });

@@ -34,6 +34,10 @@ duration_s: number,
  */
 low_precision_pct: number | null, 
 /**
+ * Медіана PC Latency, мс.
+ */
+pc_latency_ms: number | null, 
+/**
  * FPS упирався в ліміт кадрів.
  */
 frame_capped: boolean, 

@@ -27,6 +27,7 @@ pub const MAX_RUNS_PER_ARM: usize = 6;
 /// Правила рушія порівнянь для цього тесту: варіант 0 — рідна роздільність, 1 — знижена.
 pub fn policy() -> Policy {
     Policy {
+        margin_latency_pct: None,
         max_per_arm: MAX_RUNS_PER_ARM,
         margin_avg_pct: NO_HELP_MAX_PCT,
         margin_low_pct: 5.0,
@@ -363,6 +364,7 @@ mod tests {
             variant: u8::from(reduced),
             frametimes_ms: ft,
             gpu_temp_avg_c: Some(70.0),
+            pc_latency_ms: None,
             frame_capped: false,
             excluded: false,
         }

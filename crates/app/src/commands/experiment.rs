@@ -11,6 +11,7 @@ use crate::dto::{ExpPhase, ExpRecord, ExpView, ExpWarmup};
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
 use optimax_core::Text;
+use optimax_diagnosis::latency::latency_summary;
 use optimax_diagnosis::{diagnose, Bottleneck, Context, Timeline};
 use optimax_experiment::thermal::{thermal_state, WARMUP_MAX_S};
 use optimax_experiment::{
@@ -157,7 +158,7 @@ pub fn exp_start(
         let st = lock(&state.settings);
         (st.record_start, st.record_sound)
     };
-    let policy = Policy::default().with_variants(names.len());
+    let policy = Policy::default().with_variants(names.len()).with_latency();
     let names: Vec<String> = names
         .iter()
         .enumerate()
@@ -313,6 +314,9 @@ pub(crate) fn run_from(rec: &Recording, variant: Variant) -> CmdResult<Run> {
         variant,
         frametimes_ms: tl.frames.iter().map(|f| f.frametime_ms).collect(),
         gpu_temp_avg_c: (!temps.is_empty()).then(|| temps.iter().sum::<f64>() / temps.len() as f64),
+        pc_latency_ms: latency_summary(&tl.frames)
+            .and_then(|l| l.reliable_pc_latency())
+            .map(|s| s.median_ms),
         frame_capped: d.bottleneck == Bottleneck::FrameCap,
         excluded: false,
     })

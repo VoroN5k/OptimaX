@@ -35,8 +35,8 @@ pub fn run() -> anyhow::Result<()> {
 mod app {
     use crate::commands::{
         ab, audit, blackbox, cleanup, dashboard, diagnosis, driver_online, experiment, feedback,
-        gamemode, history, lag, laptop, metrics, network, overlay, resolution, startup, system,
-        tweaks, update, upscale,
+        gamemode, history, lag, laptop, metrics, network, overlay, resolution, stability, startup,
+        system, tweaks, update, upscale,
     };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
@@ -87,6 +87,7 @@ mod app {
         cleanup::cancel_all(&lock(&state.cleanup));
         resolution::cancel_session(state);
         experiment::cancel_session(state);
+        stability::cancel_session(state);
         lag::stop_session(state);
         blackbox::finish_state(state);
         overlay::stop(state);
@@ -256,6 +257,12 @@ mod app {
                 experiment::exp_close,
                 experiment::exp_list,
                 experiment::exp_delete,
+                stability::stab_info,
+                stability::stab_start,
+                stability::stab_stop,
+                stability::stab_state,
+                stability::stab_list,
+                stability::stab_delete,
                 lag::lag_start,
                 lag::lag_state,
                 lag::lag_capture,

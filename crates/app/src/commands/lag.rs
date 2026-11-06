@@ -72,6 +72,7 @@ pub fn lag_start(app: AppHandle, state: State<'_, AppState>, exe: String) -> Cmd
         || lock(&state.ab).is_some()
         || super::resolution::is_running(&state)
         || super::experiment::is_active(&state)
+        || super::stability::is_active(&state)
     {
         return Err(CmdError::Failed(
             "уже йде запис, A/B-тест або тест роздільності — дочекайся кінця".into(),

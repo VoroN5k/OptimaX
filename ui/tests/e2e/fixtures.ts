@@ -7,6 +7,9 @@ import type { DiagnosisState } from "../../src/lib/bindings/DiagnosisState";
 import type { DiskSummary } from "../../src/lib/bindings/DiskSummary";
 import type { ExpRecord } from "../../src/lib/bindings/ExpRecord";
 import type { ExpView } from "../../src/lib/bindings/ExpView";
+import type { StabInfo } from "../../src/lib/bindings/StabInfo";
+import type { StabRecord } from "../../src/lib/bindings/StabRecord";
+import type { StabView } from "../../src/lib/bindings/StabView";
 import type { Finding } from "../../src/lib/bindings/Finding";
 import type { HistoryEntry } from "../../src/lib/bindings/HistoryEntry";
 import type { HistoryView } from "../../src/lib/bindings/HistoryView";
@@ -58,6 +61,12 @@ export interface Responses {
   blackbox_state: BlackBoxView;
   exp_state: ExpView | null;
   exp_list: ExpRecord[];
+  stab_info: StabInfo;
+  stab_state: StabView | null;
+  stab_list: StabRecord[];
+  stab_start: StabView;
+  stab_stop: null;
+  stab_delete: null;
   exp_start: ExpView;
   exp_run_next: ExpView;
   exp_close: null;
@@ -368,6 +377,51 @@ export const expReady: ExpView = {
 };
 
 /** Висновок після 3 + 3 прогонів: «Баланс» дає +6 %, один прогін підозрілий. */
+export const stabInfo: StabInfo = {
+  gpu: "NVIDIA GeForce RTX 4070 SUPER",
+  has_sensor: true,
+  limit_c: 85,
+  durations_s: [120, 600, 1800],
+};
+
+export const stabRunning: StabView = {
+  id: "1793700000000-gpu",
+  started_unix_ms: 1793700000000,
+  adapter: "NVIDIA GeForce RTX 4070 SUPER",
+  planned_s: 600,
+  elapsed_s: 75,
+  rounds: 30,
+  checked: 26,
+  mismatches: 0,
+  tested_mb: 2048,
+  vram_mb: 12282,
+  temp_c: 71,
+  clock_mhz: 2610,
+  power_w: 205,
+  util_pct: 99,
+  limit_c: 85,
+  stats: { max_temp_c: 71, avg_clock_mhz: 2600, avg_power_w: 200, avg_util_pct: 98 },
+  no_sensor: false,
+};
+
+export const stabDone: StabRecord = {
+  id: "1793700000000-gpu",
+  started_unix_ms: 1793700000000,
+  adapter: "NVIDIA GeForce RTX 4070 SUPER",
+  planned_s: 600,
+  elapsed_s: 600,
+  rounds: 240,
+  checked: 236,
+  mismatches: 0,
+  tested_mb: 2048,
+  vram_mb: 12282,
+  outcome: "no_errors",
+  events: { read: true, tdr: 0, whea_corrected: 0, whea_fatal: 0, unexpected_off: 0 },
+  stats: { max_temp_c: 74, avg_clock_mhz: 2600, avg_power_w: 205, avg_util_pct: 99 },
+  low_load: false,
+  no_sensor: false,
+};
+
 export const expDone: ExpView = {
   ...expReady,
   phase: "done",
@@ -559,6 +613,12 @@ export function defaults(): Responses {
     blackbox_state: { active: null, last: null },
     exp_state: null,
     exp_list: [],
+    stab_info: structuredClone(stabInfo),
+    stab_state: null,
+    stab_list: [],
+    stab_start: structuredClone(stabRunning),
+    stab_stop: null,
+    stab_delete: null,
     exp_start: structuredClone(expReady),
     exp_run_next: structuredClone(expDone),
     exp_close: null,

@@ -33,6 +33,7 @@ optimax-network.workspace = true
 optimax-cleanup.workspace = true
 optimax-history.workspace = true
 optimax-experiment.workspace = true
+optimax-stability.workspace = true
 flate2.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
@@ -59,6 +60,7 @@ optimax-network = { workspace = true, features = ["ts"] }
 optimax-cleanup = { workspace = true, features = ["ts"] }
 optimax-history = { workspace = true, features = ["ts"] }
 optimax-experiment = { workspace = true, features = ["ts"] }
+optimax-stability = { workspace = true, features = ["ts"] }
 
 [lints]
 workspace = true

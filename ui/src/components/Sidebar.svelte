@@ -6,11 +6,11 @@
   const groups: { key: string; items: ScreenId[] }[] = [
     { key: "ui.nav.group.main", items: ["analysis", "optimization", "games", "diagnosis"] },
     { key: "ui.nav.group.device", items: ["hardware", "laptop", "network"] },
-    { key: "ui.nav.group.tools", items: ["upscale", "cleanup", "apps", "startup", "appearance"] },
+    { key: "ui.nav.group.tools", items: ["stability", "upscale", "cleanup", "apps", "startup", "appearance"] },
     { key: "ui.nav.group.system", items: ["backups", "settings"] },
   ];
   const ready = new Set<ScreenId>([
-    "analysis", "optimization", "games", "diagnosis", "hardware", "laptop", "network", "upscale", "cleanup", "startup", "backups", "settings",
+    "analysis", "optimization", "games", "diagnosis", "hardware", "laptop", "network", "stability", "upscale", "cleanup", "startup", "backups", "settings",
   ]);
 </script>
 

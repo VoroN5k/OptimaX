@@ -170,6 +170,9 @@ pub fn diag_start(
     if super::experiment::is_active(&state) {
         return Err(super::experiment::busy_error());
     }
+    if super::stability::is_active(&state) {
+        return Err(super::stability::busy_error());
+    }
     if super::resolution::is_running(&state) {
         return Err(CmdError::Failed(
             "іде прогін тесту роздільності — дочекайся кінця або скасуй тест".into(),

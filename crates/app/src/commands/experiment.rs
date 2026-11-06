@@ -142,6 +142,9 @@ pub fn exp_start(
     if super::lag::is_watching(&state) {
         return Err(super::lag::busy_error());
     }
+    if super::stability::is_active(&state) {
+        return Err(super::stability::busy_error());
+    }
     if lock(&state.recording).is_some()
         || lock(&state.ab).is_some()
         || lock(&state.res_test).is_some()

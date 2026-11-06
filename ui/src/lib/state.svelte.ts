@@ -15,7 +15,7 @@ import type { UpscaleView } from "./bindings/UpscaleView";
 export type ScreenId =
   | "analysis" | "optimization" | "games" | "diagnosis"
   | "hardware" | "laptop" | "network"
-  | "upscale" | "cleanup" | "apps" | "startup" | "appearance"
+  | "stability" | "upscale" | "cleanup" | "apps" | "startup" | "appearance"
   | "backups" | "settings";
 
 /** Стан фонової анімації (10.4): спокій, сканування, знайдено проблему, успіх. */

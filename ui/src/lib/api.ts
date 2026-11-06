@@ -12,6 +12,9 @@ import type { ConfigSummary } from "./bindings/ConfigSummary";
 import type { DiskSummary } from "./bindings/DiskSummary";
 import type { ExpRecord } from "./bindings/ExpRecord";
 import type { ExpView } from "./bindings/ExpView";
+import type { StabInfo } from "./bindings/StabInfo";
+import type { StabRecord } from "./bindings/StabRecord";
+import type { StabView } from "./bindings/StabView";
 import type { HistoryView } from "./bindings/HistoryView";
 import type { RecordComparison } from "./bindings/RecordComparison";
 import type { Regression } from "./bindings/Regression";
@@ -119,6 +122,13 @@ export const api = {
   expClose: () => invoke<void>("exp_close"),
   expList: () => invoke<ExpRecord[]>("exp_list"),
   expDelete: (id: string) => invoke<void>("exp_delete", { id }),
+  stabInfo: () => invoke<StabInfo>("stab_info"),
+  stabStart: (seconds: number, acceptNoSensor: boolean) =>
+    invoke<StabView>("stab_start", { seconds, acceptNoSensor }),
+  stabStop: () => invoke<void>("stab_stop"),
+  stabState: () => invoke<StabView | null>("stab_state"),
+  stabList: () => invoke<StabRecord[]>("stab_list"),
+  stabDelete: (id: string) => invoke<void>("stab_delete", { id }),
   lagStart: (exe: string) => invoke<LagView>("lag_start", { exe }),
   lagState: () => invoke<LagView | null>("lag_state"),
   lagCapture: () => invoke<void>("lag_capture"),
@@ -189,6 +199,8 @@ type Events = {
   "res-progress": RecordProgress;
   "exp-progress": RecordProgress;
   "exp-update": ExpView;
+  "stab-update": StabView;
+  "stab-done": StabRecord;
   "lag-status": WatchStatus;
   "lag-update": LagView;
   "diag-done": DiagnosisResult;

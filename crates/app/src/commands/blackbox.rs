@@ -129,6 +129,7 @@ fn busy(state: &AppState) -> bool {
         || lock(&state.ab).is_some()
         || super::resolution::is_running(state)
         || super::experiment::is_active(state)
+        || super::stability::is_active(state)
         || super::lag::is_watching(state)
 }
 

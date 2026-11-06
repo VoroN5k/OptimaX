@@ -24,6 +24,7 @@
   import Settings from "./screens/Settings.svelte";
   import Startup from "./screens/Startup.svelte";
   import Upscale from "./screens/Upscale.svelte";
+  import Stability from "./screens/Stability.svelte";
 
   let dotsStats = $state<DotsStats | null>(null);
 
@@ -167,6 +168,8 @@
           <Startup />
         {:else if ui.screen === "upscale"}
           <Upscale />
+        {:else if ui.screen === "stability"}
+          <Stability />
         {:else if ui.screen === "backups"}
           <Backups />
         {:else if ui.screen === "settings"}

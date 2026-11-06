@@ -8,6 +8,7 @@
   import FindingCard from "./FindingCard.svelte";
   import Fold from "./Fold.svelte";
   import FrameAnatomy from "./FrameAnatomy.svelte";
+  import LatencyCard from "./LatencyCard.svelte";
   import FrametimeChart from "./FrametimeChart.svelte";
   import TimelineExplorer from "./TimelineExplorer.svelte";
 
@@ -115,6 +116,17 @@
       summary={tk("ui.anatomy.summary", { ms: an.typical.frame_ms.toFixed(1), n: an.spikes.length })}
     >
       <FrameAnatomy anatomy={an} start={result.diagnosis.view?.start_ms ?? result.diagnosis.chart?.start_ms ?? 0} />
+    </Fold>
+  {/if}
+  {#if result.diagnosis.latency}
+    {@const lat = result.diagnosis.latency}
+    <Fold
+      title={tk("ui.lat.title")}
+      summary={lat.frame_to_display
+        ? tk("ui.lat.summary", { ms: lat.frame_to_display.median_ms.toFixed(1) })
+        : tk("ui.lat.summary_input")}
+    >
+      <LatencyCard latency={lat} frameGen={result.diagnosis.frame_gen != null} />
     </Fold>
   {/if}
   {#if result.diagnosis.view && result.diagnosis.view.frames.t.length}

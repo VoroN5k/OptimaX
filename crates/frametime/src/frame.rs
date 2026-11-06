@@ -63,6 +63,17 @@ pub struct FramePipeline {
     /// `MsInPresentAPI`: скільки тривав сам виклик Present.
     #[serde(default)]
     pub in_present: Option<f64>,
+    /// `MsAllInputToPhotonLatency`: від найранішого вводу (клавіатура, миша), що вплинув на цей
+    /// кадр, до показу (`None` — такого вводу не було).
+    #[serde(default)]
+    pub input_to_photon: Option<f64>,
+    /// `MsClickToPhotonLatency`: те саме від кліку миші.
+    #[serde(default)]
+    pub click_to_photon: Option<f64>,
+    /// `MsPCLatency`: від отримання вводу ПК до відправлення кадру на дисплей. Лише з прапорцем
+    /// `--track_pc_latency` і в іграх із розміткою PC Latency.
+    #[serde(default)]
+    pub pc_latency: Option<f64>,
 }
 
 /// Шлях кадру на екран — значення колонки `PresentMode`.

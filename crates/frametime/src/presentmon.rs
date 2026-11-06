@@ -107,6 +107,8 @@ pub fn capture_args(target: &Target, duration: Duration, terminate_on_exit: bool
             "--session_name",
             SESSION_NAME,
             "--stop_existing_session",
+            // Бета-опція PresentMon: стовпець MsPCLatency, заповнений лише в іграх із розміткою.
+            "--track_pc_latency",
         ]
         .map(String::from),
     );
@@ -327,6 +329,7 @@ mod tests {
         assert!(a.contains(&"--qpc_time".to_string()));
         assert!(a.contains(&"--output_stdout".to_string()));
         assert!(a.contains(&"--terminate_on_proc_exit".to_string()));
+        assert!(a.contains(&"--track_pc_latency".to_string()));
         let timed = a.iter().position(|s| s == "--timed").unwrap();
         assert_eq!(a[timed + 1], "30");
         // У режимах очікування гри ще може не бути — PresentMon не має завершуватись сам.

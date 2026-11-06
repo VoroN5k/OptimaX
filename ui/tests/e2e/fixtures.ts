@@ -222,6 +222,16 @@ export const gpuResult: DiagnosisResult = {
     ],
     chart: null,
     frame_gen: null,
+    latency: {
+      frame_to_display: { median_ms: 18.4, p95_ms: 27.1, samples: 3700 },
+      input_to_photon: { median_ms: 31.2, p95_ms: 44.6, samples: 812 },
+      click_to_photon: null,
+      pc_latency: null,
+      cpu_busy_ms: 6.1,
+      gpu_start_ms: 3.2,
+      until_displayed_ms: 12.3,
+      frames: 3751,
+    },
     anatomy: {
       typical: { frame_ms: 8.0, cpu_busy: 6.1, cpu_wait: 1.9, gpu_latency: 3.2, gpu_busy: 7.4, gpu_wait: 0.3, until_displayed: 4.0 },
       frames: 3751,

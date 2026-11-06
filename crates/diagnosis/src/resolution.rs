@@ -496,6 +496,7 @@ mod tests {
             chart: None,
             frame_gen: None,
             anatomy: None,
+            latency: None,
             view: None,
         }
     }

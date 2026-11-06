@@ -34,6 +34,9 @@ pub struct CsvFrameParser {
     gpu_wait: Option<usize>,
     until_displayed: Option<usize>,
     in_present: Option<usize>,
+    input_to_photon: Option<usize>,
+    click_to_photon: Option<usize>,
+    pc_latency: Option<usize>,
 }
 
 /// Ділить рядок CSV на поля з підтримкою лапок і `""` всередині них.
@@ -108,6 +111,9 @@ impl CsvFrameParser {
             gpu_wait: find(&header, &["MsGPUWait"]),
             until_displayed: find(&header, &["MsUntilDisplayed"]),
             in_present: find(&header, &["MsInPresentAPI"]),
+            input_to_photon: find(&header, &["MsAllInputToPhotonLatency"]),
+            click_to_photon: find(&header, &["MsClickToPhotonLatency"]),
+            pc_latency: find(&header, &["MsPCLatency"]),
         })
     }
 
@@ -168,6 +174,9 @@ impl CsvFrameParser {
                 gpu_wait: opt_f64(&f, self.gpu_wait),
                 until_displayed: opt_f64(&f, self.until_displayed),
                 in_present: opt_f64(&f, self.in_present),
+                input_to_photon: opt_f64(&f, self.input_to_photon),
+                click_to_photon: opt_f64(&f, self.click_to_photon),
+                pc_latency: opt_f64(&f, self.pc_latency),
             },
         }))
     }
@@ -196,6 +205,29 @@ pub fn parse_csv(text: &str) -> Result<(Vec<FrameRecord>, usize), FrametimeError
 mod tests {
     use super::*;
     use crate::frame::PresentMode;
+
+    #[test]
+    fn latency_columns_are_read_and_na_is_absent() {
+        // Заголовок 2.6.0 з `--track_pc_latency`: MsPCLatency одразу після MsUntilDisplayed.
+        let csv = "Application,ProcessID,TimeInQPC,MsBetweenPresents,MsUntilDisplayed,MsPCLatency,MsAllInputToPhotonLatency,MsClickToPhotonLatency\n\
+                   g.exe,1,100,8.0,4.0,21.5,30.25,41.5\n\
+                   g.exe,1,200,8.0,4.0,NA,NA,NA\n";
+        let (frames, skipped) = parse_csv(csv).unwrap();
+        assert_eq!(skipped, 0);
+        let (a, b) = (frames[0].pipeline, frames[1].pipeline);
+        assert_eq!(a.pc_latency, Some(21.5));
+        assert_eq!(a.input_to_photon, Some(30.25));
+        assert_eq!(a.click_to_photon, Some(41.5));
+        assert_eq!(
+            (b.pc_latency, b.input_to_photon, b.click_to_photon),
+            (None, None, None)
+        );
+        // Без прапорця стовпця немає — це не помилка.
+        let (frames, _) =
+            parse_csv("Application,ProcessID,TimeInQPC,MsBetweenPresents\ng.exe,1,100,8.0\n")
+                .unwrap();
+        assert_eq!(frames[0].pipeline.pc_latency, None);
+    }
 
     #[test]
     fn present_mode_names_round_trip() {

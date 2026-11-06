@@ -171,4 +171,15 @@ test.describe("Діагностика", () => {
     await expect.poll(async () => (await calls(page)).find((c) => c.cmd === "ab_finish")?.args).toEqual({ keep: false });
     await expect(page.getByText(tk("ui.opt.effect_none"), { exact: false })).toBeVisible();
   });
+
+  test("затримка: виміри з кількістю кадрів і чесні «немає даних»", async ({ page }) => {
+    await mockBackend(page, { diag_state: { recording: false, last: gpuResult } });
+    await openDiagnosis(page);
+    await page.getByRole("button", { name: tk("ui.lat.title") }).click();
+    await expect(page.getByText(tk("ui.lat.summary", { ms: "18.4" }))).toBeVisible();
+    await expect(page.getByText(tk("ui.lat.detail", { p95: "44.6", n: 812 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.lat.none_click"))).toBeVisible();
+    await expect(page.getByText(tk("ui.lat.none_pcl"))).toBeVisible();
+    await expect(page.getByText(tk("ui.lat.honest"))).toBeVisible();
+  });
 });

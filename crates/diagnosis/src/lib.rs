@@ -10,6 +10,7 @@ pub mod anatomy;
 pub mod chart;
 pub mod drivers;
 pub mod framegen;
+pub mod latency;
 pub mod resolution;
 pub mod rules;
 pub mod timeline;
@@ -105,6 +106,9 @@ pub struct Diagnosis {
     /// Анатомія кадру: типовий кадр і де виникла затримка в найгірших ривках (PresentMon 2.x).
     #[serde(default)]
     pub anatomy: Option<anatomy::FrameAnatomy>,
+    /// Виміри затримки кадру й вводу (PresentMon 2.x).
+    #[serde(default)]
+    pub latency: Option<latency::LatencySummary>,
     /// Усе виміряне на одній шкалі часу для інтерактивного перегляду.
     #[serde(default)]
     pub view: Option<view::TimelineView>,
@@ -237,6 +241,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
             chart,
             frame_gen: None,
             anatomy: None,
+            latency: None,
             view,
         };
     };
@@ -317,6 +322,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
     let mut verdicts: Vec<Verdict> = vec![head.into()];
     verdicts.extend(found.into_iter().map(Verdict::from));
     let anatomy = anatomy::frame_anatomy(&a);
+    let latency = latency::latency_summary(&a.timeline.frames);
     Diagnosis {
         game: tl.game_name.clone(),
         stats: Some(a.stats),
@@ -325,6 +331,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
         chart,
         frame_gen: None,
         anatomy,
+        latency,
         view,
     }
 }
@@ -404,6 +411,7 @@ pub fn diagnose(rec: &Recording, ctx: &Context) -> Diagnosis {
             chart: None,
             frame_gen: None,
             anatomy: None,
+            latency: None,
             view: None,
         },
     }

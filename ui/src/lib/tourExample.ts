@@ -64,6 +64,7 @@ export const EXAMPLE_RESULT: DiagnosisResult = {
     chart: null,
     frame_gen: null,
     anatomy: null,
+    latency: null,
     view: null,
   },
   display_hz: 144,

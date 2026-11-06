@@ -106,7 +106,7 @@ pub fn run_loop(
 /// Точка входу процесу навантаження: виконує тест і завершує роботу. Код виходу завжди описаний
 /// повідомленням; вихід без `Finished` програма трактує як падіння.
 #[cfg(windows)]
-pub fn run(seconds: u32) {
+pub fn run(kind: crate::protocol::TestKind, seconds: u32) {
     use std::io::{Read, Write};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -133,6 +133,10 @@ pub fn run(seconds: u32) {
         emit(&WorkerMessage::Failed {
             message: "не вдалося запустити потік зупинки".into(),
         });
+        return;
+    }
+    if kind == crate::protocol::TestKind::Cpu {
+        crate::cpu::run(seconds, &stop, &mut emit);
         return;
     }
     let mut load = match crate::gpu::GpuLoad::new(&crate::gpu::GpuParams::default()) {

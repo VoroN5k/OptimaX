@@ -2,6 +2,7 @@
 import type { StabEvents } from "./StabEvents";
 import type { StabOutcome } from "./StabOutcome";
 import type { StabStats } from "./StabStats";
+import type { TestKind } from "./TestKind";
 
 /**
  * Результат тесту (зберігається в теці даних).
@@ -12,11 +13,15 @@ export type StabRecord = {
  */
 id: string, 
 /**
+ * Що перевірялось.
+ */
+kind: TestKind, 
+/**
  * Початок, Unix-мс.
  */
 started_unix_ms: number, 
 /**
- * Назва відеокарти.
+ * Назва відеокарти чи процесора.
  */
 adapter: string, 
 /**
@@ -66,4 +71,16 @@ low_load: boolean,
 /**
  * Запущено без датчика температури (після попередження).
  */
-no_sensor: boolean, };
+no_sensor: boolean, 
+/**
+ * Ядра CPU, що розійшлися з більшістю.
+ */
+bad_cores: Array<number>, 
+/**
+ * Ядро CPU, що працювало окремо, коли тест закінчився (важливо, якщо тест упав).
+ */
+last_core: number | null, 
+/**
+ * Фізичних ядер перевірено.
+ */
+total_cores: number, };

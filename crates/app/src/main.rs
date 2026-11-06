@@ -5,8 +5,8 @@
 fn main() -> anyhow::Result<()> {
     // Процес навантаження тесту стабільності: без вікна й без решти програми.
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(seconds) = optimax_stability::protocol::parse_worker_args(&args) {
-        optimax_stability::worker::run(seconds);
+    if let Some((kind, seconds)) = optimax_stability::protocol::parse_worker_args(&args) {
+        optimax_stability::worker::run(kind, seconds);
         return Ok(());
     }
     optimax_app::run()

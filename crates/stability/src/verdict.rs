@@ -1,5 +1,6 @@
 //! Вердикт, запобіжники й запис результату (чисті функції над даними).
 
+use crate::protocol::TestKind;
 use serde::{Deserialize, Serialize};
 
 /// Температура GPU, на якій тест зупиняється сам, °C (рішення користувача, 2026-11-06).
@@ -209,9 +210,12 @@ impl StatsAcc {
 pub struct StabRecord {
     /// Ідентифікатор (ім'я файлу).
     pub id: String,
+    /// Що перевірялось.
+    #[serde(default)]
+    pub kind: TestKind,
     /// Початок, Unix-мс.
     pub started_unix_ms: i64,
-    /// Назва відеокарти.
+    /// Назва відеокарти чи процесора.
     pub adapter: String,
     /// Запланована тривалість, с.
     pub planned_s: u32,
@@ -237,6 +241,15 @@ pub struct StabRecord {
     pub low_load: bool,
     /// Запущено без датчика температури (після попередження).
     pub no_sensor: bool,
+    /// Ядра CPU, що розійшлися з більшістю.
+    #[serde(default)]
+    pub bad_cores: Vec<u32>,
+    /// Ядро CPU, що працювало окремо, коли тест закінчився (важливо, якщо тест упав).
+    #[serde(default)]
+    pub last_core: Option<u32>,
+    /// Фізичних ядер перевірено.
+    #[serde(default)]
+    pub total_cores: u32,
 }
 
 /// Хід тесту, що йде. Цей самий стан лежить на диску, поки тест іде: якщо ПК перезавантажиться,
@@ -246,9 +259,12 @@ pub struct StabRecord {
 pub struct StabView {
     /// Ідентифікатор.
     pub id: String,
+    /// Що перевіряється.
+    #[serde(default)]
+    pub kind: TestKind,
     /// Початок, Unix-мс.
     pub started_unix_ms: i64,
-    /// Назва відеокарти (порожня, поки пристрій не створено).
+    /// Назва відеокарти чи процесора (порожня, поки тест не запустився).
     pub adapter: String,
     /// Запланована тривалість, с.
     pub planned_s: u32,
@@ -278,6 +294,15 @@ pub struct StabView {
     pub stats: StabStats,
     /// Запущено без датчика температури.
     pub no_sensor: bool,
+    /// Ядра CPU, що розійшлися з більшістю.
+    #[serde(default)]
+    pub bad_cores: Vec<u32>,
+    /// Яке фізичне ядро працює окремо (`None` — усі разом або це не тест CPU).
+    #[serde(default)]
+    pub current_core: Option<u32>,
+    /// Фізичних ядер.
+    #[serde(default)]
+    pub total_cores: u32,
 }
 
 impl StabView {
@@ -287,6 +312,10 @@ impl StabView {
         StabRecord {
             outcome: outcome(end, self.mismatches, self.checked, &events),
             id: self.id,
+            kind: self.kind,
+            bad_cores: self.bad_cores,
+            last_core: self.current_core,
+            total_cores: self.total_cores,
             started_unix_ms: self.started_unix_ms,
             adapter: self.adapter,
             planned_s: self.planned_s,
@@ -310,6 +339,10 @@ impl StabView {
 pub struct StabInfo {
     /// Відеокарта за NVML (`None` — не NVIDIA, назву покаже сам тест).
     pub gpu: Option<String>,
+    /// Назва процесора.
+    pub cpu: String,
+    /// Фізичних ядер (лише перша група процесорів).
+    pub cpu_cores: u32,
     /// Температура доступна.
     pub has_sensor: bool,
     /// Температура зупинки, °C.
@@ -465,6 +498,10 @@ mod tests {
     fn low_load_is_flagged_on_the_record() {
         let view = |util| StabView {
             id: "1-gpu".into(),
+            kind: TestKind::Gpu,
+            bad_cores: Vec::new(),
+            current_core: None,
+            total_cores: 0,
             started_unix_ms: 1,
             adapter: "GPU".into(),
             planned_s: 120,

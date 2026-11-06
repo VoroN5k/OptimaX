@@ -15,12 +15,12 @@ test.describe("Стабільність", () => {
     await open(page);
     await expect(page.getByText(tk("ui.stab.limit", { c: 85 }))).toBeVisible();
     await page.getByRole("button", { name: tk("ui.stab.start") }).click();
-    await expect(page.getByText(tk("ui.stab.confirm_text", { min: 10 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.confirm.gpu.text", { min: 10 }))).toBeVisible();
     expect((await calls(page)).some((c) => c.cmd === "stab_start")).toBe(false);
     await page.getByRole("button", { name: tk("ui.stab.confirm_ok"), exact: true }).click();
     await expect
       .poll(async () => (await calls(page)).find((c) => c.cmd === "stab_start")?.args)
-      .toEqual({ seconds: 600, acceptNoSensor: false });
+      .toEqual({ kind: "gpu", seconds: 600, acceptNoSensor: false });
     await expect(page.getByText(tk("ui.stab.running_title"))).toBeVisible();
     await expect(page.getByText(`1:15 / 10:00`)).toBeVisible();
     await page.getByRole("button", { name: tk("ui.stab.stop") }).click();
@@ -62,7 +62,60 @@ test.describe("Стабільність", () => {
     await page.getByRole("button", { name: tk("ui.stab.confirm_ok"), exact: true }).click();
     await expect
       .poll(async () => (await calls(page)).find((c) => c.cmd === "stab_start")?.args)
-      .toEqual({ seconds: 600, acceptNoSensor: true });
+      .toEqual({ kind: "gpu", seconds: 600, acceptNoSensor: true });
+  });
+
+  test("процесор: завжди потрібна згода, бо температури немає", async ({ page }) => {
+    await mockBackend(page);
+    await open(page);
+    await page.getByRole("radio", { name: tk("ui.stab.kind_cpu") }).click();
+    await expect(page.getByText(tk("ui.stab.no_sensor_cpu"))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.cpu", { name: stabInfo.cpu, cores: 8 }))).toBeVisible();
+    const start = page.getByRole("button", { name: tk("ui.stab.start") });
+    await expect(start).toBeDisabled();
+    await page.getByRole("switch", { name: tk("ui.stab.accept_no_sensor") }).click();
+    await start.click();
+    await expect(page.getByText(tk("ui.stab.confirm.cpu.text", { min: 10 }))).toBeVisible();
+    await page.getByRole("button", { name: tk("ui.stab.confirm_ok"), exact: true }).click();
+    await expect
+      .poll(async () => (await calls(page)).find((c) => c.cmd === "stab_start")?.args)
+      .toEqual({ kind: "cpu", seconds: 600, acceptNoSensor: true });
+  });
+
+  test("процесор: видно поточне ядро, а підсумок називає ядро з помилкою", async ({ page }) => {
+    await mockBackend(page, {
+      stab_state: { ...stabRunning, kind: "cpu", adapter: stabInfo.cpu, current_core: 3, total_cores: 8, mismatches: 1, bad_cores: [3] },
+    });
+    await open(page);
+    await expect(page.getByText(tk("ui.stab.core_now", { n: 3, total: 8 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.bad_cores", { cores: "3" }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.temp"))).toHaveCount(0);
+    await emit(page, "stab-done", {
+      ...stabDone,
+      kind: "cpu",
+      outcome: "errors",
+      mismatches: 1,
+      bad_cores: [3],
+      total_cores: 8,
+      stats: { max_temp_c: null, avg_clock_mhz: null, avg_power_w: null, avg_util_pct: null },
+    });
+    await expect(page.getByText(tk("ui.stab.outcome.errors.text_cpu", { n: 1 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.bad_cores", { cores: "3" }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.max_temp"))).toHaveCount(0);
+  });
+
+  test("процесор: якщо процес упав, видно ядро, що тоді працювало", async ({ page }) => {
+    await mockBackend(page, { stab_state: { ...stabRunning, kind: "cpu", current_core: 5, total_cores: 8 } });
+    await open(page);
+    await emit(page, "stab-done", {
+      ...stabDone,
+      kind: "cpu",
+      outcome: "worker_crashed",
+      last_core: 5,
+      total_cores: 8,
+    });
+    await expect(page.getByText(tk("ui.stab.outcome.worker_crashed.text_cpu"))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.crash_core", { n: 5 }))).toBeVisible();
   });
 
   test("збережені результати видно й можна видалити", async ({ page }) => {

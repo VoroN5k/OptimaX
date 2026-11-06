@@ -9,6 +9,14 @@ export type StabInfo = {
  */
 gpu: string | null, 
 /**
+ * Назва процесора.
+ */
+cpu: string, 
+/**
+ * Фізичних ядер (лише перша група процесорів).
+ */
+cpu_cores: number, 
+/**
  * Температура доступна.
  */
 has_sensor: boolean, 

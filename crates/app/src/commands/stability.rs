@@ -14,7 +14,7 @@ use optimax_audit::rules::{
 use optimax_audit::{SystemProbe, WindowsProbe};
 use optimax_frametime::CancelToken;
 use optimax_metrics::{GpuApi, GpuSnapshot, NvmlGpu};
-use optimax_stability::protocol::{worker_args, WorkerMessage};
+use optimax_stability::protocol::{worker_args, TestKind, WorkerMessage};
 use optimax_stability::verdict::{
     Guard, GuardStop, StabEnd, StabEvents, StabInfo, StabRecord, StabView, StatsAcc, DURATIONS_S,
     GPU_STOP_TEMP_C,
@@ -96,6 +96,8 @@ pub async fn stab_info() -> CmdResult<StabInfo> {
         let (temp, busiest) = read_sensors(&mut gpu);
         Ok(StabInfo {
             gpu: busiest.map(|s| s.name),
+            cpu: optimax_stability::cpu::brand(),
+            cpu_cores: u32::try_from(optimax_stability::cpu::topology().len()).unwrap_or(0),
             has_sensor: temp.is_some(),
             limit_c: GPU_STOP_TEMP_C,
             durations_s: DURATIONS_S.to_vec(),
@@ -104,17 +106,23 @@ pub async fn stab_info() -> CmdResult<StabInfo> {
     .await
 }
 
-/// Запускає тест відеокарти. Без датчика температури — лише з `accept_no_sensor`.
+/// Запускає тест. Без датчика температури (CPU завжди) — лише з `accept_no_sensor`.
 #[tauri::command]
 pub async fn stab_start(
     app: AppHandle,
+    kind: TestKind,
     seconds: u32,
     accept_no_sensor: bool,
 ) -> CmdResult<StabView> {
-    blocking(move || start(&app, seconds, accept_no_sensor)).await
+    blocking(move || start(&app, kind, seconds, accept_no_sensor)).await
 }
 
-fn start(app: &AppHandle, seconds: u32, accept_no_sensor: bool) -> CmdResult<StabView> {
+fn start(
+    app: &AppHandle,
+    kind: TestKind,
+    seconds: u32,
+    accept_no_sensor: bool,
+) -> CmdResult<StabView> {
     if !DURATIONS_S.contains(&seconds) {
         return Err(CmdError::Failed("недопустима тривалість тесту".into()));
     }
@@ -136,12 +144,13 @@ fn start(app: &AppHandle, seconds: u32, accept_no_sensor: bool) -> CmdResult<Sta
     let d = dir()?;
     // Незавершений попередній тест спершу стає результатом, щоб не загубити його позначку.
     recover(&d);
-    let mut gpu = NvmlGpu::open();
+    // Датчиків CPU без драйвера ядра немає, тож і NVML для тесту CPU не потрібен.
+    let mut gpu = (kind == TestKind::Gpu).then(NvmlGpu::open).flatten();
     let (temp, _) = read_sensors(&mut gpu);
     let has_sensor = temp.is_some();
     if !has_sensor && !accept_no_sensor {
         return Err(CmdError::Failed(
-            "температура GPU недоступна — потрібне явне підтвердження".into(),
+            "температура недоступна — потрібне явне підтвердження".into(),
         ));
     }
     if temp.is_some_and(|t| t >= GPU_STOP_TEMP_C) {
@@ -151,7 +160,7 @@ fn start(app: &AppHandle, seconds: u32, accept_no_sensor: bool) -> CmdResult<Sta
     }
     let exe = std::env::current_exe().map_err(failed)?;
     let mut child = Command::new(exe)
-        .args(worker_args(seconds))
+        .args(worker_args(kind, seconds))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -162,7 +171,11 @@ fn start(app: &AppHandle, seconds: u32, accept_no_sensor: bool) -> CmdResult<Sta
     let messages = read_messages(&mut child)?;
     let started = now_ms();
     let view = StabView {
-        id: format!("{started}-gpu"),
+        id: format!("{started}-{}", kind.as_str()),
+        kind,
+        bad_cores: Vec::new(),
+        current_core: None,
+        total_cores: 0,
         started_unix_ms: started,
         adapter: String::new(),
         planned_s: seconds,
@@ -187,7 +200,7 @@ fn start(app: &AppHandle, seconds: u32, accept_no_sensor: bool) -> CmdResult<Sta
         stop: stop.clone(),
     });
     drop(slot);
-    tracing::info!("тест стабільності: GPU, {seconds} с");
+    tracing::info!("тест стабільності: {}, {seconds} с", kind.as_str());
     let thread_app = app.clone();
     let spawned = std::thread::Builder::new()
         .name("optimax-stability".into())
@@ -303,6 +316,30 @@ fn monitor(
                         v.mismatches = mismatches;
                     });
                     finished = Some(StabEnd::Completed);
+                }
+                WorkerMessage::Cores {
+                    current,
+                    bad,
+                    total,
+                } => {
+                    update(&mut |v| {
+                        if bad.len() > v.bad_cores.len() {
+                            tracing::warn!("тест стабільності: помилялися ядра {bad:?}");
+                        }
+                        v.current_core = current;
+                        v.bad_cores.clone_from(&bad);
+                        v.total_cores = total;
+                    });
+                }
+                WorkerMessage::CoreHung { core } => {
+                    tracing::warn!("тест стабільності: ядро {core} перестало відповідати");
+                    update(&mut |v| {
+                        v.current_core = Some(core);
+                        if !v.bad_cores.contains(&core) {
+                            v.bad_cores.push(core);
+                        }
+                    });
+                    finished = Some(StabEnd::WorkerDied);
                 }
                 WorkerMessage::DeviceLost { code } => {
                     tracing::warn!("тест стабільності: відеокарту втрачено ({code:#010x})");

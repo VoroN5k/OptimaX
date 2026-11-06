@@ -15,6 +15,7 @@ import type { ExpView } from "./bindings/ExpView";
 import type { StabInfo } from "./bindings/StabInfo";
 import type { StabRecord } from "./bindings/StabRecord";
 import type { StabView } from "./bindings/StabView";
+import type { TestKind } from "./bindings/TestKind";
 import type { HistoryView } from "./bindings/HistoryView";
 import type { RecordComparison } from "./bindings/RecordComparison";
 import type { Regression } from "./bindings/Regression";
@@ -123,8 +124,8 @@ export const api = {
   expList: () => invoke<ExpRecord[]>("exp_list"),
   expDelete: (id: string) => invoke<void>("exp_delete", { id }),
   stabInfo: () => invoke<StabInfo>("stab_info"),
-  stabStart: (seconds: number, acceptNoSensor: boolean) =>
-    invoke<StabView>("stab_start", { seconds, acceptNoSensor }),
+  stabStart: (kind: TestKind, seconds: number, acceptNoSensor: boolean) =>
+    invoke<StabView>("stab_start", { kind, seconds, acceptNoSensor }),
   stabStop: () => invoke<void>("stab_stop"),
   stabState: () => invoke<StabView | null>("stab_state"),
   stabList: () => invoke<StabRecord[]>("stab_list"),

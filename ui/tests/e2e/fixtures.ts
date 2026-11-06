@@ -379,6 +379,8 @@ export const expReady: ExpView = {
 /** Висновок після 3 + 3 прогонів: «Баланс» дає +6 %, один прогін підозрілий. */
 export const stabInfo: StabInfo = {
   gpu: "NVIDIA GeForce RTX 4070 SUPER",
+  cpu: "AMD Ryzen 7 5800X 8-Core Processor",
+  cpu_cores: 8,
   has_sensor: true,
   limit_c: 85,
   durations_s: [120, 600, 1800],
@@ -386,6 +388,10 @@ export const stabInfo: StabInfo = {
 
 export const stabRunning: StabView = {
   id: "1793700000000-gpu",
+  kind: "gpu",
+  bad_cores: [],
+  current_core: null,
+  total_cores: 0,
   started_unix_ms: 1793700000000,
   adapter: "NVIDIA GeForce RTX 4070 SUPER",
   planned_s: 600,
@@ -406,6 +412,10 @@ export const stabRunning: StabView = {
 
 export const stabDone: StabRecord = {
   id: "1793700000000-gpu",
+  kind: "gpu",
+  bad_cores: [],
+  last_core: null,
+  total_cores: 0,
   started_unix_ms: 1793700000000,
   adapter: "NVIDIA GeForce RTX 4070 SUPER",
   planned_s: 600,

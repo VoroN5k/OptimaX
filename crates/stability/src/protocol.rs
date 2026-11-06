@@ -13,6 +13,28 @@ pub const MIN_SECONDS: u32 = 5;
 /// Найдовший дозволений тест, с (стане більшим разом із нічним режимом).
 pub const MAX_SECONDS: u32 = 3600;
 
+/// Що перевіряє тест.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum TestKind {
+    /// Відеокарта.
+    #[default]
+    Gpu,
+    /// Процесор.
+    Cpu,
+}
+
+impl TestKind {
+    /// Назва для аргументів і ідентифікаторів.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Gpu => "gpu",
+            Self::Cpu => "cpu",
+        }
+    }
+}
+
 /// Повідомлення процесу навантаження.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -48,6 +70,20 @@ pub enum WorkerMessage {
         /// Розбіжностей.
         mismatches: u64,
     },
+    /// Стан ядер під час тесту CPU.
+    Cores {
+        /// Яке фізичне ядро працює окремо (`None` — усі разом).
+        current: Option<u32>,
+        /// Ядра, що розійшлися з більшістю.
+        bad: Vec<u32>,
+        /// Фізичних ядер.
+        total: u32,
+    },
+    /// Фізичне ядро перестало давати результати.
+    CoreHung {
+        /// Номер ядра.
+        core: u32,
+    },
     /// Драйвер скинув відеокарту (TDR) або вона зникла.
     DeviceLost {
         /// HRESULT причини.
@@ -60,18 +96,27 @@ pub enum WorkerMessage {
     },
 }
 
-/// Аргументи процесу навантаження для тесту на `seconds` с.
-pub fn worker_args(seconds: u32) -> [String; 2] {
-    [WORKER_ARG.to_string(), seconds.to_string()]
+/// Аргументи процесу навантаження для тесту `kind` на `seconds` с.
+pub fn worker_args(kind: TestKind, seconds: u32) -> [String; 3] {
+    [
+        WORKER_ARG.to_string(),
+        kind.as_str().to_string(),
+        seconds.to_string(),
+    ]
 }
 
-/// Чи це запуск процесу навантаження, і на скільки секунд. Значення поза межами обрізаються.
-pub fn parse_worker_args(args: &[String]) -> Option<u32> {
+/// Чи це запуск процесу навантаження, який і на скільки секунд. Значення поза межами обрізаються.
+pub fn parse_worker_args(args: &[String]) -> Option<(TestKind, u32)> {
     if args.first().map(String::as_str) != Some(WORKER_ARG) {
         return None;
     }
-    let seconds = args.get(1)?.parse::<u32>().ok()?;
-    Some(seconds.clamp(MIN_SECONDS, MAX_SECONDS))
+    let kind = match args.get(1)?.as_str() {
+        "gpu" => TestKind::Gpu,
+        "cpu" => TestKind::Cpu,
+        _ => return None,
+    };
+    let seconds = args.get(2)?.parse::<u32>().ok()?;
+    Some((kind, seconds.clamp(MIN_SECONDS, MAX_SECONDS)))
 }
 
 #[cfg(test)]
@@ -80,13 +125,28 @@ mod tests {
 
     #[test]
     fn worker_args_round_trip_and_stay_in_range() {
-        assert_eq!(parse_worker_args(&worker_args(600)), Some(600));
-        assert_eq!(parse_worker_args(&worker_args(1)), Some(MIN_SECONDS));
-        assert_eq!(parse_worker_args(&worker_args(99_999)), Some(MAX_SECONDS));
+        use TestKind::{Cpu, Gpu};
+        assert_eq!(parse_worker_args(&worker_args(Gpu, 600)), Some((Gpu, 600)));
+        assert_eq!(parse_worker_args(&worker_args(Cpu, 600)), Some((Cpu, 600)));
+        assert_eq!(
+            parse_worker_args(&worker_args(Cpu, 1)),
+            Some((Cpu, MIN_SECONDS))
+        );
+        assert_eq!(
+            parse_worker_args(&worker_args(Gpu, 99_999)),
+            Some((Gpu, MAX_SECONDS))
+        );
         assert_eq!(parse_worker_args(&[]), None);
-        assert_eq!(parse_worker_args(&["--other".into(), "5".into()]), None);
+        assert_eq!(
+            parse_worker_args(&["--other".into(), "gpu".into(), "5".into()]),
+            None
+        );
         assert_eq!(parse_worker_args(&[WORKER_ARG.into()]), None);
-        assert_eq!(parse_worker_args(&[WORKER_ARG.into(), "x".into()]), None);
+        assert_eq!(parse_worker_args(&[WORKER_ARG.into(), "gpu".into()]), None);
+        assert_eq!(
+            parse_worker_args(&[WORKER_ARG.into(), "ram".into(), "5".into()]),
+            None
+        );
     }
 
     #[test]

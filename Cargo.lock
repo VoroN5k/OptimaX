@@ -2541,6 +2541,7 @@ dependencies = [
  "nvml-wrapper",
  "optimax-core",
  "serde",
+ "sha2 0.11.1",
  "sysinfo",
  "thiserror 2.0.21",
  "tracing",

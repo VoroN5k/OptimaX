@@ -12,6 +12,7 @@
   import Card from "../components/Card.svelte";
   import Page from "../components/Page.svelte";
   import ReleaseNotes from "../components/ReleaseNotes.svelte";
+  import SensorsCard from "../components/SensorsCard.svelte";
   import Segmented from "../components/Segmented.svelte";
   import Toggle from "../components/Toggle.svelte";
 
@@ -160,6 +161,8 @@
       {/if}
     </div>
   </Card>
+
+  <SensorsCard onsave={save} />
 
   <Card title={tk("ui.update.title")}>
     <div class="rows">

@@ -8,6 +8,7 @@ import type { DiskSummary } from "../../src/lib/bindings/DiskSummary";
 import type { ExpRecord } from "../../src/lib/bindings/ExpRecord";
 import type { ExpView } from "../../src/lib/bindings/ExpView";
 import type { StabInfo } from "../../src/lib/bindings/StabInfo";
+import type { SensorsStatus } from "../../src/lib/bindings/SensorsStatus";
 import type { StabEntry } from "../../src/lib/bindings/StabEntry";
 import type { StabRecord } from "../../src/lib/bindings/StabRecord";
 import type { StabView } from "../../src/lib/bindings/StabView";
@@ -59,6 +60,8 @@ export interface Responses {
   history_driver_effects: DriverEffect[];
   driver_check: DriverCheck;
   driver_open_page: null;
+  sensors_status: SensorsStatus;
+  sensors_open_site: null;
   blackbox_state: BlackBoxView;
   exp_state: ExpView | null;
   exp_list: ExpRecord[];
@@ -94,6 +97,7 @@ export const settings: Settings = {
   power_off_by_button: false,
   overlay: false,
   onboarded: true,
+  pawnio_sensors: false,
 };
 
 export const config: ConfigSummary = {
@@ -624,6 +628,8 @@ export function defaults(): Responses {
     history_driver_effects: [],
     driver_check: structuredClone(driverCheck),
     driver_open_page: null,
+    sensors_status: { state: "not_installed" },
+    sensors_open_site: null,
     blackbox_state: { active: null, last: null },
     exp_state: null,
     exp_list: [],

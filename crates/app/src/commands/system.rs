@@ -48,7 +48,18 @@ pub fn set_settings(
         c.apply_settings(settings.upscale, settings.upscale_hotkey);
     }
     let overlay = settings.overlay;
-    *lock(&state.settings) = settings;
+    let pawnio = settings.pawnio_sensors;
+    let was = std::mem::replace(&mut *lock(&state.settings), settings).pawnio_sensors;
+    if pawnio != was {
+        tracing::info!(
+            "розширені датчики (PawnIO): {}",
+            if pawnio {
+                "увімкнено"
+            } else {
+                "вимкнено"
+            }
+        );
+    }
     // Запуск / зупинка оверлею — поза потоком UI (зупинка чекає завершення PresentMon).
     std::thread::Builder::new()
         .name("optimax-overlay-apply".into())

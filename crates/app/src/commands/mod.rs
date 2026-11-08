@@ -17,6 +17,7 @@ pub mod metrics;
 pub mod network;
 pub mod overlay;
 pub mod resolution;
+pub mod sensors;
 pub mod stability;
 pub mod startup;
 pub mod system;

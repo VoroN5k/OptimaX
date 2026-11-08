@@ -58,6 +58,10 @@ pub struct Settings {
     /// Знайомство з програмою пройдено або пропущено (більше не показується саме).
     #[serde(default)]
     pub onboarded: bool,
+    /// Читати температуру CPU й частоти шини пам'яті через драйвер PawnIO (якщо користувач сам
+    /// його встановив). За замовчуванням вимкнено: вмикається лише явною згодою.
+    #[serde(default)]
+    pub pawnio_sensors: bool,
 }
 
 /// Налаштування очищення.
@@ -108,6 +112,7 @@ impl Default for Settings {
             power_off_by_button: false,
             overlay: false,
             onboarded: false,
+            pawnio_sensors: false,
         }
     }
 }

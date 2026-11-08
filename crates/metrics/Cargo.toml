@@ -19,6 +19,7 @@ thiserror.workspace = true
 tracing.workspace = true
 sysinfo.workspace = true
 nvml-wrapper.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true

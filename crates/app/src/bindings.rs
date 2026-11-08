@@ -113,6 +113,7 @@ fn export_typescript_bindings() {
         optimax_history::DriverEffect,
         crate::commands::driver_online::DriverCheck,
         crate::commands::blackbox::BlackBoxView,
+        crate::commands::sensors::SensorsStatus,
         crate::commands::blackbox::ActiveSession,
         crate::commands::blackbox::SessionSummary,
         optimax_history::SessionEntry,

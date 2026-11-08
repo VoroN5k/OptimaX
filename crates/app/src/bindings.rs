@@ -86,6 +86,7 @@ fn export_typescript_bindings() {
         ExpRecord,
         optimax_stability::verdict::StabView,
         optimax_stability::verdict::StabRecord,
+        crate::commands::stability::StabEntry,
         optimax_stability::verdict::StabInfo,
         LagCapture,
         LagView,

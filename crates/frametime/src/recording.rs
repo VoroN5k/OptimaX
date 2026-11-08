@@ -294,6 +294,16 @@ fn game_pids(target: &Target) -> Option<Vec<u32>> {
     }
 }
 
+/// Який процес гри трасувати по потоках. Один процес — його. Кілька з тією самою назвою
+/// (запускач Unreal Engine чекає поруч із грою: 2 потоки проти сотні) — той, чиє вікно
+/// активне; поки такого немає — `None`, спробувати пізніше.
+fn trace_pid(pids: &[u32], foreground: Option<u32>) -> Option<u32> {
+    match pids {
+        [only] => Some(*only),
+        _ => foreground.filter(|fg| pids.contains(fg)),
+    }
+}
+
 /// Скільки мс тримати точні проміжки потоків до й після ривка.
 const SPIKE_MARGIN_MS: f64 = 300.0;
 /// Найбільше ривків, навколо яких тримати точні проміжки (найдовші).
@@ -470,9 +480,10 @@ pub fn record_with(
             pids = game_pids(&options.target);
             last_pid_check = Instant::now();
         }
+        let foreground = optimax_core::input::foreground_process_id();
         #[cfg(windows)]
         if !thread_trace_tried {
-            if let Some(&pid) = pids.as_ref().and_then(|p| p.iter().min()) {
+            if let Some(pid) = pids.as_deref().and_then(|p| trace_pid(p, foreground)) {
                 thread_trace_tried = true;
                 match optimax_trace::ThreadTracer::start(pid, start_qpc) {
                     Ok(t) => thread_tracer = Some(t),
@@ -485,7 +496,7 @@ pub fn record_with(
             Some(p) => !p.is_empty(),
             None => true,
         } && !pm_exited;
-        let focused = match (&pids, optimax_core::input::foreground_process_id()) {
+        let focused = match (&pids, foreground) {
             (Some(p), Some(fg)) => p.contains(&fg),
             _ => false,
         };
@@ -571,6 +582,16 @@ pub fn record_with(
     let threads = thread_tracer.map(|t| t.stop(&spike_windows(&frames, freq)));
     #[cfg(not(windows))]
     let threads = None;
+    #[cfg(windows)]
+    if !thread_trace_tried {
+        tracing::warn!("потоки гри не трасувались: вікно гри жодного разу не було активним");
+    }
+    if let Some(t) = threads.as_ref().filter(|t| t.switches == 0) {
+        tracing::warn!(
+            "трасування потоків гри не отримало жодного перемикання (потоків процесу: {})",
+            t.game_threads
+        );
+    }
     if let Some(t) = &threads {
         tracing::debug!(
             "потоки гри: {}, перемикань {}, запізнілих {}, втрачено {}, детальних потоків {}",
@@ -616,6 +637,19 @@ pub fn record_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn traces_the_focused_game_not_its_launcher() {
+        // Gothic Remake 2026-11-09: запускач 13408 (2 потоки) і гра 20040 з тією самою назвою.
+        let pids = [13408, 20040];
+        assert_eq!(trace_pid(&pids, Some(20040)), Some(20040));
+        // Активне чуже вікно або невідомо — чекаємо, а не беремо навмання.
+        assert_eq!(trace_pid(&pids, Some(777)), None);
+        assert_eq!(trace_pid(&pids, None), None);
+        // Один процес — його, навіть без фокуса.
+        assert_eq!(trace_pid(&[20040], None), Some(20040));
+        assert_eq!(trace_pid(&[], Some(20040)), None);
+    }
 
     #[test]
     fn notices_come_from_catalog() -> Result<(), optimax_core::CoreError> {

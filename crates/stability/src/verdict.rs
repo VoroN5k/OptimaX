@@ -11,6 +11,25 @@ pub const SENSOR_LOST_S: f64 = 10.0;
 pub const LOW_LOAD_PCT: f64 = 80.0;
 /// Дозволені тривалості тесту, с: швидка перевірка, 10 хв, 30 хв.
 pub const DURATIONS_S: [u32; 3] = [120, 600, 1800];
+/// Тривалості нічного тесту, с: 4 і 8 годин (рішення користувача, 2026-11-09).
+pub const NIGHT_DURATIONS_S: [u32; 2] = [4 * 3600, 8 * 3600];
+
+/// Це нічний тест (довгий, без нагляду).
+pub fn is_night(planned_s: u32) -> bool {
+    NIGHT_DURATIONS_S.contains(&planned_s)
+}
+
+/// Тривалість дозволена (звичайна чи нічна).
+pub fn duration_allowed(planned_s: u32) -> bool {
+    DURATIONS_S.contains(&planned_s) || is_night(planned_s)
+}
+
+/// Чи зупинити тест зараз через знайдену помилку. Нічний тест зупиняється на першій: відповідь
+/// уже є, а години навантаження на нестабільне залізо нічого не додадуть. Звичайний іде до кінця
+/// й рахує, скільки помилок набереться.
+pub fn stop_on_error(planned_s: u32, mismatches: u64) -> bool {
+    is_night(planned_s) && mismatches > 0
+}
 
 /// Чому запобіжник зупинив тест.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -353,6 +372,8 @@ pub struct StabInfo {
     pub limit_c: u32,
     /// Дозволені тривалості, с.
     pub durations_s: Vec<u32>,
+    /// Тривалості нічного тесту, с.
+    pub night_durations_s: Vec<u32>,
 }
 
 #[cfg(test)]
@@ -530,5 +551,23 @@ mod tests {
         let r = view(99.0).into_record(StabEnd::Completed, CLEAN);
         assert!(!r.low_load);
         assert_eq!(r.outcome, StabOutcome::NoErrors);
+    }
+
+    #[test]
+    fn night_stops_on_first_error_standard_runs_to_the_end() {
+        assert!(is_night(8 * 3600) && is_night(4 * 3600));
+        assert!(!is_night(1800));
+        assert!(stop_on_error(8 * 3600, 1));
+        assert!(!stop_on_error(8 * 3600, 0));
+        assert!(!stop_on_error(1800, 5));
+    }
+
+    #[test]
+    fn only_listed_durations_are_allowed() {
+        for s in DURATIONS_S.iter().chain(NIGHT_DURATIONS_S.iter()) {
+            assert!(duration_allowed(*s));
+        }
+        assert!(!duration_allowed(0));
+        assert!(!duration_allowed(24 * 3600));
     }
 }

@@ -14,6 +14,7 @@ import type { ExpRecord } from "./bindings/ExpRecord";
 import type { ExpView } from "./bindings/ExpView";
 import type { StabInfo } from "./bindings/StabInfo";
 import type { StabRecord } from "./bindings/StabRecord";
+import type { StabEntry } from "./bindings/StabEntry";
 import type { StabView } from "./bindings/StabView";
 import type { TestKind } from "./bindings/TestKind";
 import type { HistoryView } from "./bindings/HistoryView";
@@ -128,7 +129,7 @@ export const api = {
     invoke<StabView>("stab_start", { kind, seconds, acceptNoSensor }),
   stabStop: () => invoke<void>("stab_stop"),
   stabState: () => invoke<StabView | null>("stab_state"),
-  stabList: () => invoke<StabRecord[]>("stab_list"),
+  stabList: () => invoke<StabEntry[]>("stab_list"),
   stabDelete: (id: string) => invoke<void>("stab_delete", { id }),
   lagStart: (exe: string) => invoke<LagView>("lag_start", { exe }),
   lagState: () => invoke<LagView | null>("lag_state"),

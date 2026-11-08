@@ -15,7 +15,7 @@ test.describe("Стабільність", () => {
     await open(page);
     await expect(page.getByText(tk("ui.stab.limit", { c: 85 }))).toBeVisible();
     await page.getByRole("button", { name: tk("ui.stab.start") }).click();
-    await expect(page.getByText(tk("ui.stab.confirm.gpu.text", { min: 10 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.confirm.gpu.text", { time: tk("ui.stab.minutes", { n: 10 }) }))).toBeVisible();
     expect((await calls(page)).some((c) => c.cmd === "stab_start")).toBe(false);
     await page.getByRole("button", { name: tk("ui.stab.confirm_ok"), exact: true }).click();
     await expect
@@ -75,7 +75,7 @@ test.describe("Стабільність", () => {
     await expect(start).toBeDisabled();
     await page.getByRole("switch", { name: tk("ui.stab.accept_no_sensor") }).click();
     await start.click();
-    await expect(page.getByText(tk("ui.stab.confirm.cpu.text", { min: 10 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.confirm.cpu.text", { time: tk("ui.stab.minutes", { n: 10 }) }))).toBeVisible();
     await page.getByRole("button", { name: tk("ui.stab.confirm_ok"), exact: true }).click();
     await expect
       .poll(async () => (await calls(page)).find((c) => c.cmd === "stab_start")?.args)
@@ -128,7 +128,7 @@ test.describe("Стабільність", () => {
     await expect(start).toBeDisabled();
     await page.getByRole("switch", { name: tk("ui.stab.accept_no_sensor") }).click();
     await start.click();
-    await expect(page.getByText(tk("ui.stab.confirm.ram.text", { min: 10 }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.confirm.ram.text", { time: tk("ui.stab.minutes", { n: 10 }) }))).toBeVisible();
     await page.getByRole("button", { name: tk("ui.stab.confirm_ok"), exact: true }).click();
     await expect
       .poll(async () => (await calls(page)).find((c) => c.cmd === "stab_start")?.args)
@@ -161,8 +161,74 @@ test.describe("Стабільність", () => {
     await expect(page.getByText(tk("ui.stab.outcome.no_errors.text_ram", { min: "10.0" }))).toBeVisible();
   });
 
+  test("ніч: години, окрема згода для процесора й зупинка на першій помилці", async ({ page }) => {
+    await mockBackend(page);
+    await open(page);
+    await page.getByRole("radio", { name: tk("ui.stab.kind_cpu") }).click();
+    await page.getByRole("radio", { name: tk("ui.stab.mode_night") }).click();
+    await expect(page.getByRole("radio", { name: tk("ui.stab.hours", { n: 8 }) })).toBeChecked();
+    await expect(page.getByText(tk("ui.stab.night_hint"))).toBeVisible();
+    const start = page.getByRole("button", { name: tk("ui.stab.start") });
+    await page.getByRole("switch", { name: tk("ui.stab.accept_no_sensor") }).click();
+    // Згода «без датчика» ще не згода на години без нагляду.
+    await expect(start).toBeDisabled();
+    await page.getByRole("switch", { name: tk("ui.stab.accept_night") }).click();
+    await start.click();
+    await expect(page.getByText(tk("ui.stab.confirm.cpu.text", { time: tk("ui.stab.hours", { n: 8 }) }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.confirm.night"))).toBeVisible();
+    await page.getByRole("button", { name: tk("ui.stab.confirm_ok"), exact: true }).click();
+    await expect
+      .poll(async () => (await calls(page)).find((c) => c.cmd === "stab_start")?.args)
+      .toEqual({ kind: "cpu", seconds: 28800, acceptNoSensor: true });
+  });
+
+  test("ніч: хід у годинах, а підсумок каже, що зупинено на першій помилці", async ({ page }) => {
+    const night = { planned_s: 28800, elapsed_s: 3725 };
+    await mockBackend(page, { stab_state: { ...stabRunning, ...night } });
+    await open(page);
+    await expect(page.getByText("1:02:05 / 8:00:00")).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.night_running"))).toBeVisible();
+    await emit(page, "stab-done", { ...stabDone, ...night, outcome: "errors", mismatches: 1 });
+    await expect(
+      page.getByText(tk("ui.stab.night_stopped", { time: "1:02:05", planned: tk("ui.stab.hours", { n: 8 }) })),
+    ).toBeVisible();
+  });
+
+  test("збережений тест показує стан ПК і що змінилося від попереднього", async ({ page }) => {
+    await mockBackend(page, {
+      stab_list: [
+        {
+          ...stabDone,
+          kind: "ram",
+          planned_s: 28800,
+          state: {
+            optimax: "0.1.6",
+            windows: null,
+            windows_build: null,
+            gpu: null,
+            driver: null,
+            display: null,
+            power_plan: null,
+            bios: "P2.40",
+            ram_mts: 3600,
+            hags: null,
+            game_mode: null,
+            game_file: null,
+          },
+          changes: [{ field: "ram", from: "3733 MT/s", to: "3600 MT/s" }],
+        },
+      ],
+    });
+    await open(page);
+    await expect(page.getByText(tk("ui.stab.night_badge"), { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(`${tk("ui.stab.state.bios", { v: "P2.40" })} · ${tk("ui.stab.state.ram", { v: 3600 })}`),
+    ).toBeVisible();
+    await expect(page.getByText(`${tk("ui.history.field.ram")}: 3733 MT/s → 3600 MT/s`)).toBeVisible();
+  });
+
   test("збережені результати видно й можна видалити", async ({ page }) => {
-    await mockBackend(page, { stab_list: [{ ...stabDone, outcome: "interrupted" }] });
+    await mockBackend(page, { stab_list: [{ ...stabDone, outcome: "interrupted", state: null, changes: [] }] });
     await open(page);
     await expect(page.getByText(tk("ui.stab.saved_title"))).toBeVisible();
     await expect(page.getByText(tk("ui.stab.outcome.interrupted.title"))).toBeVisible();

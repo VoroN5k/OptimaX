@@ -22,7 +22,7 @@ pub use timeline::{
     DpcPoint, DpcTimeline, FramePoint, GpuPoint, IoProcess, SamplePoint, ShaderWrite, Timeline,
 };
 
-use optimax_core::{Category, Finding, FindingBuilder, Impact, Text};
+use optimax_core::{Category, Evidence, Finding, FindingBuilder, Impact, Text};
 use optimax_frametime::{FrameStats, Recording};
 use rules::Analysis;
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,9 @@ pub const MIN_DURATION_MS: f64 = 10_000.0;
 /// Допуск до мінімальної тривалості: сума frametime зарахованих кадрів трохи менша за
 /// зарахований час (перший кадр відрізка рахується від попереднього кадру поза ним).
 const DURATION_TOLERANCE: f64 = 0.95;
+/// Впевненість «явного вузького місця немає», коли потоки гри не записані: ядра й відеокарта
+/// перевірені, а головний потік — ні (саме його вузьке місце без трасування не видно).
+const UNCLEAR_NO_THREADS_CONFIDENCE: u8 = 60;
 
 /// Виміряний ефект зміни (заповнюється A/B-тестом, не діагностикою).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -271,6 +274,11 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
         }
         (None, Some(g), _) => (Bottleneck::Gpu, g.confidence.percent()),
         (None, None, Some(c)) => (Bottleneck::Cpu, c.confidence.percent()),
+        // Без потоків гри правило «головний потік» не перевірене: потік, що мігрує між
+        // ядрами, видно лише з трасування, тож «нічого не обмежує» — лише ймовірно.
+        (None, None, None) if a.timeline.threads.is_none() => {
+            (Bottleneck::Unclear, UNCLEAR_NO_THREADS_CONFIDENCE)
+        }
         (None, None, None) => (Bottleneck::Unclear, 100),
     };
     let summary_id = match bottleneck {
@@ -328,6 +336,12 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
         // Без цифр «не ясно» виглядає як збій: показуємо, наскільки далеко до порогів.
         head.evidence.extend(rules::load_evidence(&a));
         head.evidence.extend(rules::thread_evidence(&a));
+        if a.timeline.threads.is_none() {
+            head.evidence.push(Evidence::new(
+                Text::new("diag.ev.threads_missing"),
+                Text::new("value.not_recorded"),
+            ));
+        }
     }
     let mut verdicts: Vec<Verdict> = vec![head.into()];
     verdicts.extend(found.into_iter().map(Verdict::from));

@@ -8,6 +8,7 @@ import type { DiskSummary } from "../../src/lib/bindings/DiskSummary";
 import type { ExpRecord } from "../../src/lib/bindings/ExpRecord";
 import type { ExpView } from "../../src/lib/bindings/ExpView";
 import type { StabInfo } from "../../src/lib/bindings/StabInfo";
+import type { StabEntry } from "../../src/lib/bindings/StabEntry";
 import type { StabRecord } from "../../src/lib/bindings/StabRecord";
 import type { StabView } from "../../src/lib/bindings/StabView";
 import type { Finding } from "../../src/lib/bindings/Finding";
@@ -63,7 +64,7 @@ export interface Responses {
   exp_list: ExpRecord[];
   stab_info: StabInfo;
   stab_state: StabView | null;
-  stab_list: StabRecord[];
+  stab_list: StabEntry[];
   stab_start: StabView;
   stab_stop: null;
   stab_delete: null;
@@ -386,6 +387,7 @@ export const stabInfo: StabInfo = {
   has_sensor: true,
   limit_c: 85,
   durations_s: [120, 600, 1800],
+  night_durations_s: [14400, 28800],
 };
 
 export const stabRunning: StabView = {

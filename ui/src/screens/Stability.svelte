@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, asCmdError, on } from "../lib/api";
   import type { CmdError } from "../lib/bindings/CmdError";
+  import type { StabEntry } from "../lib/bindings/StabEntry";
   import type { StabInfo } from "../lib/bindings/StabInfo";
   import type { StabRecord } from "../lib/bindings/StabRecord";
   import type { StabView } from "../lib/bindings/StabView";
@@ -20,18 +21,26 @@
   // Лабораторія стабільності: усе рахує й вирішує бекенд (`optimax_stability`), тут лише показ.
   let info = $state<StabInfo | null>(null);
   let view = $state<StabView | null>(null);
-  let records = $state<StabRecord[]>([]);
+  let records = $state<StabEntry[]>([]);
   let last = $state<StabRecord | null>(null);
   let kind = $state<TestKind>("gpu");
   let seconds = $state(600);
+  let mode = $state<"standard" | "night">("standard");
   let acceptNoSensor = $state(false);
+  let acceptNight = $state(false);
   let confirming = $state(false);
   let stopping = $state(false);
   let error = $state<CmdError | null>(null);
 
   const noSensor = $derived(info != null && (kind !== "gpu" || !info.has_sensor));
   const ramLow = $derived(kind === "ram" && info != null && info.ram_test_mb === 0);
-  const canStart = $derived(info != null && !ramLow && (!noSensor || acceptNoSensor));
+  const night = $derived(mode === "night");
+  const canStart = $derived(
+    info != null && !ramLow && (!noSensor || acceptNoSensor) && (!night || !noSensor || acceptNight),
+  );
+  const durations = $derived(info ? (night ? info.night_durations_s : info.durations_s) : []);
+  /** Нічний тест — за списком тривалостей від бекенда. */
+  const isNight = (planned: number) => info?.night_durations_s.includes(planned) ?? false;
   const BAD = new Set(["errors", "device_lost", "worker_crashed", "hardware_events"]);
 
   $effect(() => {
@@ -94,11 +103,28 @@
 
   const clock = (s: number) => {
     const t = Math.max(0, Math.floor(s));
-    return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+    const two = (n: number) => String(n).padStart(2, "0");
+    if (t >= 3600) return `${Math.floor(t / 3600)}:${two(Math.floor(t / 60) % 60)}:${two(t % 60)}`;
+    return `${Math.floor(t / 60)}:${two(t % 60)}`;
   };
   const num = (v: number | null | undefined, unit: string) =>
     v != null ? `${Math.round(v)} ${unit}` : "—";
-  const durationLabel = (s: number) => tk("ui.stab.minutes", { n: s / 60 });
+  const durationLabel = (s: number) =>
+    s >= 3600 && s % 3600 === 0 ? tk("ui.stab.hours", { n: s / 3600 }) : tk("ui.stab.minutes", { n: s / 60 });
+  function setMode(m: "standard" | "night") {
+    const list = info ? (m === "night" ? info.night_durations_s : info.durations_s) : [];
+    if (!list.includes(seconds)) seconds = m === "night" ? (list[list.length - 1] ?? seconds) : 600;
+  }
+  /** Короткий стан ПК біля збереженого тесту: те, що найчастіше змінюють між тестами. */
+  function stateLine(e: StabEntry): string {
+    const st = e.state;
+    if (!st) return "";
+    const parts: string[] = [];
+    if (st.bios) parts.push(tk("ui.stab.state.bios", { v: st.bios }));
+    if (st.ram_mts != null) parts.push(tk("ui.stab.state.ram", { v: st.ram_mts }));
+    if (e.kind === "gpu" && st.driver) parts.push(tk("ui.stab.state.driver", { v: st.driver }));
+    return parts.join(" · ");
+  }
   /** Текст підсумку: для процесора й пам'яті деякі звучать інакше. */
   const outcomeText = (r: StabRecord) => {
     const own =
@@ -158,6 +184,7 @@
         {:else if view.kind === "ram" && view.tested_mb > 0}
           <p class="small dim">{tk("ui.stab.tested_ram", { mb: view.tested_mb, total: view.vram_mb })}</p>
         {/if}
+        {#if isNight(view.planned_s)}<p class="small muted">{tk("ui.stab.night_running")}</p>{/if}
         {#if view.no_sensor}<p class="small warn">{tk("ui.stab.no_sensor_running")}</p>{/if}
         <div class="actions">
           <Button variant="secondary" icon="stop" loading={stopping} disabled={stopping} onclick={stop}>{tk("ui.stab.stop")}</Button>
@@ -169,6 +196,9 @@
         <Card title={tk(`ui.stab.outcome.${r.outcome}.title`)}>
           <div class="result" class:bad-box={BAD.has(r.outcome)} class:ok-box={r.outcome === "no_errors"} role="status">
             <p>{outcomeText(r)}</p>
+            {#if isNight(r.planned_s) && r.outcome === "errors" && r.elapsed_s < r.planned_s}
+              <p class="small">{tk("ui.stab.night_stopped", { time: clock(r.elapsed_s), planned: durationLabel(r.planned_s) })}</p>
+            {/if}
           </div>
           <dl class="grid">
             <div><dt class="small muted">{checkedLabel(r.kind)}</dt><dd class="mono">{r.checked}</dd></div>
@@ -227,15 +257,27 @@
             {/if}
           </p>
           <div class="duration">
+            <span class="small muted">{tk("ui.stab.mode")}</span>
+            <Segmented
+              label={tk("ui.stab.mode")}
+              bind:value={mode}
+              onchange={setMode}
+              options={[
+                { value: "standard", label: tk("ui.stab.mode_standard") },
+                { value: "night", label: tk("ui.stab.mode_night") },
+              ]}
+            />
+          </div>
+          <div class="duration">
             <span class="small muted">{tk("ui.stab.duration")}</span>
             <Segmented
               label={tk("ui.stab.duration")}
               bind:value={seconds}
-              options={info.durations_s.map((s) => ({ value: s, label: durationLabel(s) }))}
+              options={durations.map((s) => ({ value: s, label: durationLabel(s) }))}
             />
           </div>
           {#if ramLow}<p class="small warn">{tk("ui.stab.ram_low")}</p>{/if}
-          <p class="small dim">{tk("ui.stab.duration_hint")}</p>
+          <p class="small dim">{tk(night ? "ui.stab.night_hint" : "ui.stab.duration_hint")}</p>
           {#if noSensor}
             <div class="box-warn">
               <p class="small">{tk(kind === "gpu" ? "ui.stab.no_sensor" : `ui.stab.no_sensor_${kind}`)}</p>
@@ -243,6 +285,13 @@
                 <Toggle bind:checked={acceptNoSensor} label={tk("ui.stab.accept_no_sensor")} />
                 <span class="small">{tk("ui.stab.accept_no_sensor")}</span>
               </div>
+              {#if night}
+                <p class="small">{tk("ui.stab.night_no_sensor")}</p>
+                <div class="row">
+                  <Toggle bind:checked={acceptNight} label={tk("ui.stab.accept_night")} />
+                  <span class="small">{tk("ui.stab.accept_night")}</span>
+                </div>
+              {/if}
             </div>
           {:else}
             <p class="small dim">{tk("ui.stab.limit", { c: info.limit_c })}</p>
@@ -260,12 +309,26 @@
         <ul class="saved">
           {#each records as r (r.id)}
             <li>
-              <div>
-                <strong class:bad={BAD.has(r.outcome)}>{tk(`ui.stab.outcome.${r.outcome}.title`)}</strong>
-                <span class="small muted">
-                  · {adapterName(r.adapter, r.kind) || "—"} · {clock(r.elapsed_s)} · {dateTime(r.started_unix_ms / 1000)}
-                  {#if r.bad_cores.length}· {tk("ui.stab.bad_cores", { cores: coreList(r.bad_cores) })}{/if}
-                </span>
+              <div class="entry">
+                <div>
+                  <strong class:bad={BAD.has(r.outcome)}>{tk(`ui.stab.outcome.${r.outcome}.title`)}</strong>
+                  {#if isNight(r.planned_s)}<span class="chip small">{tk("ui.stab.night_badge")}</span>{/if}
+                  <span class="small muted">
+                    · {adapterName(r.adapter, r.kind) || "—"} · {clock(r.elapsed_s)} · {dateTime(r.started_unix_ms / 1000)}
+                    {#if r.bad_cores.length}· {tk("ui.stab.bad_cores", { cores: coreList(r.bad_cores) })}{/if}
+                  </span>
+                </div>
+                {#if r.state}<span class="small dim mono">{stateLine(r)}</span>{/if}
+                {#if r.changes.length}
+                  <div class="chips">
+                    <span class="small dim">{tk("ui.history.changed")}</span>
+                    {#each r.changes as c (c.field)}
+                      <span class="chip small" title={`${c.from} → ${c.to}`}>
+                        {tk(`ui.history.field.${c.field}`)}: {c.from} → {c.to}
+                      </span>
+                    {/each}
+                  </div>
+                {/if}
               </div>
               <Button small variant="secondary" icon="trash" onclick={() => remove(r.id)}>{tk("ui.stab.delete")}</Button>
             </li>
@@ -283,7 +346,8 @@
     onconfirm={start}
     oncancel={() => (confirming = false)}
   >
-    <p>{tk(`ui.stab.confirm.${kind}.text`, { min: seconds / 60 })}</p>
+    <p>{tk(`ui.stab.confirm.${kind}.text`, { time: durationLabel(seconds) })}</p>
+    {#if night}<p>{tk("ui.stab.confirm.night")}</p>{/if}
   </Modal>
 {/if}
 
@@ -374,6 +438,27 @@
     align-items: center;
     justify-content: space-between;
     gap: calc(var(--space) * 3);
+  }
+  .entry {
+    display: grid;
+    gap: var(--space);
+    min-width: 0;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(var(--space) * 2);
+  }
+  .chip {
+    padding: 0 calc(var(--space) * 2);
+    margin-left: calc(var(--space) * 2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+  }
+  .chips .chip {
+    margin-left: 0;
   }
   .bad {
     color: var(--danger);

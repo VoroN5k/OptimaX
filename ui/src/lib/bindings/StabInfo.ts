@@ -35,4 +35,8 @@ limit_c: number,
 /**
  * Дозволені тривалості, с.
  */
-durations_s: Array<number>, };
+durations_s: Array<number>, 
+/**
+ * Тривалості нічного тесту, с.
+ */
+night_durations_s: Array<number>, };

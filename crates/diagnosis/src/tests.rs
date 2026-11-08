@@ -1622,6 +1622,28 @@ fn main_thread_with_headroom_or_sleeping_is_not_cpu_bound() {
 }
 
 #[test]
+fn unclear_without_threads_says_so_and_is_less_sure() {
+    // Gothic Remake 2026-11-09: потоки не записались — «нічого не обмежує» не може бути 100 %.
+    let mut tl = cpu_hidden_timeline();
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert_eq!(d.bottleneck, Bottleneck::Unclear);
+    let head = &d.verdicts[0].finding;
+    assert_eq!(head.confidence.percent(), 60);
+    assert!(head
+        .evidence
+        .iter()
+        .any(|e| e.label.key == "diag.ev.threads_missing" && e.value.key == "value.not_recorded"));
+    tl.threads = Some(threads(0.83, 0.13));
+    let d = diagnose_timeline(&tl, &Context::default());
+    let head = &d.verdicts[0].finding;
+    assert_eq!(head.confidence.percent(), 100);
+    assert!(!head
+        .evidence
+        .iter()
+        .any(|e| e.label.key == "diag.ev.threads_missing"));
+}
+
+#[test]
 fn core_rule_gets_thread_evidence_when_traced() {
     let mut tl = timeline(&jittery(8.0, 3000), |_, _| {
         let mut s = base_sample();

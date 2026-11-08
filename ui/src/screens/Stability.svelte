@@ -32,7 +32,9 @@
   let stopping = $state(false);
   let error = $state<CmdError | null>(null);
 
-  const noSensor = $derived(info != null && (kind !== "gpu" || !info.has_sensor));
+  const noSensor = $derived(info != null && (kind === "gpu" ? !info.has_sensor : !info.cpu_sensor));
+  /** Межа зупинки для виду тесту (процесор і пам'ять — за температурою CPU). */
+  const limitFor = (k: TestKind) => (k === "gpu" ? info?.limit_c : info?.cpu_limit_c) ?? "";
   const ramLow = $derived(kind === "ram" && info != null && info.ram_test_mb === 0);
   const night = $derived(mode === "night");
   const canStart = $derived(
@@ -130,10 +132,13 @@
     const own =
       (r.kind === "cpu" && (r.outcome === "errors" || r.outcome === "worker_crashed")) ||
       (r.kind === "ram" && (r.outcome === "errors" || r.outcome === "worker_crashed" || r.outcome === "no_errors"));
-    return tk(`ui.stab.outcome.${r.outcome}.text${own ? `_${r.kind}` : ""}`, {
+    // Перегрів і зникнення датчика для процесора й пам'яті — про температуру CPU.
+    const cpuTemp = r.kind !== "gpu" && (r.outcome === "over_temp" || r.outcome === "sensor_lost");
+    const suffix = own ? `_${r.kind}` : cpuTemp ? "_cpu" : "";
+    return tk(`ui.stab.outcome.${r.outcome}.text${suffix}`, {
       min: (r.elapsed_s / 60).toFixed(1),
       n: r.mismatches,
-      limit: info?.limit_c ?? "",
+      limit: limitFor(r.kind),
     });
   };
   const mismatchesLabel = (k: TestKind) => tk(k === "ram" ? "ui.stab.mismatches_ram" : "ui.stab.mismatches");
@@ -169,11 +174,13 @@
         <dl class="grid">
           <div><dt class="small muted">{checkedLabel(view.kind)}</dt><dd class="mono">{view.checked}</dd></div>
           <div><dt class="small muted">{mismatchesLabel(view.kind)}</dt><dd class="mono" class:bad={view.mismatches > 0}>{view.mismatches}</dd></div>
-          {#if view.kind === "gpu"}
+          {#if view.kind === "gpu" || view.limit_c != null}
             <div>
-              <dt class="small muted">{tk("ui.stab.temp")}</dt>
+              <dt class="small muted">{tk(view.kind === "gpu" ? "ui.stab.temp" : "ui.stab.temp_cpu")}</dt>
               <dd class="mono">{num(view.temp_c, "°C")}{#if view.limit_c != null}<span class="dim"> / {view.limit_c}</span>{/if}</dd>
             </div>
+          {/if}
+          {#if view.kind === "gpu"}
             <div><dt class="small muted">{tk("ui.stab.util")}</dt><dd class="mono">{num(view.util_pct, "%")}</dd></div>
             <div><dt class="small muted">{tk("ui.stab.clock")}</dt><dd class="mono">{num(view.clock_mhz, tk("ui.stab.mhz"))}</dd></div>
             <div><dt class="small muted">{tk("ui.stab.power")}</dt><dd class="mono">{num(view.power_w, tk("ui.stab.watt"))}</dd></div>
@@ -212,6 +219,9 @@
               <div><dt class="small muted">{tk("ui.stab.cores_tested")}</dt><dd class="mono">{r.total_cores}</dd></div>
             {:else}
               <div><dt class="small muted">{tk("ui.stab.tested_ram_label")}</dt><dd class="mono">{r.tested_mb} {tk("ui.stab.mb")}</dd></div>
+            {/if}
+            {#if r.kind !== "gpu" && r.stats.max_temp_c != null}
+              <div><dt class="small muted">{tk("ui.stab.max_temp")}</dt><dd class="mono">{num(r.stats.max_temp_c, "°C")}</dd></div>
             {/if}
           </dl>
           <ul class="notes small">
@@ -294,7 +304,7 @@
               {/if}
             </div>
           {:else}
-            <p class="small dim">{tk("ui.stab.limit", { c: info.limit_c })}</p>
+            <p class="small dim">{tk(kind === "gpu" ? "ui.stab.limit" : "ui.stab.limit_cpu", { c: limitFor(kind) })}</p>
           {/if}
         {/if}
         {#if error}<StateView kind="error" title={tk("ui.common.error")} text={error.message} />{/if}
@@ -347,6 +357,7 @@
     oncancel={() => (confirming = false)}
   >
     <p>{tk(`ui.stab.confirm.${kind}.text`, { time: durationLabel(seconds) })}</p>
+    {#if kind === "cpu" && noSensor}<p>{tk("ui.stab.confirm.no_sensor")}</p>{/if}
     {#if night}<p>{tk("ui.stab.confirm.night")}</p>{/if}
   </Modal>
 {/if}

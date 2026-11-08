@@ -390,6 +390,8 @@ export const stabInfo: StabInfo = {
   ram_test_mb: 12000,
   has_sensor: true,
   limit_c: 85,
+  cpu_sensor: false,
+  cpu_limit_c: 85,
   durations_s: [120, 600, 1800],
   night_durations_s: [14400, 28800],
 };

@@ -145,7 +145,9 @@ test.describe("Стабільність", () => {
   });
 
   test("пам'ять: підсумок каже про перевірений обсяг і не радить про відеокарту", async ({ page }) => {
-    const ram = { kind: "ram" as const, adapter: "RAM", tested_mb: 12000, vram_mb: 32768 };
+    // Без PawnIO температури в тесті пам'яті немає.
+    const stats = { max_temp_c: null, avg_clock_mhz: null, avg_power_w: null, avg_util_pct: null };
+    const ram = { kind: "ram" as const, adapter: "RAM", tested_mb: 12000, vram_mb: 32768, stats };
     await mockBackend(page, {
       stab_state: { ...stabRunning, ...ram, mismatches: 4 },
     });
@@ -225,6 +227,38 @@ test.describe("Стабільність", () => {
       page.getByText(`${tk("ui.stab.state.bios", { v: "P2.40" })} · ${tk("ui.stab.state.ram", { v: 3600 })}`),
     ).toBeVisible();
     await expect(page.getByText(`${tk("ui.history.field.ram")}: 3733 MT/s → 3600 MT/s`)).toBeVisible();
+  });
+
+  test("процесор із датчиком PawnIO: без згоди «без датчика», межа 85 °C і температура в ході", async ({ page }) => {
+    await mockBackend(page, { stab_info: { ...stabInfo, cpu_sensor: true } });
+    await open(page);
+    await page.getByRole("radio", { name: tk("ui.stab.kind_cpu") }).click();
+    await expect(page.getByText(tk("ui.stab.limit_cpu", { c: 85 }))).toBeVisible();
+    await expect(page.getByRole("switch", { name: tk("ui.stab.accept_no_sensor") })).toHaveCount(0);
+    await page.getByRole("button", { name: tk("ui.stab.start") }).click();
+    await expect(page.getByText(tk("ui.stab.confirm.no_sensor"))).toHaveCount(0);
+    await page.getByRole("button", { name: tk("ui.stab.confirm_ok"), exact: true }).click();
+    await expect
+      .poll(async () => (await calls(page)).find((c) => c.cmd === "stab_start")?.args)
+      .toEqual({ kind: "cpu", seconds: 600, acceptNoSensor: false });
+  });
+
+  test("процесор перегрівся: підсумок про CPU, найвища температура видна", async ({ page }) => {
+    await mockBackend(page, {
+      stab_info: { ...stabInfo, cpu_sensor: true },
+      stab_state: { ...stabRunning, kind: "cpu", adapter: stabInfo.cpu, temp_c: 80, limit_c: 85, total_cores: 8 },
+    });
+    await open(page);
+    await expect(page.getByText(tk("ui.stab.temp_cpu"))).toBeVisible();
+    await emit(page, "stab-done", {
+      ...stabDone,
+      kind: "cpu",
+      outcome: "over_temp",
+      total_cores: 8,
+      stats: { max_temp_c: 85, avg_clock_mhz: null, avg_power_w: null, avg_util_pct: null },
+    });
+    await expect(page.getByText(tk("ui.stab.outcome.over_temp.text_cpu", { limit: 85, min: "10.0" }))).toBeVisible();
+    await expect(page.getByText(tk("ui.stab.max_temp"))).toBeVisible();
   });
 
   test("збережені результати видно й можна видалити", async ({ page }) => {

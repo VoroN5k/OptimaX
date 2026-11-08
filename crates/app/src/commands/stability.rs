@@ -12,13 +12,16 @@ use optimax_audit::rules::{
     UNEXPECTED_OFF_EVENT_ID, WHEA_PROVIDER,
 };
 use optimax_audit::{SystemProbe, WindowsProbe};
+use optimax_core::registry::WinRegistry;
 use optimax_frametime::CancelToken;
 use optimax_history::{diff, StateChange, SystemState};
+use optimax_metrics::amd_sensors::AmdSensors;
 use optimax_metrics::{GpuApi, GpuSnapshot, NvmlGpu};
 use optimax_stability::protocol::{worker_args, TestKind, WorkerMessage};
 use optimax_stability::verdict::{
-    duration_allowed, is_night, stop_on_error, Guard, GuardStop, StabEnd, StabEvents, StabInfo,
-    StabRecord, StabView, StatsAcc, DURATIONS_S, GPU_STOP_TEMP_C, NIGHT_DURATIONS_S,
+    duration_allowed, is_night, stop_on_error, stop_temp_c, Guard, GuardStop, StabEnd, StabEvents,
+    StabInfo, StabRecord, StabView, StatsAcc, CPU_STOP_TEMP_C, DURATIONS_S, GPU_STOP_TEMP_C,
+    NIGHT_DURATIONS_S,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
@@ -106,6 +109,45 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Звідки береться температура для запобіжника.
+enum Probe {
+    /// Відеокарта (NVML).
+    Gpu(Box<Option<NvmlGpu>>),
+    /// Процесор через PawnIO (лише якщо користувач його встановив і ввімкнув).
+    Cpu(Option<AmdSensors>),
+}
+
+impl Probe {
+    /// Для тесту відеокарти — NVML; для процесора й пам'яті — PawnIO, якщо дозволено.
+    fn open(kind: TestKind, pawnio_allowed: bool) -> Self {
+        match kind {
+            TestKind::Gpu => Self::Gpu(Box::new(NvmlGpu::open())),
+            TestKind::Cpu | TestKind::Ram => Self::Cpu(
+                pawnio_allowed
+                    .then(|| AmdSensors::open(&WinRegistry))
+                    .and_then(|r| {
+                        r.map_err(|e| tracing::info!("температура CPU недоступна: {e}"))
+                            .ok()
+                    }),
+            ),
+        }
+    }
+
+    /// Температура (найвища серед відеокарт або CPU, округлена) і показання найзавантаженішої
+    /// відеокарти.
+    fn read(&mut self) -> (Option<u32>, Option<GpuSnapshot>) {
+        match self {
+            Self::Gpu(gpu) => read_sensors(gpu),
+            Self::Cpu(s) => (
+                s.as_ref()
+                    .and_then(|s| s.read().ok())
+                    .map(|r| r.cpu_c.round().max(0.0) as u32),
+                None,
+            ),
+        }
+    }
+}
+
 /// Показання відеокарти, що працює найбільше (температура — найвища серед усіх).
 fn read_sensors(gpu: &mut Option<NvmlGpu>) -> (Option<u32>, Option<GpuSnapshot>) {
     let Some(g) = gpu.as_mut() else {
@@ -117,12 +159,20 @@ fn read_sensors(gpu: &mut Option<NvmlGpu>) -> (Option<u32>, Option<GpuSnapshot>)
     (temp, busiest)
 }
 
+fn pawnio_allowed(app: &AppHandle) -> bool {
+    lock(&app.state::<AppState>().settings).pawnio_sensors
+}
+
 /// Що відомо до запуску.
 #[tauri::command]
-pub async fn stab_info() -> CmdResult<StabInfo> {
-    blocking(|| {
+pub async fn stab_info(app: AppHandle) -> CmdResult<StabInfo> {
+    blocking(move || {
         let mut gpu = NvmlGpu::open();
         let (temp, busiest) = read_sensors(&mut gpu);
+        let cpu_sensor = Probe::open(TestKind::Cpu, pawnio_allowed(&app))
+            .read()
+            .0
+            .is_some();
         let (ram_total, ram_free) = optimax_stability::ram::memory().unwrap_or((0, 0));
         Ok(StabInfo {
             gpu: busiest.map(|s| s.name),
@@ -132,6 +182,8 @@ pub async fn stab_info() -> CmdResult<StabInfo> {
             ram_test_mb: optimax_stability::ram::test_bytes(ram_total, ram_free) / MIB,
             has_sensor: temp.is_some(),
             limit_c: GPU_STOP_TEMP_C,
+            cpu_sensor,
+            cpu_limit_c: CPU_STOP_TEMP_C,
             durations_s: DURATIONS_S.to_vec(),
             night_durations_s: NIGHT_DURATIONS_S.to_vec(),
         })
@@ -182,18 +234,24 @@ fn start(
     let d = dir()?;
     // Незавершений попередній тест спершу стає результатом, щоб не загубити його позначку.
     recover(&d);
-    // Датчиків CPU й RAM без драйвера ядра немає, тож і NVML для цих тестів не потрібен.
-    let mut gpu = (kind == TestKind::Gpu).then(NvmlGpu::open).flatten();
-    let (temp, _) = read_sensors(&mut gpu);
+    // Відеокарта — NVML; процесор і пам'ять — PawnIO, якщо користувач дозволив (інакше датчика немає).
+    let mut probe = Probe::open(kind, pawnio_allowed(app));
+    let (temp, _) = probe.read();
     let has_sensor = temp.is_some();
+    let limit = stop_temp_c(kind);
     if !has_sensor && !accept_no_sensor {
         return Err(CmdError::Failed(
             "температура недоступна — потрібне явне підтвердження".into(),
         ));
     }
-    if temp.is_some_and(|t| t >= GPU_STOP_TEMP_C) {
+    if temp.is_some_and(|t| t >= limit) {
+        let what = if kind == TestKind::Gpu {
+            "GPU"
+        } else {
+            "процесор"
+        };
         return Err(CmdError::Failed(format!(
-            "GPU вже гарячий (≥ {GPU_STOP_TEMP_C} °C) — дай йому охолонути"
+            "{what} вже гарячий (≥ {limit} °C) — дай йому охолонути"
         )));
     }
     let exe = std::env::current_exe().map_err(failed)?;
@@ -227,7 +285,7 @@ fn start(
         clock_mhz: None,
         power_w: None,
         util_pct: None,
-        limit_c: has_sensor.then_some(GPU_STOP_TEMP_C),
+        limit_c: has_sensor.then_some(limit),
         stats: Default::default(),
         no_sensor: !has_sensor,
     };
@@ -254,8 +312,8 @@ fn start(
                 stdin,
                 &messages,
                 &stop,
-                gpu,
-                has_sensor,
+                probe,
+                has_sensor.then_some(limit),
                 &d,
             )
         });
@@ -296,8 +354,8 @@ fn monitor(
     stdin: Option<ChildStdin>,
     messages: &Receiver<WorkerMessage>,
     stop: &CancelToken,
-    mut gpu: Option<NvmlGpu>,
-    has_sensor: bool,
+    mut probe: Probe,
+    limit_c: Option<u32>,
     d: &Path,
 ) {
     let started = Instant::now();
@@ -306,7 +364,7 @@ fn monitor(
     if awake.is_none() {
         tracing::warn!("не вдалося заборонити сон на час тесту — ПК може заснути");
     }
-    let mut guard = Guard::new(has_sensor);
+    let mut guard = Guard::new(limit_c);
     let mut acc = StatsAcc::default();
     let mut last_message = Instant::now();
     let mut last_sample = Instant::now() - Duration::from_secs(1);
@@ -413,7 +471,7 @@ fn monitor(
         }
         if last_sample.elapsed() >= Duration::from_secs(1) {
             last_sample = Instant::now();
-            let (temp, busiest) = read_sensors(&mut gpu);
+            let (temp, busiest) = probe.read();
             let (clock, power, util) = busiest.map_or((None, None, None), |s| {
                 (s.core_clock_mhz, s.power_w, s.utilization_percent)
             });

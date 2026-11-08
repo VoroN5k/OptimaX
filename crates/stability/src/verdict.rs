@@ -5,6 +5,18 @@ use serde::{Deserialize, Serialize};
 
 /// Температура GPU, на якій тест зупиняється сам, °C (рішення користувача, 2026-11-06).
 pub const GPU_STOP_TEMP_C: u32 = 85;
+/// Температура CPU, на якій тест процесора чи пам'яті зупиняється сам, °C (рішення користувача,
+/// 2026-11-09: до Tjmax 90 °C не доводити). Діє лише з датчиком через PawnIO.
+pub const CPU_STOP_TEMP_C: u32 = 85;
+
+/// Межа зупинки для виду тесту: відеокарта — за GPU, процесор і пам'ять — за CPU (тест пам'яті
+/// навантажує всі ядра).
+pub fn stop_temp_c(kind: TestKind) -> u32 {
+    match kind {
+        TestKind::Gpu => GPU_STOP_TEMP_C,
+        TestKind::Cpu | TestKind::Ram => CPU_STOP_TEMP_C,
+    }
+}
 /// Скільки може не бути показань температури, якщо датчик був, с.
 pub const SENSOR_LOST_S: f64 = 10.0;
 /// Середнє завантаження GPU, нижче якого навантаження було неповним, %. Припущення.
@@ -43,29 +55,27 @@ pub enum GuardStop {
 /// Запобіжник температури.
 #[derive(Debug, Clone)]
 pub struct Guard {
-    enabled: bool,
+    limit_c: Option<u32>,
     last_reading_s: f64,
 }
 
 impl Guard {
-    /// `has_sensor` — на старті температура була доступна (інакше стежити нема за чим, і запустити
-    /// тест можна лише після явного попередження).
-    pub fn new(has_sensor: bool) -> Self {
+    /// `limit_c` — межа зупинки, якщо на старті температура була доступна (`None` — стежити нема
+    /// за чим, і запустити тест можна лише після явного попередження).
+    pub fn new(limit_c: Option<u32>) -> Self {
         Self {
-            enabled: has_sensor,
+            limit_c,
             last_reading_s: 0.0,
         }
     }
 
     /// Нове показання в момент `now_s`.
     pub fn check(&mut self, temp_c: Option<u32>, now_s: f64) -> Option<GuardStop> {
-        if !self.enabled {
-            return None;
-        }
+        let limit = self.limit_c?;
         match temp_c {
             Some(t) => {
                 self.last_reading_s = now_s;
-                (t >= GPU_STOP_TEMP_C).then_some(GuardStop::OverTemp)
+                (t >= limit).then_some(GuardStop::OverTemp)
             }
             None => (now_s - self.last_reading_s > SENSOR_LOST_S).then_some(GuardStop::SensorLost),
         }
@@ -368,8 +378,12 @@ pub struct StabInfo {
     pub ram_test_mb: u64,
     /// Температура доступна.
     pub has_sensor: bool,
-    /// Температура зупинки, °C.
+    /// Температура зупинки відеокарти, °C.
     pub limit_c: u32,
+    /// Температура CPU доступна (увімкнено й працює PawnIO).
+    pub cpu_sensor: bool,
+    /// Температура зупинки процесора й пам'яті, °C.
+    pub cpu_limit_c: u32,
     /// Дозволені тривалості, с.
     pub durations_s: Vec<u32>,
     /// Тривалості нічного тесту, с.
@@ -485,7 +499,7 @@ mod tests {
 
     #[test]
     fn guard_stops_at_the_limit_and_when_the_sensor_disappears() {
-        let mut g = Guard::new(true);
+        let mut g = Guard::new(Some(GPU_STOP_TEMP_C));
         assert_eq!(g.check(Some(GPU_STOP_TEMP_C - 1), 1.0), None);
         assert_eq!(g.check(None, 1.0 + SENSOR_LOST_S), None);
         assert_eq!(
@@ -500,9 +514,19 @@ mod tests {
 
     #[test]
     fn guard_without_a_sensor_watches_nothing() {
-        let mut g = Guard::new(false);
+        let mut g = Guard::new(None);
         assert_eq!(g.check(None, 1000.0), None);
         assert_eq!(g.check(Some(200), 1000.0), None);
+    }
+
+    #[test]
+    fn cpu_and_ram_stop_at_the_cpu_limit() {
+        assert_eq!(stop_temp_c(TestKind::Cpu), 85);
+        assert_eq!(stop_temp_c(TestKind::Ram), CPU_STOP_TEMP_C);
+        assert_eq!(stop_temp_c(TestKind::Gpu), GPU_STOP_TEMP_C);
+        let mut g = Guard::new(Some(stop_temp_c(TestKind::Cpu)));
+        assert_eq!(g.check(Some(84), 1.0), None);
+        assert_eq!(g.check(Some(85), 2.0), Some(GuardStop::OverTemp));
     }
 
     #[test]

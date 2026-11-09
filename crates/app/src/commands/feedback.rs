@@ -12,7 +12,7 @@ use crate::log_layer::LogLine;
 use crate::report::{redact, secrets_from_env, summarize_cleanup_journal};
 use crate::settings::Settings;
 use crate::state::{lock, AppState};
-use optimax_audit::{run_audit, AuditReport, WindowsProbe};
+use optimax_audit::AuditReport;
 use optimax_cleanup::path;
 use optimax_cleanup::system::{SystemTools, WinTools};
 use optimax_core::CivilDate;
@@ -91,7 +91,7 @@ pub async fn feedback_report(state: State<'_, AppState>) -> CmdResult<String> {
                 kernel: sysinfo::System::kernel_version(),
             },
             hardware: collect_hardware(),
-            audit: run_audit(&WindowsProbe::new(), CivilDate::today()),
+            audit: super::audit::full_audit(settings.pawnio_sensors),
             settings,
             startup,
             last_diagnosis,

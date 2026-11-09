@@ -62,6 +62,13 @@ pub struct AuditReport {
 }
 
 impl AuditReport {
+    /// Додає знахідки, зібрані поза [`run_audit`] (напр. частоти шини пам'яті з PawnIO), і
+    /// впорядковує, як [`run_audit`].
+    pub fn add(&mut self, extra: impl IntoIterator<Item = Finding>) {
+        self.findings.extend(extra);
+        sort(&mut self.findings);
+    }
+
     /// Чи є що виправляти (знахідки вище інформаційного рівня).
     pub fn has_actionable(&self) -> bool {
         self.findings
@@ -137,13 +144,17 @@ pub fn run_audit(probe: &dyn SystemProbe, today: CivilDate) -> AuditReport {
         Err(e) => handle(CheckId::HardwareEvents, Err(e)),
     }
 
-    // Стабільне сортування: спершу вплив, потім впевненість; порядок перевірок зберігається.
+    sort(&mut findings);
+    AuditReport { findings, skipped }
+}
+
+/// Стабільне сортування: спершу вплив, потім впевненість; порядок перевірок зберігається.
+fn sort(findings: &mut [Finding]) {
     findings.sort_by(|a, b| {
         b.impact
             .cmp(&a.impact)
             .then(b.confidence.cmp(&a.confidence))
     });
-    AuditReport { findings, skipped }
 }
 
 #[cfg(test)]
@@ -299,6 +310,18 @@ mod tests {
         ];
         for f in extra_probe_findings.iter().flatten() {
             collect(f);
+        }
+        // Режими шини пам'яті (частоти з PawnIO): 1:2, розсинхрон, 1:1:1.
+        for (fclk, uclk, mclk) in [
+            (1800.0, 933.0, 1867.0),
+            (1800.0, 1900.0, 1900.0),
+            (1800.0, 1800.0, 1800.0),
+        ] {
+            collect(&rules::check_fabric(&FabricClocks {
+                fclk_mhz: fclk,
+                uclk_mhz: uclk,
+                mclk_mhz: mclk,
+            }));
         }
         // Розкладка пам'яті: усі вердикти, яких немає в моку.
         let dimm = |bank: &str, locator: &str, gb: u64, part: &str| MemoryModule {

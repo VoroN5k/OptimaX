@@ -351,3 +351,15 @@ pub struct SystemEvent {
     /// Рядкові дані події (EventData) у порядку вставки: `%1` — перший.
     pub data: Vec<String>,
 }
+
+/// Частоти шини пам'яті Ryzen (Zen 2 / Zen 3, DDR4) з таблиці SMU, МГц. Збираються лише з драйвером
+/// PawnIO і згодою користувача; аудит отримує їх готовими.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FabricClocks {
+    /// Infinity Fabric (FCLK).
+    pub fclk_mhz: f32,
+    /// Контролер пам'яті (UCLK).
+    pub uclk_mhz: f32,
+    /// Пам'ять (MCLK; DDR4-3600 = 1800).
+    pub mclk_mhz: f32,
+}

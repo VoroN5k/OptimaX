@@ -156,7 +156,8 @@ fn pump(app: &AppHandle, id: u64, events: &Receiver<WatchEvent>) {
                 at_unix_ms,
             } => {
                 // Аналіз — поза замком: аудит конфігурації займає до кількох секунд.
-                let (mut ctx, display_hz) = context();
+                let (mut ctx, display_hz) =
+                    context(super::sensors::cpu_temp_allowed(&app.state::<AppState>()));
                 if let Some(start) = recording.start_unix_ms {
                     ctx.shader_cache_files = shader_cache_files(start);
                 }

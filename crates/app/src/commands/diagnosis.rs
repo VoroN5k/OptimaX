@@ -5,8 +5,8 @@ use super::blocking;
 use crate::dto::{DiagnosisResult, DiagnosisState, ProcessEntry};
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
-use optimax_audit::{run_audit, SystemProbe, WindowsProbe};
-use optimax_core::{Catalog, CivilDate, Impact};
+use optimax_audit::{SystemProbe, WindowsProbe};
+use optimax_core::{Catalog, Impact};
 use optimax_diagnosis::{diagnose, CacheFile, Context};
 use optimax_frametime::{record_with, CancelToken, RecordNotices, RecordOptions, Target};
 use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
@@ -131,13 +131,13 @@ pub(crate) fn shader_cache_files(since_unix_ms: i64) -> Vec<CacheFile> {
 }
 
 /// Контекст аналізу: частота монітора й знахідки аудиту конфігурації.
-pub(crate) fn context() -> (Context, Option<u32>) {
+pub(crate) fn context(pawnio: bool) -> (Context, Option<u32>) {
     let probe = WindowsProbe::new();
     let display_hz = probe
         .displays()
         .ok()
         .and_then(|d| d.into_iter().find(|d| d.primary).map(|d| d.current_hz));
-    let config_findings = run_audit(&probe, CivilDate::today())
+    let config_findings = super::audit::full_audit(pawnio)
         .findings
         .into_iter()
         .filter(|f| f.impact > Impact::Info)
@@ -222,7 +222,7 @@ pub fn diag_start(
                     },
                 )?;
                 drop(progress);
-                let (mut ctx, display_hz) = context();
+                let (mut ctx, display_hz) = context(super::sensors::cpu_temp_allowed(&state));
                 if let Some(start) = rec.start_unix_ms {
                     ctx.shader_cache_files = shader_cache_files(start);
                 }

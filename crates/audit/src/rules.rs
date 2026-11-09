@@ -2,8 +2,9 @@
 
 use crate::gpu_info::nvidia_version;
 use crate::model::{
-    BatteryInfo, BiosInfo, DisplayInfo, GameModeState, GpuAdapter, GpuVendor, HagsAdapter,
-    HagsInfo, HagsState, MemoryModule, MemoryType, PowerPlan, PowerSource, RebarState, SystemEvent,
+    BatteryInfo, BiosInfo, DisplayInfo, FabricClocks, GameModeState, GpuAdapter, GpuVendor,
+    HagsAdapter, HagsInfo, HagsState, MemoryModule, MemoryType, PowerPlan, PowerSource, RebarState,
+    SystemEvent,
 };
 use optimax_core::{Category, CivilDate, Evidence, Finding, FindingBuilder, Impact, Text};
 
@@ -22,6 +23,11 @@ const DRIVER_AGING_DAYS: i64 = 180;
 /// Вік BIOS (днів), після якого варто перевірити оновлення.
 const BIOS_OLD_DAYS: i64 = 730;
 
+/// Частоти вважаються рівними, якщо різняться менше ніж на 2 % (SMU округлює й усереднює).
+const FABRIC_SAME_RATIO: f32 = 0.02;
+/// UCLK нижче цієї частки MCLK — контролер на половинній частоті (режим 1:2).
+const FABRIC_UCLK_HALF_RATIO: f32 = 0.75;
+
 /// GUID стандартних схем живлення Windows.
 pub use optimax_core::power::guids as power_guids;
 
@@ -33,6 +39,46 @@ pub(crate) fn draft(
     confidence: u8,
 ) -> FindingBuilder {
     FindingBuilder::new("audit", id, category, impact, confidence)
+}
+
+/// Режим шини пам'яті на Ryzen 3000/5000 (DDR4), де найменша затримка — коли FCLK = UCLK = MCLK.
+/// Частоти — виміряні SMU, тож упевненість висока; приріст FPS не обіцяємо — його показує лише
+/// порівняння записів до й після.
+pub fn check_fabric(c: &FabricClocks) -> Finding {
+    let mhz = |v: f32| format!("{v:.0}");
+    let same = |a: f32, b: f32| (a - b).abs() <= b.abs() * FABRIC_SAME_RATIO;
+    let evidence = vec![
+        Evidence::new(
+            Text::new("audit.ev.fclk"),
+            Text::new("value.mhz").arg("v", mhz(c.fclk_mhz)),
+        ),
+        Evidence::new(
+            Text::new("audit.ev.uclk"),
+            Text::new("value.mhz").arg("v", mhz(c.uclk_mhz)),
+        ),
+        Evidence::new(
+            Text::new("audit.ev.mclk"),
+            Text::new("value.mhz").arg("v", mhz(c.mclk_mhz)),
+        ),
+        Evidence::new(
+            Text::new("audit.ev.fabric_source"),
+            Text::new("audit.ev.fabric_source_value"),
+        ),
+    ];
+    let mts = format!("{:.0}", c.mclk_mhz * 2.0);
+    let d = if c.uclk_mhz < c.mclk_mhz * FABRIC_UCLK_HALF_RATIO {
+        draft("fabric.uclk_half", Category::Memory, Impact::Moderate, 90).advice()
+    } else if !same(c.fclk_mhz, c.mclk_mhz) {
+        draft("fabric.desync", Category::Memory, Impact::Moderate, 90).advice()
+    } else {
+        draft("fabric.coupled", Category::Memory, Impact::Info, 90)
+    };
+    d.arg("fclk", mhz(c.fclk_mhz))
+        .arg("uclk", mhz(c.uclk_mhz))
+        .arg("mclk", mhz(c.mclk_mhz))
+        .arg("mts", mts)
+        .evidence_list(evidence)
+        .build()
 }
 
 fn or_unknown<T: ToString>(v: Option<T>) -> String {
@@ -603,6 +649,37 @@ mod tests {
 
     fn today() -> CivilDate {
         CivilDate::new(2026, 10, 22).unwrap()
+    }
+
+    fn fabric(fclk: f32, uclk: f32, mclk: f32) -> FabricClocks {
+        FabricClocks {
+            fclk_mhz: fclk,
+            uclk_mhz: uclk,
+            mclk_mhz: mclk,
+        }
+    }
+
+    #[test]
+    fn fabric_mode_from_measured_clocks() {
+        // 5800X користувача до виправлення (ZenTimings 2026-11-09): DDR4-3734, FCLK 1800, UCLK 933.
+        let f = check_fabric(&fabric(1800.0, 933.0, 1867.0));
+        assert_eq!(f.id, "fabric.uclk_half");
+        assert_eq!(f.impact, Impact::Moderate);
+        assert!(f.advice.is_some());
+        // Після: 1800 / 1800 / 1800 — синхронно.
+        let f = check_fabric(&fabric(1800.0, 1800.02, 1800.0));
+        assert_eq!(f.id, "fabric.coupled");
+        assert_eq!(f.impact, Impact::Info);
+        // Контролер на повній частоті, але FCLK окремо (DDR4-3800 при FCLK 1800).
+        assert_eq!(
+            check_fabric(&fabric(1800.0, 1900.0, 1900.0)).id,
+            "fabric.desync"
+        );
+        // Похибка SMU в межах 2 % — не розсинхрон.
+        assert_eq!(
+            check_fabric(&fabric(1810.0, 1800.0, 1800.0)).id,
+            "fabric.coupled"
+        );
     }
 
     #[test]

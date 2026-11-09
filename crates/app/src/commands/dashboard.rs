@@ -7,8 +7,8 @@ use crate::commands::cleanup::{last_system_scan, scan_system_drive, ScanView};
 use crate::dto::DiagnosisResult;
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
-use optimax_audit::{run_audit as audit, AuditReport, WindowsProbe};
-use optimax_core::{CivilDate, Finding, Impact, Text};
+use optimax_audit::AuditReport;
+use optimax_core::{Finding, Impact, Text};
 use optimax_diagnosis::Bottleneck;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -184,7 +184,8 @@ pub async fn dashboard_config(app: AppHandle, refresh: bool) -> CmdResult<Config
                 return Ok(c);
             }
         }
-        let summary = ConfigSummary::from_report(audit(&WindowsProbe::new(), CivilDate::today()));
+        let pawnio = super::sensors::cpu_temp_allowed(&state);
+        let summary = ConfigSummary::from_report(super::audit::full_audit(pawnio));
         lock(&state.dashboard).config = Some(summary.clone());
         Ok(summary)
     })

@@ -5,14 +5,40 @@ use crate::dto::HardwareInfo;
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
 use optimax_audit::crashes::{analyze, CrashContext, CrashReport, CRASH_DAYS};
+use optimax_audit::model::FabricClocks;
+use optimax_audit::rules::check_fabric;
 use optimax_audit::{run_audit as audit, AuditReport, SystemProbe, WindowsProbe};
+use optimax_core::registry::WinRegistry;
 use optimax_core::CivilDate;
+use optimax_metrics::amd_sensors::AmdSensors;
 use tauri::State;
+
+/// Аудит разом із частотами шини пам'яті, якщо користувач дозволив PawnIO (`pawnio`), а процесор і
+/// таблиця SMU підтримуються. Без цього — звичайний аудит.
+pub fn full_audit(pawnio: bool) -> AuditReport {
+    let mut report = audit(&WindowsProbe::new(), CivilDate::today());
+    if pawnio {
+        let clocks = AmdSensors::open(&WinRegistry)
+            .and_then(|s| s.read())
+            .map_err(|e| tracing::info!("частоти шини пам'яті недоступні: {e}"))
+            .ok()
+            .and_then(|r| r.clocks);
+        if let Some(c) = clocks {
+            report.add([check_fabric(&FabricClocks {
+                fclk_mhz: c.fclk_mhz,
+                uclk_mhz: c.uclk_mhz,
+                mclk_mhz: c.mclk_mhz,
+            })]);
+        }
+    }
+    report
+}
 
 /// Запускає аудит.
 #[tauri::command]
-pub async fn run_audit() -> CmdResult<AuditReport> {
-    blocking(|| Ok(audit(&WindowsProbe::new(), CivilDate::today()))).await
+pub async fn run_audit(state: State<'_, AppState>) -> CmdResult<AuditReport> {
+    let pawnio = super::sensors::cpu_temp_allowed(&state);
+    blocking(move || Ok(full_audit(pawnio))).await
 }
 
 /// «Чому вилітає?»: раптові вимкнення, сині екрани й вильоти програм за [`CRASH_DAYS`] днів

@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 optimax-core.workspace = true
 optimax-metrics.workspace = true
+optimax-frametime.workspace = true
 optimax-service.workspace = true
 serde.workspace = true
 serde_json.workspace = true

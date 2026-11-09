@@ -2440,6 +2440,7 @@ name = "optimax-backend"
 version = "0.2.0"
 dependencies = [
  "optimax-core",
+ "optimax-frametime",
  "optimax-metrics",
  "optimax-service",
  "serde",

@@ -15,8 +15,9 @@ pub const SERVICE_DISPLAY: &str = "OptimaX";
 pub const PIPE_NAME: &str = r"\\.\pipe\OptimaX";
 /// Версія протоколу: змінюється, коли старий клієнт і нова служба вже не зрозуміють одне одного.
 pub const PROTOCOL: u32 = 1;
-/// Найбільший кадр, байт: більший — помилка й розрив з'єднання.
-pub const MAX_FRAME: u32 = 16 * 1024 * 1024;
+/// Найбільший кадр, байт: більший — помилка й розрив з'єднання. Найбільше важить результат
+/// запису гри (кадри, знімки, потоки): 10 хв на високому FPS — десятки МБ JSON.
+pub const MAX_FRAME: u32 = 128 * 1024 * 1024;
 
 /// Помилки протоколу.
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +62,20 @@ pub enum Command {
     Sensors,
     /// Лише температура CPU (часті заміри).
     CpuTemp,
+    /// Почати запис гри (`spec` — `optimax_backend::record::RecordSpec`).
+    RecordStart {
+        /// Що записувати.
+        spec: serde_json::Value,
+    },
+    /// Опитування запису: інтерфейс передає активне вікно й натискання клавіші.
+    RecordPoll {
+        /// PID процесу з активним вікном.
+        foreground_pid: Option<u32>,
+        /// Гарячу клавішу натиснуто з минулого опитування.
+        hotkey: bool,
+    },
+    /// Зупинити запис.
+    RecordCancel,
 }
 
 /// Запит клієнта.
@@ -196,6 +211,22 @@ mod tests {
         })
         .expect("json");
         assert_eq!(v, serde_json::json!({ "id": 2, "cmd": "cpu_temp" }));
+    }
+
+    #[test]
+    fn record_poll_carries_session_inputs() {
+        let v = serde_json::to_value(Request {
+            id: 3,
+            command: Command::RecordPoll {
+                foreground_pid: Some(20040),
+                hotkey: true,
+            },
+        })
+        .expect("json");
+        assert_eq!(
+            v,
+            serde_json::json!({ "id": 3, "cmd": "record_poll", "foreground_pid": 20040, "hotkey": true })
+        );
     }
 
     #[test]

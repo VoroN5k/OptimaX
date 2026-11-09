@@ -23,7 +23,8 @@ pub use frame::{FramePipeline, FrameRecord, FrameTimestamp, PresentMode};
 pub use gate::{EndReason, Gate, Observation, Phase, StartMode};
 pub use presentmon::{BundledPresentMon, Target};
 pub use recording::{
-    record, record_with, CancelToken, RecordNotices, RecordOptions, RecordProgress, Recording,
+    record, record_in_session, record_with, CancelToken, LocalSession, Notifier, RecordNotices,
+    RecordOptions, RecordProgress, Recording, SessionEvent, UserSession,
 };
 pub use stats::{find_spikes, frame_stats, main_swap_chain, FrameStats, Spike};
 

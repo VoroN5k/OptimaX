@@ -80,6 +80,22 @@ impl From<optimax_frametime::FrametimeError> for CmdError {
     }
 }
 
+impl From<optimax_backend::record::RecordFailure> for CmdError {
+    fn from(e: optimax_backend::record::RecordFailure) -> Self {
+        use optimax_backend::record::RecordFailure;
+        match e {
+            RecordFailure::NoFrames(details) => Self::NoFrames(details),
+            RecordFailure::NotStarted(reason) => Self::NotStarted(
+                serde_json::to_value(reason)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_default(),
+            ),
+            RecordFailure::Other(s) => Self::Failed(s),
+        }
+    }
+}
+
 impl From<optimax_cleanup::CleanupError> for CmdError {
     fn from(e: optimax_cleanup::CleanupError) -> Self {
         match e {

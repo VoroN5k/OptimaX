@@ -8,8 +8,7 @@ use crate::state::{lock, AppState};
 use optimax_audit::{SystemProbe, WindowsProbe};
 use optimax_core::{Catalog, Impact};
 use optimax_diagnosis::{diagnose, CacheFile, Context};
-use optimax_frametime::{record_with, CancelToken, RecordNotices, RecordOptions, Target};
-use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
+use optimax_frametime::{CancelToken, RecordNotices, RecordOptions, Target};
 use std::collections::HashMap;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -201,8 +200,6 @@ pub fn diag_start(
                 let state = app.state::<AppState>();
                 // Чорна скринька чекає до кінця запису (одна сесія PresentMon і DPC).
                 let _pause = super::blackbox::Pause::new(&app);
-                let pm = state.presentmon()?;
-                let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
                 let mut options = RecordOptions::new(target, Duration::from_secs(u64::from(total)))
                     .with_start(start_mode, sound);
                 options.sampler.cpu_temp = super::sensors::cpu_temp_source(&state);
@@ -210,17 +207,10 @@ pub fn diag_start(
                     options = options.with_notices(RecordNotices::from_catalog(&catalog));
                 }
                 let progress = super::ProgressMark::new(&state);
-                let rec = record_with(
-                    pm,
-                    &options,
-                    Box::new(SysinfoSource::new()),
-                    gpu,
-                    &cancel,
-                    &mut |p| {
-                        progress.set(p);
-                        let _ = app.emit("diag-progress", p);
-                    },
-                )?;
+                let rec = state.link.record(&state, &options, &cancel, &mut |p| {
+                    progress.set(p);
+                    let _ = app.emit("diag-progress", p);
+                })?;
                 drop(progress);
                 let link = super::sensors::cpu_temp_allowed(&state).then(|| state.link.clone());
                 let (mut ctx, display_hz) = context(link.as_deref());

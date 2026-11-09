@@ -348,6 +348,131 @@ pub fn spike_windows(frames: &[FrameRecord], freq: i64) -> Vec<(i64, i64)> {
     merged
 }
 
+/// Подія запису, на яку сесія користувача відповідає звуком чи повідомленням поверх гри.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionEvent {
+    /// Почався перший прогрів.
+    Warmup,
+    /// Почався зарахований запис.
+    Started,
+    /// Запис завершився; `ok` — дійшов до кінця або зупинений клавішею (не скасування).
+    Finished {
+        /// Завершився штатно.
+        ok: bool,
+    },
+}
+
+/// Те, що бачить лише сесія користувача: активне вікно, гаряча клавіша, звуки й повідомлення.
+/// Запис у самій програмі — [`LocalSession`]; у службі (сесія 0) це передає інтерфейс.
+pub trait UserSession {
+    /// PID процесу, чиє вікно зараз активне.
+    fn foreground_pid(&self) -> Option<u32>;
+    /// Чи натиснуто гарячу клавішу з минулої перевірки.
+    fn hotkey_pressed(&self) -> bool;
+    /// Подія запису.
+    fn event(&self, e: SessionEvent);
+}
+
+/// Звуки й повідомлення поверх гри за подіями запису (окремо від запису — щоб інтерфейс міг
+/// відтворити їх і за подіями служби).
+pub struct Notifier {
+    sound: bool,
+    immediate: bool,
+    notices: Option<RecordNotices>,
+    toaster: Option<Toaster>,
+}
+
+impl std::fmt::Debug for Notifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Notifier")
+    }
+}
+
+impl Notifier {
+    /// Як задано в параметрах запису. Повідомлення — необов'язкова зручність: якщо вікно не
+    /// створилось, запис іде далі.
+    pub fn new(options: &RecordOptions) -> Self {
+        let immediate = options.start == StartMode::Immediate;
+        Self {
+            sound: options.sound,
+            immediate,
+            notices: options.notices.clone(),
+            toaster: options
+                .notices
+                .as_ref()
+                .filter(|_| !immediate)
+                .and_then(|_| Toaster::new().ok()),
+        }
+    }
+
+    /// Відтворює подію.
+    pub fn event(&self, e: SessionEvent) {
+        match e {
+            SessionEvent::Warmup => {
+                if let (Some(t), Some(n)) = (&self.toaster, &self.notices) {
+                    t.show(&n.warmup, Tone::Info, WARMUP_NOTICE);
+                }
+            }
+            SessionEvent::Started => {
+                if self.sound && !self.immediate {
+                    optimax_core::input::beep_start();
+                }
+            }
+            SessionEvent::Finished { ok } => {
+                if !ok {
+                    return;
+                }
+                if self.sound && !self.immediate {
+                    optimax_core::input::beep_stop();
+                }
+                if let (Some(t), Some(n)) = (&self.toaster, &self.notices) {
+                    t.show(&n.finished, Tone::Ok, FINISHED_NOTICE);
+                }
+            }
+        }
+    }
+}
+
+/// Сесія користувача в цьому процесі: активне вікно, `Ctrl+Shift+F9` (у режимі клавіші), звуки
+/// й повідомлення.
+pub struct LocalSession {
+    hotkey: Option<optimax_core::input::GlobalHotkey>,
+    notifier: Notifier,
+}
+
+impl LocalSession {
+    /// Гарячу клавішу реєструє одразу: якщо зайнята — помилка до старту запису.
+    pub fn new(options: &RecordOptions) -> Result<Self, FrametimeError> {
+        let hotkey = if options.start == StartMode::Hotkey {
+            Some(
+                optimax_core::input::GlobalHotkey::ctrl_shift_f9()
+                    .map_err(|e| FrametimeError::Hotkey(e.to_string()))?,
+            )
+        } else {
+            None
+        };
+        Ok(Self {
+            hotkey,
+            notifier: Notifier::new(options),
+        })
+    }
+}
+
+impl UserSession for LocalSession {
+    fn foreground_pid(&self) -> Option<u32> {
+        optimax_core::input::foreground_process_id()
+    }
+
+    fn hotkey_pressed(&self) -> bool {
+        self.hotkey.as_ref().is_some_and(|h| h.pressed())
+    }
+
+    fn event(&self, e: SessionEvent) {
+        self.notifier.event(e);
+    }
+}
+
 /// Записує кадри й метрики. Блокує потік на час запису — викликати не з UI-потоку.
 pub fn record_with(
     presentmon: &BundledPresentMon,
@@ -357,18 +482,32 @@ pub fn record_with(
     cancel: &CancelToken,
     on_progress: &mut dyn FnMut(&RecordProgress),
 ) -> Result<Recording, FrametimeError> {
+    let session = LocalSession::new(options)?;
+    record_in_session(
+        presentmon,
+        options,
+        system,
+        gpu,
+        cancel,
+        &session,
+        on_progress,
+    )
+}
+
+/// Те саме, але активне вікно, клавішу, звуки й повідомлення дає `session` (у службі —
+/// інтерфейс користувача через канал).
+pub fn record_in_session(
+    presentmon: &BundledPresentMon,
+    options: &RecordOptions,
+    system: Box<dyn SystemSource>,
+    gpu: Option<Box<dyn GpuApi>>,
+    cancel: &CancelToken,
+    session: &dyn UserSession,
+    on_progress: &mut dyn FnMut(&RecordProgress),
+) -> Result<Recording, FrametimeError> {
     options.target.validate()?;
     let duration = options.duration.clamp(Duration::from_secs(5), MAX_DURATION);
     let immediate = options.start == StartMode::Immediate;
-    // Гарячу клавішу реєструємо до старту: якщо зайнята — кажемо одразу.
-    let hotkey = if options.start == StartMode::Hotkey {
-        Some(
-            optimax_core::input::GlobalHotkey::ctrl_shift_f9()
-                .map_err(|e| FrametimeError::Hotkey(e.to_string()))?,
-        )
-    } else {
-        None
-    };
     // PresentMon працює весь час очікування й запису; зупиняємо його самі.
     let pm_duration = if immediate {
         duration
@@ -456,12 +595,6 @@ pub fn record_with(
     let mut last_progress: Option<Instant> = None;
     let mut last_phase = gate.phase();
     let mut beeped_start = false;
-    // Повідомлення — необов'язкова зручність: якщо вікно не створилось, запис іде далі.
-    let toaster = options
-        .notices
-        .as_ref()
-        .filter(|_| !immediate)
-        .and_then(|_| Toaster::new().ok());
     let mut warmup_noticed = false;
     let mut pm_exited = false;
     // Потоки гри — необов'язково: без них вердикт «процесор» спирається на завантаження ядер.
@@ -481,7 +614,7 @@ pub fn record_with(
             pids = game_pids(&options.target);
             last_pid_check = Instant::now();
         }
-        let foreground = optimax_core::input::foreground_process_id();
+        let foreground = session.foreground_pid();
         #[cfg(windows)]
         if !thread_trace_tried {
             if let Some(pid) = pids.as_deref().and_then(|p| trace_pid(p, foreground)) {
@@ -506,19 +639,17 @@ pub fn record_with(
             game_running: running,
             game_focused: focused,
             game_presenting: last > 0 && now - last <= presenting_ticks,
-            hotkey: hotkey.as_ref().is_some_and(|h| h.pressed()),
+            hotkey: session.hotkey_pressed(),
             cancel: cancel.is_cancelled(),
         };
         let phase = gate.tick(now, &obs);
         if phase == Phase::Warmup && !warmup_noticed {
             warmup_noticed = true;
-            if let (Some(t), Some(n)) = (&toaster, &options.notices) {
-                t.show(&n.warmup, Tone::Info, WARMUP_NOTICE);
-            }
+            session.event(SessionEvent::Warmup);
         }
-        if options.sound && phase == Phase::Recording && !beeped_start && !immediate {
-            optimax_core::input::beep_start();
+        if phase == Phase::Recording && !beeped_start {
             beeped_start = true;
+            session.event(SessionEvent::Started);
         }
         if phase != last_phase || last_progress.is_none_or(|t| t.elapsed() >= PROGRESS_EVERY) {
             on_progress(&RecordProgress {
@@ -537,15 +668,9 @@ pub fn record_with(
     }
 
     let end_reason = gate.end_reason().unwrap_or(EndReason::Completed);
-    if options.sound && !immediate && matches!(end_reason, EndReason::Completed | EndReason::Hotkey)
-    {
-        optimax_core::input::beep_stop();
-    }
-    if matches!(end_reason, EndReason::Completed | EndReason::Hotkey) {
-        if let (Some(t), Some(n)) = (&toaster, &options.notices) {
-            t.show(&n.finished, Tone::Ok, FINISHED_NOTICE);
-        }
-    }
+    session.event(SessionEvent::Finished {
+        ok: matches!(end_reason, EndReason::Completed | EndReason::Hotkey),
+    });
     // Дописуємо хвіст: кадри останніх секунд відрізка ще в дорозі.
     if !immediate && gate.has_recorded() && end_reason != EndReason::GameExited {
         let drain_until = Instant::now() + DRAIN;
@@ -564,7 +689,6 @@ pub fn record_with(
         }
     }
     let _ = child.wait();
-    drop(hotkey);
     sampler.stop();
     snapshots.extend(snapshots_rx.try_iter());
     let dpc_trace = dpc_tracer.and_then(optimax_core::etw::DpcTracer::stop);

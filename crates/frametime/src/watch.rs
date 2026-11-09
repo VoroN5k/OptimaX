@@ -95,6 +95,7 @@ impl WatchOptions {
                 interval: Duration::from_millis(200),
                 process_interval: Duration::from_secs(1),
                 top_processes: 8,
+                cpu_temp: false,
             },
             sound: false,
             notices: None,

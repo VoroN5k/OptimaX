@@ -98,6 +98,9 @@ pub struct SamplePoint {
     /// Процес із найбільшим вводом-виводом (зокрема сама гра).
     #[serde(default)]
     pub io_top: Option<IoProcess>,
+    /// Температура процесора, °C (лише з PawnIO).
+    #[serde(default)]
+    pub cpu_temp_c: Option<f32>,
 }
 
 /// Процес, що найбільше читав і писав у момент знімка.
@@ -409,6 +412,7 @@ impl Timeline {
                     busiest_core,
                     busiest_core_pct,
                     avg_cpu_pct: s.cpu.total_percent,
+                    cpu_temp_c: s.cpu.temp_c,
                     gpu: gpu_index
                         .and_then(|i| s.gpus.iter().find(|g| g.index == i))
                         .map(|g| GpuPoint {

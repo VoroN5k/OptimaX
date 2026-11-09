@@ -46,6 +46,9 @@
         <div class="big">
           <span>{pct(snap.cpu.total_percent)}</span>
           <span class="small muted">{tk("ui.hw.busiest", { v: pct(busiest) })}</span>
+          {#if snap.cpu.temp_c != null}
+            <span class="small muted">{tk("ui.hw.cpu_temp", { v: snap.cpu.temp_c.toFixed(0) })}</span>
+          {/if}
         </div>
         <div class="cores" aria-label={tk("ui.hw.cores")}>
           {#each snap.cpu.per_core_percent as v, i (i)}

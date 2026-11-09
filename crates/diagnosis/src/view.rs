@@ -36,6 +36,8 @@ pub struct SampleColumns {
     pub gpu: Vec<Option<f32>>,
     /// Найзавантаженіше ядро, %.
     pub core: Vec<f32>,
+    /// Температура процесора, °C (`None` — без PawnIO).
+    pub cpu_temp: Vec<Option<f32>>,
 }
 
 /// Стани одного потоку гри: кошики за весь запис і точні проміжки навколо ривків.
@@ -151,6 +153,11 @@ pub fn timeline_view(a: &Analysis<'_>) -> TimelineView {
             .map(|s| s.gpu.as_ref().and_then(|g| g.util).map(|u| u as f32))
             .collect(),
         core: tl.samples.iter().map(|s| s.busiest_core_pct).collect(),
+        cpu_temp: tl
+            .samples
+            .iter()
+            .map(|s| s.cpu_temp_c.map(|t| (t * 10.0).round() / 10.0))
+            .collect(),
     };
     let (main, render) = tl.threads.as_ref().map_or((None, None), |t| {
         let main = lane(

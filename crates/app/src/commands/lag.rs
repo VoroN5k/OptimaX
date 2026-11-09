@@ -89,6 +89,7 @@ pub fn lag_start(app: AppHandle, state: State<'_, AppState>, exe: String) -> Cmd
     let sound = lock(&state.settings).record_sound;
     let mut options = WatchOptions::new(target);
     options.sound = sound;
+    options.sampler.cpu_temp = super::sensors::cpu_temp_allowed(&state);
     if let Ok(c) = Catalog::ukrainian() {
         let secs = options.window.as_secs();
         options.notices = Some(WatchNotices {

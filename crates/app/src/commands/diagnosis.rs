@@ -205,6 +205,7 @@ pub fn diag_start(
                 let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
                 let mut options = RecordOptions::new(target, Duration::from_secs(u64::from(total)))
                     .with_start(start_mode, sound);
+                options.sampler.cpu_temp = super::sensors::cpu_temp_allowed(&state);
                 if let Ok(catalog) = Catalog::ukrainian() {
                     options = options.with_notices(RecordNotices::from_catalog(&catalog));
                 }

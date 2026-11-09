@@ -28,6 +28,7 @@ pub fn metrics_start(
         interval: Duration::from_millis(u64::from(ms.min(500))),
         process_interval: Duration::from_secs(2),
         top_processes: 6,
+        cpu_temp: super::sensors::cpu_temp_allowed(&state),
     };
     let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
     let (sampler, rx) = Sampler::spawn(config, Box::new(SysinfoSource::new()), gpu)?;

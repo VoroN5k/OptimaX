@@ -38,6 +38,9 @@ pub struct CpuSnapshot {
     /// лічильник недоступний або це перший замір.
     #[serde(default)]
     pub dpc_percent: Option<f32>,
+    /// Температура процесора (Tctl), °C — лише з драйвером PawnIO і згодою користувача.
+    #[serde(default)]
+    pub temp_c: Option<f32>,
 }
 
 impl CpuSnapshot {
@@ -249,6 +252,7 @@ mod tests {
             per_core_percent: vec![10.0, 98.0, 5.0],
             per_core_mhz: vec![],
             dpc_percent: None,
+            temp_c: None,
         };
         assert_eq!(cpu.busiest_core(), Some((1, 98.0)));
         assert_eq!(CpuSnapshot::default().busiest_core(), None);

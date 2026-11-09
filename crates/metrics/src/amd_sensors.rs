@@ -337,6 +337,14 @@ mod win {
                 .ok_or_else(|| SensorError::Driver("порожня відповідь SMN".into()))
         }
 
+        /// Лише Tctl, °C — для частих замірів (без таблиці SMU).
+        pub fn read_temp(&self) -> Result<f32, SensorError> {
+            let lock = PciLock::acquire(PCI_WAIT_MS).map_err(driver)?;
+            let raw = self.read_smn(SMN_TCTL)?;
+            drop(lock);
+            Ok(tctl_c(raw) - self.offset_c)
+        }
+
         /// Читає температури й частоти (під спільним м'ютексом PCI).
         pub fn read(&self) -> Result<AmdReading, SensorError> {
             let lock = PciLock::acquire(PCI_WAIT_MS).map_err(driver)?;

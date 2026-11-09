@@ -169,7 +169,7 @@ function syntheticView(): TimelineView {
     frames: { t, ft, cpu: ft.map((v) => v * 0.7), gpu: ft.map(() => 7.4), queue: ft.map(() => 3.2) },
     spikes: [[12564, 60]],
     gaps: [],
-    samples: { t: [2000, 12000, 22000], gpu: [97, 95, 96], core: [55, 60, 58] },
+    samples: { t: [2000, 12000, 22000], gpu: [97, 95, 96], core: [55, 60, 58], cpu_temp: [71.5, 73, 72] },
     main: {
       tid: 1,
       start_ms: 1000,

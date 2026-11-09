@@ -15,4 +15,8 @@ gpu: Array<number | null>,
 /**
  * Найзавантаженіше ядро, %.
  */
-core: Array<number>, };
+core: Array<number>, 
+/**
+ * Температура процесора, °C (`None` — без PawnIO).
+ */
+cpu_temp: Array<number | null>, };

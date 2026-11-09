@@ -70,6 +70,7 @@ impl SystemSource for SysinfoSource {
             per_core_percent: cpus.iter().map(|c| c.cpu_usage()).collect(),
             per_core_mhz: cpus.iter().map(|c| c.frequency()).collect(),
             dpc_percent: self.dpc.as_mut().and_then(|c| c.sample()).map(|v| v as f32),
+            temp_c: None,
         }
     }
 

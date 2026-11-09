@@ -595,6 +595,10 @@
       load: st.length
         ? tk("ui.tl.load", { gpu: ms(view.samples.gpu[si], 0), core: ms(view.samples.core[si], 0) })
         : null,
+      // Температура CPU є лише з PawnIO (у старих записах масиву немає).
+      cpuTemp: st.length && view.samples.cpu_temp?.[si] != null
+        ? tk("ui.tl.cpu_temp", { c: ms(view.samples.cpu_temp[si], 0) })
+        : null,
       dpc: dpc.map((d) =>
         tk("ui.tl.dpc", {
           driver: view.drivers[d.driver] || tk("ui.tl.unknown_driver"),
@@ -670,6 +674,7 @@
       {#if readout.main}<span>{tk("ui.tl.lane.main")}: {readout.main}</span>{/if}
       {#if readout.render}<span>{tk("ui.tl.lane.render")}: {readout.render}</span>{/if}
       {#if readout.load}<span>{readout.load}</span>{/if}
+      {#if readout.cpuTemp}<span>{readout.cpuTemp}</span>{/if}
       {#each readout.dpc as d, i (i)}<span class="danger">{d}</span>{/each}
     {/if}
   </div>

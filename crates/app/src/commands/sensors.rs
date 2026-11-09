@@ -49,6 +49,11 @@ pub enum SensorsStatus {
     },
 }
 
+/// Користувач дозволив читати температуру CPU через PawnIO (для семплера метрик).
+pub fn cpu_temp_allowed(state: &AppState) -> bool {
+    lock(&state.settings).pawnio_sensors
+}
+
 /// Статус і, якщо дозволено, свіже показання.
 #[tauri::command]
 pub async fn sensors_status(app: AppHandle) -> CmdResult<SensorsStatus> {

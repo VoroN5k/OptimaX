@@ -25,6 +25,8 @@ pub struct SamplerConfig {
     pub process_interval: Duration,
     /// Скільки процесів тримати в топі.
     pub top_processes: usize,
+    /// Читати температуру CPU через PawnIO (лише якщо користувач дав згоду; інакше `false`).
+    pub cpu_temp: bool,
 }
 
 impl Default for SamplerConfig {
@@ -33,6 +35,7 @@ impl Default for SamplerConfig {
             interval: Duration::from_millis(250),
             process_interval: Duration::from_secs(1),
             top_processes: 5,
+            cpu_temp: false,
         }
     }
 }
@@ -48,6 +51,58 @@ impl SamplerConfig {
         let tick = self.clamped_interval().as_millis().max(1);
         let ticks = self.process_interval.as_millis().div_ceil(tick);
         u64::try_from(ticks).unwrap_or(u64::MAX).max(1)
+    }
+}
+
+/// Як часто читати температуру CPU: вона змінюється повільно, а кожне читання бере спільний
+/// м'ютекс PCI (HWiNFO, ZenTimings), тож частіше не треба.
+const CPU_TEMP_EVERY: Duration = Duration::from_secs(1);
+
+/// Температура CPU через PawnIO: модуль відкривається один раз на весь збір, показання
+/// кешується між читаннями. Невдале відкриття — температури просто немає.
+struct CpuTemp {
+    #[cfg(windows)]
+    sensors: Option<crate::amd_sensors::AmdSensors>,
+    last: Option<(Instant, f32)>,
+}
+
+impl CpuTemp {
+    fn new(enabled: bool) -> Self {
+        #[cfg(windows)]
+        let sensors = enabled
+            .then(|| {
+                crate::amd_sensors::AmdSensors::open(&optimax_core::registry::WinRegistry)
+                    .map_err(|e| tracing::info!("температура CPU у метриках недоступна: {e}"))
+                    .ok()
+            })
+            .flatten();
+        #[cfg(not(windows))]
+        let _ = enabled;
+        Self {
+            #[cfg(windows)]
+            sensors,
+            last: None,
+        }
+    }
+
+    fn read(&mut self, now: Instant) -> Option<f32> {
+        let fresh = self
+            .last
+            .filter(|(at, _)| now.duration_since(*at) < CPU_TEMP_EVERY);
+        if let Some((_, t)) = fresh {
+            return Some(t);
+        }
+        #[cfg(windows)]
+        {
+            let t = self.sensors.as_ref()?.read_temp().ok()?;
+            self.last = Some((now, t));
+            Some(t)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = now;
+            None
+        }
     }
 }
 
@@ -81,6 +136,7 @@ impl Sampler {
                 // не показував усім процесам 0 %.
                 let _ = system.top_processes(config.top_processes);
                 let mut top: Vec<ProcessSample> = Vec::new();
+                let mut temp = CpuTemp::new(config.cpu_temp);
                 loop {
                     let wait = next.saturating_duration_since(Instant::now());
                     match stop_rx.recv_timeout(wait) {
@@ -99,11 +155,13 @@ impl Sampler {
                     tick = tick.wrapping_add(1);
 
                     let qpc = optimax_core::clock::qpc_now();
+                    let mut cpu = system.cpu();
+                    cpu.temp_c = temp.read(now);
                     let snapshot = Snapshot {
                         qpc,
                         elapsed_ms: u64::try_from(now.duration_since(start).as_millis())
                             .unwrap_or(u64::MAX),
-                        cpu: system.cpu(),
+                        cpu,
                         memory: system.memory(),
                         disk: system.disk(elapsed),
                         gpus: gpu.as_mut().map(|g| g.sample()).unwrap_or_default(),
@@ -167,6 +225,7 @@ mod tests {
                 per_core_percent: vec![10.0, 96.0],
                 per_core_mhz: vec![4000, 4000],
                 dpc_percent: None,
+                temp_c: None,
             }
         }
         fn memory(&mut self) -> MemorySnapshot {
@@ -212,12 +271,19 @@ mod tests {
     }
 
     #[test]
+    fn cpu_temp_is_absent_without_consent() {
+        let mut t = CpuTemp::new(false);
+        assert_eq!(t.read(Instant::now()), None);
+    }
+
+    #[test]
     fn produces_snapshots_and_stops() {
         let calls = Arc::new(AtomicU32::new(0));
         let config = SamplerConfig {
             interval: Duration::from_millis(100),
             process_interval: Duration::from_millis(300),
             top_processes: 3,
+            cpu_temp: false,
         };
         let (sampler, rx) = Sampler::spawn(
             config,

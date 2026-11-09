@@ -105,6 +105,8 @@ test.describe("Діагностика", () => {
     await expect(page.locator(".readout")).toContainText(tk("ui.anatomy.main.page_in"));
     await expect(page.locator(".readout")).toContainText("nvlddmkm.sys: 1.20");
     await expect(page.locator(".readout")).toContainText(tk("ui.tl.frame", { ft: "60.0", cpu: "42.0", gpu: "7.4", q: "3.2" }));
+    // Температура CPU (з PawnIO) — у тій самій підказці.
+    await expect(page.locator(".readout")).toContainText(tk("ui.tl.cpu_temp", { c: "73" }));
   });
 
   test("порівняння: старт з назвами, підказка варіанта, висновок з інтервалом", async ({ page }) => {

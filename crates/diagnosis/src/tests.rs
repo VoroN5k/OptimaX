@@ -25,6 +25,7 @@ fn base_sample() -> SamplePoint {
         busiest_core: 0,
         busiest_core_pct: 50.0,
         avg_cpu_pct: 20.0,
+        cpu_temp_c: None,
         gpu: Some(GpuPoint {
             util: Some(70),
             clock_mhz: Some(2600),
@@ -1070,6 +1071,7 @@ fn snapshot(qpc: i64, procs: Vec<(u32, &str, f32)>) -> Snapshot {
             per_core_percent: vec![10.0, 97.0, 20.0],
             per_core_mhz: vec![],
             dpc_percent: None,
+            temp_c: None,
         },
         memory: MemorySnapshot::default(),
         disk: DiskSnapshot {

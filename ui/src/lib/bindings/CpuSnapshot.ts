@@ -20,4 +20,8 @@ per_core_mhz: Array<number>,
  * Час на DPC і переривання драйверів на найзайнятішому ядрі, % (PDH). `None` —
  * лічильник недоступний або це перший замір.
  */
-dpc_percent: number | null, };
+dpc_percent: number | null, 
+/**
+ * Температура процесора (Tctl), °C — лише з драйвером PawnIO і згодою користувача.
+ */
+temp_c: number | null, };

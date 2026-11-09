@@ -176,6 +176,7 @@ impl LiveMonitor {
             // Перелік процесів не потрібен: лише раз на старті (найдорожча частина семплера).
             process_interval: Duration::from_secs(3600),
             top_processes: 0,
+            cpu_temp: false,
         };
         let (sampler, snapshots) = Sampler::spawn(config, system, gpu)?;
         let pm = Live::spawn(presentmon)?;

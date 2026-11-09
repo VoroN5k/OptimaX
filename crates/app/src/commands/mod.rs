@@ -57,6 +57,7 @@ pub(crate) fn record_game(
         Duration::from_secs(u64::from(seconds)),
     )
     .with_start(start, sound);
+    options.sampler.cpu_temp = sensors::cpu_temp_allowed(&state);
     if let Ok(catalog) = Catalog::ukrainian() {
         options = options.with_notices(RecordNotices::from_catalog(&catalog));
     }

@@ -10,10 +10,9 @@ use crate::state::{lock, AppState};
 use optimax_core::Catalog;
 use optimax_diagnosis::diagnose;
 use optimax_frametime::watch::{
-    CaptureFailure, WatchEnd, WatchEvent, WatchNotices, WatchOptions, WatchStatus, Watcher,
+    CaptureFailure, WatchEnd, WatchEvent, WatchNotices, WatchOptions, WatchStatus,
 };
 use optimax_frametime::{EndReason, Target};
-use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
 use std::sync::mpsc::Receiver;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -26,7 +25,7 @@ pub struct LagSession {
     id: u64,
     game: String,
     window_s: u32,
-    watcher: Option<Watcher>,
+    watcher: Option<crate::link::WatchHandle>,
     /// Чорна скринька на паузі, поки йде стеження.
     pause: Option<super::blackbox::Pause>,
     status: Option<WatchStatus>,
@@ -98,13 +97,7 @@ pub fn lag_start(app: AppHandle, state: State<'_, AppState>, exe: String) -> Cmd
         });
     }
     let window_s = u32::try_from(options.window.as_secs()).unwrap_or(30);
-    let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
-    let (watcher, events) = Watcher::start(
-        state.presentmon()?,
-        options,
-        Box::new(SysinfoSource::new()),
-        gpu,
-    )?;
+    let (watcher, events) = state.link.start_watch(&state, options)?;
 
     let mut slot = lock(&state.lag);
     let id = slot.as_ref().map_or(1, |s| s.id + 1);

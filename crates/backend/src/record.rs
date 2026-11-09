@@ -88,11 +88,44 @@ pub struct PollReply {
     pub done: Option<Result<Recording, RecordFailure>>,
 }
 
-/// Що повідомив інтерфейс.
+/// Що повідомив інтерфейс (спільне для запису, стеження й оверлею).
 #[derive(Debug)]
-struct Inputs {
-    foreground: Mutex<(Option<u32>, Instant)>,
-    hotkey: AtomicBool,
+pub(crate) struct Inputs {
+    pub(crate) foreground: Mutex<(Option<u32>, Instant)>,
+    pub(crate) hotkey: AtomicBool,
+}
+
+impl Inputs {
+    pub(crate) fn new() -> Self {
+        Self {
+            foreground: Mutex::new((None, Instant::now())),
+            hotkey: AtomicBool::new(false),
+        }
+    }
+
+    /// Нове опитування від інтерфейсу.
+    pub(crate) fn report(&self, foreground_pid: Option<u32>, hotkey: bool) {
+        *lock(&self.foreground) = (foreground_pid, Instant::now());
+        if hotkey {
+            self.hotkey.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Скільки минуло від останнього опитування.
+    pub(crate) fn age(&self) -> Duration {
+        lock(&self.foreground).1.elapsed()
+    }
+
+    /// Активне вікно, якщо інтерфейс опитував нещодавно (інакше — гра не в фокусі).
+    pub(crate) fn foreground(&self) -> Option<u32> {
+        let (pid, at) = *lock(&self.foreground);
+        pid.filter(|_| at.elapsed() <= STALE)
+    }
+
+    /// Натискання клавіші (читається один раз).
+    pub(crate) fn take_hotkey(&self) -> bool {
+        self.hotkey.swap(false, Ordering::SeqCst)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -109,7 +142,7 @@ struct Active {
     shared: Arc<Mutex<Shared>>,
 }
 
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 

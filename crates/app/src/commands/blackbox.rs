@@ -14,13 +14,12 @@ use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
 use optimax_audit::{SystemProbe, WindowsProbe};
 use optimax_diagnosis::{freeze_causes, Context};
-use optimax_frametime::watch::{FreezeMark, WatchEnd, WatchEvent, WatchOptions, Watcher};
+use optimax_frametime::watch::{FreezeMark, WatchEnd, WatchEvent, WatchOptions};
 use optimax_frametime::{Recording, Target};
 use optimax_history::{
     cause_summary, entry_id, keep_worst, FreezeCauseCount, FreezeEntry, SessionEntry, SessionStore,
     StdDir, KEEP_FREEZE_RECORDINGS, KEEP_SESSIONS,
 };
-use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -80,7 +79,7 @@ pub struct BlackBox {
     id: u64,
     session: SessionEntry,
     display_hz: Option<u32>,
-    watcher: Option<Watcher>,
+    watcher: Option<crate::link::WatchHandle>,
     pump: Option<JoinHandle<()>>,
     /// Номер запуску стеження в межах сесії (події попереднього запуску ігноруються).
     generation: u64,
@@ -253,13 +252,7 @@ fn start_watcher(app: &AppHandle, state: &AppState, id: u64, game: &str) -> CmdR
     options.hotkey = false;
     options.freeze_ms = Some(FREEZE_MS);
     options.sampler.cpu_temp = super::sensors::cpu_temp_source(state);
-    let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
-    let (watcher, events) = Watcher::start(
-        state.presentmon()?,
-        options,
-        Box::new(SysinfoSource::new()),
-        gpu,
-    )?;
+    let (watcher, events) = state.link.start_watch(state, options)?;
     let mut slot = lock(&state.blackbox);
     let Some(b) = slot.as_mut().filter(|b| b.id == id && b.watcher.is_none()) else {
         // Сесію закрили, поки стеження запускалось.

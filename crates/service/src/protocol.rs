@@ -76,6 +76,31 @@ pub enum Command {
     },
     /// Зупинити запис.
     RecordCancel,
+    /// Почати стеження («Щойно лагнуло?», чорна скринька; `spec` — `optimax_backend::watch::WatchSpec`).
+    WatchStart {
+        /// Що стежити.
+        spec: serde_json::Value,
+    },
+    /// Опитування стеження.
+    WatchPoll {
+        /// PID процесу з активним вікном.
+        foreground_pid: Option<u32>,
+        /// Ctrl+Shift+F11 натиснуто з минулого опитування.
+        hotkey: bool,
+        /// Кнопка «зберегти останні секунди».
+        capture: bool,
+    },
+    /// Зупинити стеження.
+    WatchStop,
+    /// Почати збір живих даних оверлею.
+    LiveStart,
+    /// Опитування оверлею.
+    LivePoll {
+        /// PID процесу з активним вікном (без самої програми).
+        foreground_pid: Option<u32>,
+    },
+    /// Зупинити збір оверлею.
+    LiveStop,
 }
 
 /// Запит клієнта.

@@ -37,7 +37,7 @@ const QUICK_EXIT: Duration = Duration::from_secs(5);
 const MAX_QUICK_EXITS: u32 = 3;
 
 /// Цифри для оверлею.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LiveStats {
     /// Ім'я процесу гри.
     pub app: String,
@@ -151,6 +151,9 @@ fn ticks(d: Duration, freq: i64) -> i64 {
         / 1_000_000
 }
 
+/// Звідки брати процес з активним вікном (без самої програми).
+pub type Foreground = Arc<dyn Fn() -> Option<u32> + Send + Sync>;
+
 /// Живі дані оверлею. Зупиняється [`LiveMonitor::stop`] або при знищенні.
 pub struct LiveMonitor {
     latest: Arc<Mutex<Option<LiveStats>>>,
@@ -165,11 +168,26 @@ impl std::fmt::Debug for LiveMonitor {
 }
 
 impl LiveMonitor {
-    /// Запускає PresentMon (живі дані, окрема сесія) і семплер.
+    /// Запускає PresentMon (живі дані, окрема сесія) і семплер. Гра — процес з активним вікном
+    /// (крім самої програми).
     pub fn start(
         presentmon: &BundledPresentMon,
         system: Box<dyn SystemSource>,
         gpu: Option<Box<dyn GpuApi>>,
+    ) -> Result<Self, FrametimeError> {
+        let own_pid = std::process::id();
+        let foreground: Foreground = Arc::new(move || {
+            optimax_core::input::foreground_process_id().filter(|p| *p != own_pid)
+        });
+        Self::start_with(presentmon, system, gpu, foreground)
+    }
+
+    /// Те саме, але активне вікно дає `foreground` (у службі — інтерфейс через канал).
+    pub fn start_with(
+        presentmon: &BundledPresentMon,
+        system: Box<dyn SystemSource>,
+        gpu: Option<Box<dyn GpuApi>>,
+        foreground: Foreground,
     ) -> Result<Self, FrametimeError> {
         let config = SamplerConfig {
             interval: Duration::from_millis(500),
@@ -189,6 +207,7 @@ impl LiveMonitor {
             pm: Some(pm),
             latest: latest.clone(),
             stop: stop.clone(),
+            foreground,
         };
         let handle = std::thread::Builder::new()
             .name("optimax-live".into())
@@ -295,6 +314,7 @@ struct Worker {
     pm: Option<Live>,
     latest: Arc<Mutex<Option<LiveStats>>>,
     stop: Arc<AtomicBool>,
+    foreground: Foreground,
 }
 
 impl Worker {
@@ -310,7 +330,6 @@ impl Worker {
     }
 
     fn work(&mut self) {
-        let own_pid = std::process::id();
         let mut window = FrameWindow::new(qpc_frequency());
         let mut snapshot: Option<Snapshot> = None;
         let mut last_frame: Option<Instant> = None;
@@ -340,7 +359,7 @@ impl Worker {
                 }
                 continue;
             }
-            let fg = optimax_core::input::foreground_process_id().filter(|p| *p != own_pid);
+            let fg = (self.foreground)();
             window.focus(fg);
             for f in pm.frames.try_iter() {
                 if window.push(&f) {

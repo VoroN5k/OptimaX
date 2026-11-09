@@ -451,6 +451,79 @@ fn dur_ticks(d: Duration, freq: i64) -> i64 {
         / 1_000_000
 }
 
+/// Повідомлення стеження для сесії користувача.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchNotice {
+    /// Натиснуто — «зберігаю останні N с» (і звук, якщо ввімкнено).
+    Saving,
+    /// Знімок не вдався — «замало гри».
+    TooShort,
+}
+
+/// Те, що бачить лише сесія користувача: активне вікно, `Ctrl+Shift+F11`, звук і повідомлення.
+/// У самій програмі — [`LocalWatchSession`]; у службі це передає інтерфейс.
+pub trait WatchSession: Send {
+    /// PID процесу з активним вікном.
+    fn foreground_pid(&self) -> Option<u32>;
+    /// Чи натиснуто гарячу клавішу з минулої перевірки.
+    fn hotkey_pressed(&self) -> bool;
+    /// Повідомлення.
+    fn notice(&self, n: WatchNotice);
+}
+
+/// Сесія користувача в цьому процесі.
+pub struct LocalWatchSession {
+    hotkey: Option<optimax_core::input::GlobalHotkey>,
+    sound: bool,
+    notices: Option<WatchNotices>,
+    toaster: Option<Toaster>,
+}
+
+impl LocalWatchSession {
+    /// Реєструє `Ctrl+Shift+F11`, якщо [`WatchOptions::hotkey`] (помилка, якщо клавіша зайнята).
+    pub fn new(options: &WatchOptions) -> Result<Self, FrametimeError> {
+        let hotkey = if options.hotkey {
+            Some(
+                optimax_core::input::GlobalHotkey::ctrl_shift(
+                    optimax_core::input::FunctionKey::F11,
+                )
+                .map_err(|e| FrametimeError::Hotkey(format!("Ctrl+Shift+F11: {e}")))?,
+            )
+        } else {
+            None
+        };
+        Ok(Self {
+            hotkey,
+            sound: options.sound,
+            notices: options.notices.clone(),
+            toaster: options.notices.as_ref().and_then(|_| Toaster::new().ok()),
+        })
+    }
+}
+
+impl WatchSession for LocalWatchSession {
+    fn foreground_pid(&self) -> Option<u32> {
+        optimax_core::input::foreground_process_id()
+    }
+
+    fn hotkey_pressed(&self) -> bool {
+        self.hotkey.as_ref().is_some_and(|h| h.pressed())
+    }
+
+    fn notice(&self, n: WatchNotice) {
+        if n == WatchNotice::Saving && self.sound {
+            optimax_core::input::beep_start();
+        }
+        if let (Some(t), Some(texts)) = (&self.toaster, &self.notices) {
+            match n {
+                WatchNotice::Saving => t.show(&texts.saving, Tone::Info, NOTICE),
+                WatchNotice::TooShort => t.show(&texts.too_short, Tone::Warn, NOTICE),
+            }
+        }
+    }
+}
+
 /// Запущене стеження. Зупиняється [`Watcher::stop`] або при знищенні.
 pub struct Watcher {
     stop: Arc<AtomicBool>,
@@ -474,17 +547,20 @@ impl Watcher {
         system: Box<dyn SystemSource>,
         gpu: Option<Box<dyn GpuApi>>,
     ) -> Result<(Self, Receiver<WatchEvent>), FrametimeError> {
+        let session = LocalWatchSession::new(&options)?;
+        Self::start_in_session(presentmon, options, system, gpu, Box::new(session))
+    }
+
+    /// Те саме, але активне вікно, клавішу, звук і повідомлення дає `session` (у службі —
+    /// інтерфейс користувача через канал).
+    pub fn start_in_session(
+        presentmon: &BundledPresentMon,
+        options: WatchOptions,
+        system: Box<dyn SystemSource>,
+        gpu: Option<Box<dyn GpuApi>>,
+        session: Box<dyn WatchSession>,
+    ) -> Result<(Self, Receiver<WatchEvent>), FrametimeError> {
         options.target.validate()?;
-        let hotkey = if options.hotkey {
-            Some(
-                optimax_core::input::GlobalHotkey::ctrl_shift(
-                    optimax_core::input::FunctionKey::F11,
-                )
-                .map_err(|e| FrametimeError::Hotkey(format!("Ctrl+Shift+F11: {e}")))?,
-            )
-        } else {
-            None
-        };
         let freq = qpc_frequency();
         let keep_secs = u32::try_from(KEEP.as_secs()).unwrap_or(40);
         let dpc = match optimax_core::etw::DpcTracer::start_ring(freq, keep_secs) {
@@ -504,7 +580,7 @@ impl Watcher {
             presentmon: presentmon.clone(),
             options,
             freq,
-            hotkey,
+            session,
             dpc,
             sampler: Some(sampler),
             snapshots,
@@ -654,7 +730,7 @@ struct Loop {
     presentmon: BundledPresentMon,
     options: WatchOptions,
     freq: i64,
-    hotkey: Option<optimax_core::input::GlobalHotkey>,
+    session: Box<dyn WatchSession>,
     dpc: Option<optimax_core::etw::DpcTracer>,
     sampler: Option<Sampler>,
     snapshots: Receiver<Snapshot>,
@@ -689,26 +765,10 @@ impl Loop {
         let _ = self.tx.send(WatchEvent::Ended(end));
     }
 
-    /// Повідомлення поверх гри: «зберігаю» або (`failed`) «замало гри».
-    fn notice(&self, toaster: Option<&Toaster>, failed: bool) {
-        if let (Some(t), Some(n)) = (toaster, &self.options.notices) {
-            if failed {
-                t.show(&n.too_short, Tone::Warn, NOTICE);
-            } else {
-                t.show(&n.saving, Tone::Info, NOTICE);
-            }
-        }
-    }
-
     fn watch(&mut self) -> WatchEnd {
         let window = self.options.window();
         let presenting_ticks = dur_ticks(PRESENTING_WINDOW, self.freq);
         let mut ring = Ring::new(self.freq, KEEP);
-        let toaster = self
-            .options
-            .notices
-            .as_ref()
-            .and_then(|_| Toaster::new().ok());
         let mut pids = game_pids(&self.options.target);
         let mut seen_running = pids.as_ref().is_some_and(|p| !p.is_empty());
         let mut last_pid_check = Instant::now();
@@ -767,7 +827,7 @@ impl Loop {
             }
             let running = pids.as_ref().is_none_or(|p| !p.is_empty());
             let now = qpc_now();
-            let focused = match (&pids, optimax_core::input::foreground_process_id()) {
+            let focused = match (&pids, self.session.foreground_pid()) {
                 (Some(p), Some(fg)) => p.contains(&fg),
                 _ => false,
             };
@@ -802,12 +862,9 @@ impl Loop {
                 }
             }
 
-            let hotkey = self.hotkey.as_ref().is_some_and(|h| h.pressed());
+            let hotkey = self.session.hotkey_pressed();
             if (hotkey || self.capture.swap(false, Ordering::SeqCst)) && pending.is_none() {
-                if self.options.sound {
-                    optimax_core::input::beep_start();
-                }
-                self.notice(toaster.as_ref(), false);
+                self.session.notice(WatchNotice::Saving);
                 pending = Some((now, Instant::now(), unix_ms_at(now, self.freq)));
                 tracing::info!("«Щойно лагнуло»: натиснуто, зберігаю");
                 if self.tx.send(WatchEvent::Pressed).is_err() {
@@ -839,7 +896,7 @@ impl Loop {
                             at_unix_ms,
                         },
                         Err(reason) => {
-                            self.notice(toaster.as_ref(), true);
+                            self.session.notice(WatchNotice::TooShort);
                             WatchEvent::CaptureFailed { reason, at_unix_ms }
                         }
                     };

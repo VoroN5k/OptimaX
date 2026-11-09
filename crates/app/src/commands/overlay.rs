@@ -9,9 +9,8 @@ use crate::state::{lock, AppState};
 use optimax_core::input::{FunctionKey, GlobalHotkey};
 use optimax_core::overlay::{LineTone, Overlay, OverlayLine};
 use optimax_core::{Catalog, Text};
-use optimax_frametime::live::{LiveMonitor, LiveStats};
+use optimax_frametime::live::LiveStats;
 use optimax_frametime::{Phase, RecordProgress};
-use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -138,17 +137,11 @@ fn run(app: &AppHandle, stop: &AtomicBool) {
         }
     };
     let state = app.state::<AppState>();
-    let live = match state.presentmon() {
-        Ok(pm) => {
-            let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
-            LiveMonitor::start(pm, Box::new(SysinfoSource::new()), gpu)
-        }
-        Err(e) => Err(e),
-    };
+    let live = state.link.start_live(&state);
     let live = match live {
         Ok(l) => l,
         Err(e) => {
-            tracing::error!("оверлей: живі дані недоступні: {e}");
+            tracing::error!("оверлей: живі дані недоступні: {e:?}");
             return;
         }
     };

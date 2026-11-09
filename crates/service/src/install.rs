@@ -18,6 +18,23 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 pub const COPY_MARKER: &str = "service-copy.marker";
 /// Скільки чекати на зупинку чи запуск служби.
 const WAIT: Duration = Duration::from_secs(15);
+/// Ключ, який пише інсталятор NSIS (там його тека встановлення).
+const UNINSTALL_KEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OptimaX";
+
+/// Тека, куди програму встановив інсталятор (`None` — інсталятора не було).
+fn installer_dir() -> Option<std::path::PathBuf> {
+    use optimax_core::registry::{RegHive, RegistryApi, WinRegistry};
+    let v = WinRegistry
+        .read_value(RegHive::LocalMachine, UNINSTALL_KEY, "InstallLocation")
+        .ok()??;
+    let s = v.as_str()?.trim().trim_matches('"').to_string();
+    (!s.is_empty()).then(|| std::path::PathBuf::from(s))
+}
+
+/// Exe у теці встановлення належить інсталятору (а не є копією портативної версії).
+fn installer_owns(dir: &std::path::Path) -> bool {
+    installer_dir().is_some_and(|d| same_file(&d, dir))
+}
 
 fn os(e: impl std::fmt::Display) -> ServiceError {
     ServiceError::Os(e.to_string())
@@ -119,8 +136,9 @@ pub fn install(sid: &str) -> Result<std::path::PathBuf, ServiceError> {
     stop()?;
     if !same_file(&me, &target) {
         // Там уже програма з інсталятора: не перезаписувати її чужою копією (і не позначати як
-        // «нашу копію», яку потім стерло б видалення служби).
-        if target.exists() && !dir.join(COPY_MARKER).is_file() {
+        // «нашу копію», яку потім стерло б видалення служби). Копія без інсталятора (наша, що
+        // лишилась після невдалого видалення) — перезаписується.
+        if target.exists() && installer_owns(&dir) {
             return Err(ServiceError::Os(format!(
                 "OptimaX уже встановлено інсталятором у {} — запустіть програму звідти й встановіть службу там",
                 dir.display()
@@ -182,12 +200,21 @@ pub fn uninstall() -> Result<(), ServiceError> {
     if let (Some(dir), Some(exe)) = (install_dir(), service_exe()) {
         let marker = dir.join(COPY_MARKER);
         let me = std::env::current_exe().ok();
-        // Не видаляти exe, з якого запущено цей процес.
+        // Не видаляти exe, з якого запущено цей процес, і програму з інсталятора.
         let running_copy = me.as_deref().is_some_and(|m| same_file(m, &exe));
-        if marker.is_file() && !running_copy {
-            let _ = std::fs::remove_file(&exe);
-            let _ = std::fs::remove_file(&marker);
-            let _ = std::fs::remove_dir(&dir);
+        if marker.is_file() && !running_copy && !installer_owns(&dir) {
+            // Процес служби міг ще не завершитися й тримати exe: кілька спроб. Позначку
+            // прибираємо лише після exe — інакше копія лишиться «нічиєю».
+            let deadline = Instant::now() + WAIT;
+            while std::fs::remove_file(&exe).is_err() && exe.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(300));
+            }
+            if exe.exists() {
+                tracing::warn!("копію {} не видалено (зайнята)", exe.display());
+            } else {
+                let _ = std::fs::remove_file(&marker);
+                let _ = std::fs::remove_dir(&dir);
+            }
         }
     }
     tracing::info!("служба видалена");

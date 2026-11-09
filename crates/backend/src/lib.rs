@@ -1,12 +1,13 @@
 //! Бекенд OptimaX без Tauri (етап 2 з `docs/SERVICE.md`): те, що потребує прав адміністратора й
 //! тому виконується в службі, а без служби — у самій програмі.
 //!
-//! Датчики CPU через PawnIO ([`sensors`]) і запис гри ([`record`]).
+//! Датчики CPU через PawnIO ([`sensors`]), запис гри ([`record`]), стеження й оверлей ([`watch`]).
 
 #![forbid(unsafe_code)]
 
 pub mod record;
 pub mod sensors;
+pub mod watch;
 
 #[cfg(windows)]
 pub use self::service::handler;
@@ -15,7 +16,10 @@ pub use self::service::handler;
 mod service {
     use crate::record::{RecordSpec, Recorder};
     use crate::sensors::SensorCache;
-    use optimax_frametime::{record_in_session, BundledPresentMon};
+    use crate::watch::{LiveHost, WatchHost, WatchSpec};
+    use optimax_frametime::live::LiveMonitor;
+    use optimax_frametime::watch::Watcher;
+    use optimax_frametime::{record_in_session, BundledPresentMon, FrametimeError};
     use optimax_metrics::{CpuTempSource, GpuApi, NvmlGpu, SysinfoSource};
     use optimax_service::host::Handler;
     use optimax_service::protocol::{Command, Reply};
@@ -29,40 +33,89 @@ mod service {
     struct Backend {
         sensors: Arc<SensorCache>,
         recorder: Recorder,
+        watch: WatchHost,
+        live: LiveHost,
         presentmon: Arc<OnceLock<BundledPresentMon>>,
     }
 
+    /// Вбудований PresentMon (розпаковується й перевіряється за SHA-256 один раз).
+    fn presentmon(
+        cell: &OnceLock<BundledPresentMon>,
+    ) -> Result<&BundledPresentMon, FrametimeError> {
+        if let Some(p) = cell.get() {
+            return Ok(p);
+        }
+        let installed = BundledPresentMon::install_default()?;
+        Ok(cell.get_or_init(|| installed))
+    }
+
+    fn gpu() -> Option<Box<dyn GpuApi>> {
+        NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>)
+    }
+
     impl Backend {
+        fn temp_source(&self, on: bool) -> Option<CpuTempSource> {
+            on.then(|| {
+                let s = self.sensors.clone();
+                CpuTempSource(Arc::new(move || s.temp()))
+            })
+        }
+
+        fn watch_start(&self, spec: &serde_json::Value) -> Reply {
+            let spec: WatchSpec = match serde_json::from_value(spec.clone()) {
+                Ok(s) => s,
+                Err(e) => return Reply::Error(format!("некоректний запит стеження: {e}")),
+            };
+            let temp = self.temp_source(spec.cpu_temp);
+            let pm = match presentmon(&self.presentmon) {
+                Ok(p) => p,
+                Err(e) => return Reply::Error(e.to_string()),
+            };
+            tracing::info!("служба: стеження за {:?}", spec.target);
+            let started = self.watch.start(&spec, |mut options, session| {
+                options.sampler.cpu_temp = temp;
+                Watcher::start_in_session(
+                    pm,
+                    options,
+                    Box::new(SysinfoSource::new()),
+                    gpu(),
+                    session,
+                )
+            });
+            started.map_or_else(Reply::Error, |()| Reply::Json(serde_json::Value::Null))
+        }
+
+        fn live_start(&self) -> Reply {
+            let pm = match presentmon(&self.presentmon) {
+                Ok(p) => p,
+                Err(e) => return Reply::Error(e.to_string()),
+            };
+            let started = self
+                .live
+                .start(|fg| LiveMonitor::start_with(pm, Box::new(SysinfoSource::new()), gpu(), fg));
+            started.map_or_else(Reply::Error, |()| Reply::Json(serde_json::Value::Null))
+        }
+
         fn record_start(&self, spec: &serde_json::Value) -> Reply {
             let spec: RecordSpec = match serde_json::from_value(spec.clone()) {
                 Ok(s) => s,
                 Err(e) => return Reply::Error(format!("некоректний запит запису: {e}")),
             };
-            let temp = spec.cpu_temp.then(|| {
-                let s = self.sensors.clone();
-                CpuTempSource(Arc::new(move || s.temp()))
-            });
+            let temp = self.temp_source(spec.cpu_temp);
             let pm = self.presentmon.clone();
             let started =
                 self.recorder
                     .start(spec, move |options, cancel, session, on_progress| {
                         // PresentMon — той самий вбудований, з перевіркою SHA-256 (CLAUDE.md 2.1).
-                        let pm = match pm.get() {
-                            Some(p) => p,
-                            None => {
-                                let installed = BundledPresentMon::install_default()?;
-                                pm.get_or_init(|| installed)
-                            }
-                        };
+                        let pm = presentmon(&pm)?;
                         let mut options = options.clone();
                         options.sampler.cpu_temp = temp;
-                        let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
                         tracing::info!("служба: запис гри {:?}", options.target);
                         let r = record_in_session(
                             pm,
                             &options,
                             Box::new(SysinfoSource::new()),
-                            gpu,
+                            gpu(),
                             cancel,
                             session,
                             on_progress,
@@ -85,6 +138,8 @@ mod service {
         let b = Backend {
             sensors: Arc::new(SensorCache::new()),
             recorder: Recorder::new(),
+            watch: WatchHost::new(),
+            live: LiveHost::new(),
             presentmon: Arc::new(OnceLock::new()),
         };
         Arc::new(move |cmd: &Command| match cmd {
@@ -100,6 +155,28 @@ mod service {
                 .map_or_else(Reply::Error, |r| json(&r)),
             Command::RecordCancel => {
                 b.recorder.cancel();
+                Reply::Json(serde_json::Value::Null)
+            }
+            Command::WatchStart { spec } => b.watch_start(spec),
+            Command::WatchPoll {
+                foreground_pid,
+                hotkey,
+                capture,
+            } => b
+                .watch
+                .poll(*foreground_pid, *hotkey, *capture)
+                .map_or_else(Reply::Error, |e| json(&e)),
+            Command::WatchStop => {
+                b.watch.stop();
+                Reply::Json(serde_json::Value::Null)
+            }
+            Command::LiveStart => b.live_start(),
+            Command::LivePoll { foreground_pid } => b
+                .live
+                .poll(*foreground_pid)
+                .map_or_else(Reply::Error, |s| json(&s)),
+            Command::LiveStop => {
+                b.live.stop();
                 Reply::Json(serde_json::Value::Null)
             }
             // `ping` служба відповідає сама.

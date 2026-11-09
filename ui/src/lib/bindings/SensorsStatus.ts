@@ -32,4 +32,8 @@ version: string,
 /**
  * Показання.
  */
-reading: AmdReading, };
+reading: AmdReading, 
+/**
+ * Прочитано через службу OptimaX (а не самою програмою).
+ */
+via_service: boolean, };

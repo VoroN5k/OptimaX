@@ -1,0 +1,19 @@
+[package]
+name = "optimax-backend"
+description = "OptimaX: бекенд без Tauri — те, що виконує служба (і програма, коли служби немає)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+optimax-core.workspace = true
+optimax-metrics.workspace = true
+optimax-service.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

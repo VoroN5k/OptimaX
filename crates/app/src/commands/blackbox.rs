@@ -252,7 +252,7 @@ fn start_watcher(app: &AppHandle, state: &AppState, id: u64, game: &str) -> CmdR
     let mut options = WatchOptions::new(Target::ProcessName(game.to_string()));
     options.hotkey = false;
     options.freeze_ms = Some(FREEZE_MS);
-    options.sampler.cpu_temp = super::sensors::cpu_temp_allowed(state);
+    options.sampler.cpu_temp = super::sensors::cpu_temp_source(state);
     let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
     let (watcher, events) = Watcher::start(
         state.presentmon()?,

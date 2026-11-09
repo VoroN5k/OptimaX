@@ -77,6 +77,7 @@ pub async fn feedback_report(state: State<'_, AppState>) -> CmdResult<String> {
     let startup = lock(&state.startup).clone();
     let last_diagnosis = lock(&state.last_diagnosis).clone();
     let log: Vec<LogLine> = lock(&state.log_tail).iter().cloned().collect();
+    let link = settings.pawnio_sensors.then(|| state.link.clone());
     blocking(move || {
         let created_unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -91,7 +92,7 @@ pub async fn feedback_report(state: State<'_, AppState>) -> CmdResult<String> {
                 kernel: sysinfo::System::kernel_version(),
             },
             hardware: collect_hardware(),
-            audit: super::audit::full_audit(settings.pawnio_sensors),
+            audit: super::audit::full_audit(link.as_deref()),
             settings,
             startup,
             last_diagnosis,

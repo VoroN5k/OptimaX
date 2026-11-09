@@ -115,6 +115,8 @@ pub struct AppState {
     /// Знімок процесів для вибору гри: CPU рахується за час від попереднього запиту
     /// (UI питає раз на кілька секунд), а не за коротке вікно — цифри стабільні.
     pub processes: Mutex<Option<sysinfo::System>>,
+    /// Шлях до привілейованих даних: служба або сам процес (спільний для потоків).
+    pub link: Arc<crate::link::Link>,
 }
 
 /// Скільки останніх рядків журналу дій пам'ятаємо для звіту.
@@ -156,6 +158,7 @@ impl AppState {
             last_diagnosis: Mutex::new(None),
             log_tail: Mutex::new(VecDeque::with_capacity(LOG_TAIL)),
             processes: Mutex::new(None),
+            link: Arc::new(crate::link::Link::new()),
         })
     }
 

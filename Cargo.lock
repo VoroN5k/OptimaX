@@ -2394,6 +2394,7 @@ dependencies = [
  "anyhow",
  "flate2",
  "optimax-audit",
+ "optimax-backend",
  "optimax-cleanup",
  "optimax-core",
  "optimax-diagnosis",
@@ -2432,6 +2433,18 @@ dependencies = [
  "tracing",
  "ts-rs",
  "windows",
+]
+
+[[package]]
+name = "optimax-backend"
+version = "0.2.0"
+dependencies = [
+ "optimax-core",
+ "optimax-metrics",
+ "optimax-service",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

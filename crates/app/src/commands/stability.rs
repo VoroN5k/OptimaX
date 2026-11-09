@@ -12,10 +12,8 @@ use optimax_audit::rules::{
     UNEXPECTED_OFF_EVENT_ID, WHEA_PROVIDER,
 };
 use optimax_audit::{SystemProbe, WindowsProbe};
-use optimax_core::registry::WinRegistry;
 use optimax_frametime::CancelToken;
 use optimax_history::{diff, StateChange, SystemState};
-use optimax_metrics::amd_sensors::AmdSensors;
 use optimax_metrics::{GpuApi, GpuSnapshot, NvmlGpu};
 use optimax_stability::protocol::{worker_args, TestKind, WorkerMessage};
 use optimax_stability::verdict::{
@@ -113,23 +111,20 @@ fn now_ms() -> i64 {
 enum Probe {
     /// Відеокарта (NVML).
     Gpu(Box<Option<NvmlGpu>>),
-    /// Процесор через PawnIO (лише якщо користувач його встановив і ввімкнув).
-    Cpu(Option<AmdSensors>),
+    /// Процесор через PawnIO — службою або самою програмою (лише якщо користувач його встановив
+    /// і ввімкнув).
+    Cpu(Option<std::sync::Arc<crate::link::Link>>),
 }
 
 impl Probe {
     /// Для тесту відеокарти — NVML; для процесора й пам'яті — PawnIO, якщо дозволено.
-    fn open(kind: TestKind, pawnio_allowed: bool) -> Self {
+    fn open(kind: TestKind, app: &AppHandle) -> Self {
         match kind {
             TestKind::Gpu => Self::Gpu(Box::new(NvmlGpu::open())),
-            TestKind::Cpu | TestKind::Ram => Self::Cpu(
-                pawnio_allowed
-                    .then(|| AmdSensors::open(&WinRegistry))
-                    .and_then(|r| {
-                        r.map_err(|e| tracing::info!("температура CPU недоступна: {e}"))
-                            .ok()
-                    }),
-            ),
+            TestKind::Cpu | TestKind::Ram => {
+                let state = app.state::<AppState>();
+                Self::Cpu(pawnio_allowed(app).then(|| state.link.clone()))
+            }
         }
     }
 
@@ -138,10 +133,10 @@ impl Probe {
     fn read(&mut self) -> (Option<u32>, Option<GpuSnapshot>) {
         match self {
             Self::Gpu(gpu) => read_sensors(gpu),
-            Self::Cpu(s) => (
-                s.as_ref()
-                    .and_then(|s| s.read().ok())
-                    .map(|r| r.cpu_c.round().max(0.0) as u32),
+            Self::Cpu(link) => (
+                link.as_ref()
+                    .and_then(|l| l.cpu_temp())
+                    .map(|t| t.round().max(0.0) as u32),
                 None,
             ),
         }
@@ -169,10 +164,7 @@ pub async fn stab_info(app: AppHandle) -> CmdResult<StabInfo> {
     blocking(move || {
         let mut gpu = NvmlGpu::open();
         let (temp, busiest) = read_sensors(&mut gpu);
-        let cpu_sensor = Probe::open(TestKind::Cpu, pawnio_allowed(&app))
-            .read()
-            .0
-            .is_some();
+        let cpu_sensor = Probe::open(TestKind::Cpu, &app).read().0.is_some();
         let (ram_total, ram_free) = optimax_stability::ram::memory().unwrap_or((0, 0));
         Ok(StabInfo {
             gpu: busiest.map(|s| s.name),
@@ -235,7 +227,7 @@ fn start(
     // Незавершений попередній тест спершу стає результатом, щоб не загубити його позначку.
     recover(&d);
     // Відеокарта — NVML; процесор і пам'ять — PawnIO, якщо користувач дозволив (інакше датчика немає).
-    let mut probe = Probe::open(kind, pawnio_allowed(app));
+    let mut probe = Probe::open(kind, app);
     let (temp, _) = probe.read();
     let has_sensor = temp.is_some();
     let limit = stop_temp_c(kind);

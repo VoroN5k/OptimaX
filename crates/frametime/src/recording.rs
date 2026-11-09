@@ -116,7 +116,7 @@ impl RecordOptions {
                 interval: Duration::from_millis(200),
                 process_interval: Duration::from_secs(1),
                 top_processes: 8,
-                cpu_temp: false,
+                cpu_temp: None,
             },
             notices: None,
         }
@@ -390,7 +390,7 @@ pub fn record_with(
             None
         }
     };
-    let (sampler, snapshots_rx) = Sampler::spawn(options.sampler, system, gpu)?;
+    let (sampler, snapshots_rx) = Sampler::spawn(options.sampler.clone(), system, gpu)?;
     let mut child = presentmon.spawn_capture(&options.target, pm_duration, immediate)?;
 
     let last_frame = Arc::new(AtomicI64::new(0));

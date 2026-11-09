@@ -184,8 +184,8 @@ pub async fn dashboard_config(app: AppHandle, refresh: bool) -> CmdResult<Config
                 return Ok(c);
             }
         }
-        let pawnio = super::sensors::cpu_temp_allowed(&state);
-        let summary = ConfigSummary::from_report(super::audit::full_audit(pawnio));
+        let link = super::sensors::cpu_temp_allowed(&state).then(|| state.link.clone());
+        let summary = ConfigSummary::from_report(super::audit::full_audit(link.as_deref()));
         lock(&state.dashboard).config = Some(summary.clone());
         Ok(summary)
     })

@@ -48,16 +48,22 @@ test.describe("Розширені датчики (PawnIO)", () => {
   });
 
   test("показання: температура й частоти шини пам'яті", async ({ page }) => {
-    await mockBackend(page, { sensors_status: { state: "ok", version: "2.2.0.0", reading } });
+    await mockBackend(page, { sensors_status: { state: "ok", version: "2.2.0.0", reading, via_service: true } });
     await open(page);
     await expect(page.getByText("47.5 °C")).toBeVisible();
+    await expect(page.getByText(tk("ui.sensors.via_service"))).toBeVisible();
     await expect(page.getByText(tk("ui.sensors.ccd_temp", { n: 1 }))).toBeVisible();
     await expect(page.getByText("1800 / 900 / 1800")).toBeVisible();
   });
 
   test("невідома таблиця SMU — частот немає, і сказано чому", async ({ page }) => {
     await mockBackend(page, {
-      sensors_status: { state: "ok", version: "2.2.0.0", reading: { ...reading, clocks: null, pm_version: 0x540004 } },
+      sensors_status: {
+        state: "ok",
+        version: "2.2.0.0",
+        reading: { ...reading, clocks: null, pm_version: 0x540004 },
+        via_service: false,
+      },
     });
     await open(page);
     await expect(page.getByText(tk("ui.sensors.clocks_unknown", { v: "540004" }))).toBeVisible();

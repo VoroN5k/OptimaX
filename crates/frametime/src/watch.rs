@@ -95,7 +95,7 @@ impl WatchOptions {
                 interval: Duration::from_millis(200),
                 process_interval: Duration::from_secs(1),
                 top_processes: 8,
-                cpu_temp: false,
+                cpu_temp: None,
             },
             sound: false,
             notices: None,
@@ -494,7 +494,7 @@ impl Watcher {
                 None
             }
         };
-        let (sampler, snapshots) = Sampler::spawn(options.sampler, system, gpu)?;
+        let (sampler, snapshots) = Sampler::spawn(options.sampler.clone(), system, gpu)?;
         let pm = PmProcess::spawn(presentmon, &options.target)?;
 
         let (tx, rx) = mpsc::channel();

@@ -11,7 +11,7 @@ use crate::{pipe_sddl, same_file, user_from_args};
 use std::ffi::OsString;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType,
@@ -24,9 +24,19 @@ const LOG_MAX: u64 = 1024 * 1024;
 
 define_windows_service!(ffi_service_main, service_main);
 
+/// Виконавець команд, крім `ping` (його служба відповідає сама). Підставляє `app`, щоб цей крейт
+/// не залежав від доменних крейтів.
+pub type Handler = Arc<dyn Fn(&Command) -> Reply + Send + Sync>;
+
+/// Виконавець для `service_main`: диспетчер служб викликає звичайну функцію без стану, тож
+/// виконавець передається через статичну комірку. Записується один раз до старту диспетчера,
+/// далі лише читається.
+static HANDLER: OnceLock<Handler> = OnceLock::new();
+
 /// Точка входу `optimax.exe --service`: передає керування диспетчеру служб Windows.
 /// Поза диспетчером (запуск вручну) повертає помилку.
-pub fn run() -> Result<(), crate::ServiceError> {
+pub fn run(handler: Handler) -> Result<(), crate::ServiceError> {
+    let _ = HANDLER.set(handler);
     service_dispatcher::start(SERVICE_NAME, ffi_service_main)
         .map_err(|e| crate::ServiceError::Os(format!("диспетчер служб: {e}")))
 }
@@ -91,7 +101,8 @@ fn serve() -> Result<(), String> {
     };
 
     let started = Instant::now();
-    let result = listen(PIPE_NAME, &sddl, &own_exe, &stop, started, || {
+    let handler = HANDLER.get().cloned().ok_or("немає виконавця команд")?;
+    let result = listen(PIPE_NAME, &sddl, &own_exe, &stop, started, &handler, || {
         set(
             ServiceState::Running,
             ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN,
@@ -112,6 +123,7 @@ fn listen(
     own_exe: &Path,
     stop: &AtomicBool,
     started: Instant,
+    handler: &Handler,
     on_ready: impl FnOnce(),
 ) -> Result<(), String> {
     // Перший екземпляр: якщо канал уже хтось створив — не працюємо з чужим.
@@ -131,9 +143,10 @@ fn listen(
             PipeStream::listen(name, sddl, false).map_err(|e| e.to_string())?,
         );
         let exe = own_exe.to_path_buf();
+        let handler = handler.clone();
         let spawned = std::thread::Builder::new()
             .name("optimax-svc-client".into())
-            .spawn(move || handle(conn, &exe, started));
+            .spawn(move || handle(conn, &exe, started, &handler));
         if let Err(e) = spawned {
             tracing::warn!("потік клієнта не запущено: {e}");
         }
@@ -142,7 +155,7 @@ fn listen(
 }
 
 /// Обслуговує одного клієнта, поки він не закриє канал.
-fn handle(mut conn: PipeStream, own_exe: &Path, started: Instant) {
+fn handle(mut conn: PipeStream, own_exe: &Path, started: Instant, handler: &Handler) {
     let client = conn
         .client_pid()
         .and_then(|pid| process_image(pid).map(|p| (pid, p)));
@@ -178,11 +191,12 @@ fn handle(mut conn: PipeStream, own_exe: &Path, started: Instant) {
             // Клієнт закрив канал або прислав незрозуміле — розрив.
             Err(_) => return,
         };
-        let reply = match req.command {
+        let reply = match &req.command {
             Command::Ping => Reply::Pong(Pong {
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 uptime_s: started.elapsed().as_secs(),
             }),
+            other => handler(other),
         };
         if write_frame(&mut conn, &Response { id: req.id, reply }).is_err() {
             return;
@@ -211,7 +225,11 @@ mod tests {
         let server = {
             let (name, stop) = (name.clone(), stop.clone());
             std::thread::spawn(move || {
-                listen(&name, &sddl, &exe, &stop, Instant::now(), || {
+                let handler: Handler = Arc::new(|c: &Command| match c {
+                    Command::CpuTemp => Reply::Json(serde_json::json!(42.5)),
+                    _ => Reply::Error("не в тесті".into()),
+                });
+                listen(&name, &sddl, &exe, &stop, Instant::now(), &handler, || {
                     let _ = ready_tx.send(());
                 })
             })
@@ -234,6 +252,17 @@ mod tests {
         let r: Response = read_frame(&mut c).expect("pong");
         assert_eq!(r.id, 5);
         assert!(matches!(r.reply, Reply::Pong(ref p) if p.version == env!("CARGO_PKG_VERSION")));
+        // Решту команд виконує підставлений виконавець.
+        write_frame(
+            &mut c,
+            &Request {
+                id: 6,
+                command: Command::CpuTemp,
+            },
+        )
+        .expect("cpu_temp");
+        let r: Response = read_frame(&mut c).expect("відповідь");
+        assert_eq!(r.reply, Reply::Json(serde_json::json!(42.5)));
         drop(c);
 
         // Другий сервер з тим самим іменем як «перший екземпляр» не створиться.

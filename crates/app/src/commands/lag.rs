@@ -89,7 +89,7 @@ pub fn lag_start(app: AppHandle, state: State<'_, AppState>, exe: String) -> Cmd
     let sound = lock(&state.settings).record_sound;
     let mut options = WatchOptions::new(target);
     options.sound = sound;
-    options.sampler.cpu_temp = super::sensors::cpu_temp_allowed(&state);
+    options.sampler.cpu_temp = super::sensors::cpu_temp_source(&state);
     if let Ok(c) = Catalog::ukrainian() {
         let secs = options.window.as_secs();
         options.notices = Some(WatchNotices {
@@ -156,8 +156,9 @@ fn pump(app: &AppHandle, id: u64, events: &Receiver<WatchEvent>) {
                 at_unix_ms,
             } => {
                 // Аналіз — поза замком: аудит конфігурації займає до кількох секунд.
-                let (mut ctx, display_hz) =
-                    context(super::sensors::cpu_temp_allowed(&app.state::<AppState>()));
+                let st = app.state::<AppState>();
+                let link = super::sensors::cpu_temp_allowed(&st).then(|| st.link.clone());
+                let (mut ctx, display_hz) = context(link.as_deref());
                 if let Some(start) = recording.start_unix_ms {
                     ctx.shader_cache_files = shader_cache_files(start);
                 }

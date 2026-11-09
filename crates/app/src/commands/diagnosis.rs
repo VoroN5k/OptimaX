@@ -131,13 +131,13 @@ pub(crate) fn shader_cache_files(since_unix_ms: i64) -> Vec<CacheFile> {
 }
 
 /// Контекст аналізу: частота монітора й знахідки аудиту конфігурації.
-pub(crate) fn context(pawnio: bool) -> (Context, Option<u32>) {
+pub(crate) fn context(link: Option<&crate::link::Link>) -> (Context, Option<u32>) {
     let probe = WindowsProbe::new();
     let display_hz = probe
         .displays()
         .ok()
         .and_then(|d| d.into_iter().find(|d| d.primary).map(|d| d.current_hz));
-    let config_findings = super::audit::full_audit(pawnio)
+    let config_findings = super::audit::full_audit(link)
         .findings
         .into_iter()
         .filter(|f| f.impact > Impact::Info)
@@ -205,7 +205,7 @@ pub fn diag_start(
                 let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
                 let mut options = RecordOptions::new(target, Duration::from_secs(u64::from(total)))
                     .with_start(start_mode, sound);
-                options.sampler.cpu_temp = super::sensors::cpu_temp_allowed(&state);
+                options.sampler.cpu_temp = super::sensors::cpu_temp_source(&state);
                 if let Ok(catalog) = Catalog::ukrainian() {
                     options = options.with_notices(RecordNotices::from_catalog(&catalog));
                 }
@@ -222,7 +222,8 @@ pub fn diag_start(
                     },
                 )?;
                 drop(progress);
-                let (mut ctx, display_hz) = context(super::sensors::cpu_temp_allowed(&state));
+                let link = super::sensors::cpu_temp_allowed(&state).then(|| state.link.clone());
+                let (mut ctx, display_hz) = context(link.as_deref());
                 if let Some(start) = rec.start_unix_ms {
                     ctx.shader_cache_files = shader_cache_files(start);
                 }

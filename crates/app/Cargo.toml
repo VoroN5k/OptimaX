@@ -35,6 +35,7 @@ optimax-history.workspace = true
 optimax-experiment.workspace = true
 optimax-stability.workspace = true
 optimax-service.workspace = true
+optimax-backend.workspace = true
 flate2.workspace = true
 reqwest.workspace = true
 rustls.workspace = true

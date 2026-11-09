@@ -57,6 +57,10 @@ impl Hello {
 pub enum Command {
     /// Перевірка зв'язку.
     Ping,
+    /// Датчики CPU через PawnIO: температури й частоти шини пам'яті (лише читання).
+    Sensors,
+    /// Лише температура CPU (часті заміри).
+    CpuTemp,
 }
 
 /// Запит клієнта.
@@ -85,6 +89,8 @@ pub struct Pong {
 pub enum Reply {
     /// На `ping`.
     Pong(Pong),
+    /// Результат команди (тип знає той, хто її викликав).
+    Json(serde_json::Value),
     /// Служба відмовила або команда не вдалась.
     Error(String),
 }
@@ -180,6 +186,16 @@ mod tests {
             read_frame::<Hello>(&mut Cursor::new(buf)),
             Err(ProtocolError::TooLarge(_))
         ));
+    }
+
+    #[test]
+    fn sensor_commands_are_plain_tags() {
+        let v = serde_json::to_value(Request {
+            id: 2,
+            command: Command::CpuTemp,
+        })
+        .expect("json");
+        assert_eq!(v, serde_json::json!({ "id": 2, "cmd": "cpu_temp" }));
     }
 
     #[test]

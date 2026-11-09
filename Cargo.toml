@@ -16,6 +16,7 @@ members = [
     "crates/experiment",
     "crates/stability",
     "crates/service",
+    "crates/backend",
     "crates/app",
 ]
 
@@ -42,6 +43,7 @@ optimax-trace = { path = "crates/trace" }
 optimax-experiment = { path = "crates/experiment" }
 optimax-stability = { path = "crates/stability" }
 optimax-service = { path = "crates/service" }
+optimax-backend = { path = "crates/backend" }
 
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

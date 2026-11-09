@@ -10,6 +10,7 @@ mod dto;
 #[cfg(windows)]
 mod error;
 #[cfg(windows)]
+mod link;
 mod log_layer;
 #[cfg(windows)]
 mod migrate;

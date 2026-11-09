@@ -19,7 +19,7 @@ mod snapshot;
 mod source;
 
 pub use gpu::{open_nvml, GpuApi, NvmlGpu};
-pub use sampler::{Sampler, SamplerConfig};
+pub use sampler::{CpuTempSource, Sampler, SamplerConfig};
 pub use snapshot::{
     CpuSnapshot, DiskSnapshot, GpuSnapshot, MemorySnapshot, ProcessSample, Snapshot, ThrottleReason,
 };

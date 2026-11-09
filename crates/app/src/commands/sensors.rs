@@ -6,8 +6,10 @@
 use super::blocking;
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
+use optimax_backend::sensors::SensorRead;
 use optimax_core::registry::WinRegistry;
-use optimax_metrics::amd_sensors::{AmdReading, AmdSensors, SensorError};
+use optimax_metrics::amd_sensors::AmdReading;
+use optimax_metrics::CpuTempSource;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
@@ -46,12 +48,20 @@ pub enum SensorsStatus {
         version: String,
         /// Показання.
         reading: AmdReading,
+        /// Прочитано через службу OptimaX (а не самою програмою).
+        via_service: bool,
     },
 }
 
-/// Користувач дозволив читати температуру CPU через PawnIO (для семплера метрик).
+/// Користувач дозволив читати температуру CPU через PawnIO.
 pub fn cpu_temp_allowed(state: &AppState) -> bool {
     lock(&state.settings).pawnio_sensors
+}
+
+/// Джерело температури для семплера метрик (`None` — згоди немає).
+pub fn cpu_temp_source(state: &AppState) -> Option<CpuTempSource> {
+    let link = state.link.clone();
+    cpu_temp_allowed(state).then(|| CpuTempSource(std::sync::Arc::new(move || link.cpu_temp())))
 }
 
 /// Статус і, якщо дозволено, свіже показання.
@@ -65,16 +75,17 @@ pub async fn sensors_status(app: AppHandle) -> CmdResult<SensorsStatus> {
         if !enabled {
             return Ok(SensorsStatus::Disabled { version });
         }
-        let opened = AmdSensors::open(&WinRegistry);
-        Ok(match opened.and_then(|s| s.read()) {
-            Ok(reading) => SensorsStatus::Ok { version, reading },
-            Err(SensorError::Unsupported(cpu)) => SensorsStatus::Unsupported { version, cpu },
-            Err(e) => {
-                tracing::warn!("розширені датчики: {e}");
-                SensorsStatus::Failed {
-                    version,
-                    error: e.to_string(),
-                }
+        let (read, via_service) = app.state::<AppState>().link.sensors();
+        Ok(match read {
+            SensorRead::Ok { reading } => SensorsStatus::Ok {
+                version,
+                reading,
+                via_service,
+            },
+            SensorRead::Unsupported { cpu } => SensorsStatus::Unsupported { version, cpu },
+            SensorRead::Failed { error } => {
+                tracing::warn!("розширені датчики: {error}");
+                SensorsStatus::Failed { version, error }
             }
         })
     })

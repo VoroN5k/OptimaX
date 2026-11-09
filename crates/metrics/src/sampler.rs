@@ -15,8 +15,27 @@ pub const MAX_INTERVAL: Duration = Duration::from_millis(500);
 /// Скільки знімків тримати в каналі, поки споживач не встигає (старіші не накопичуються).
 const CHANNEL_CAPACITY: usize = 64;
 
+/// Звідки брати температуру CPU: програма підставляє читання через службу або через PawnIO у
+/// своєму процесі. Порівнюється за тим самим джерелом (вказівником).
+#[derive(Clone)]
+pub struct CpuTempSource(pub std::sync::Arc<dyn Fn() -> Option<f32> + Send + Sync>);
+
+impl std::fmt::Debug for CpuTempSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CpuTempSource")
+    }
+}
+
+impl PartialEq for CpuTempSource {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for CpuTempSource {}
+
 /// Налаштування семплера.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SamplerConfig {
     /// Інтервал між знімками, обрізається до 100–500 мс.
     /// Нижче 200 мс точність завантаження CPU на Windows падає (обмеження лічильників).
@@ -25,8 +44,8 @@ pub struct SamplerConfig {
     pub process_interval: Duration,
     /// Скільки процесів тримати в топі.
     pub top_processes: usize,
-    /// Читати температуру CPU через PawnIO (лише якщо користувач дав згоду; інакше `false`).
-    pub cpu_temp: bool,
+    /// Джерело температури CPU (лише якщо користувач дав згоду на PawnIO; інакше `None`).
+    pub cpu_temp: Option<CpuTempSource>,
 }
 
 impl Default for SamplerConfig {
@@ -35,7 +54,7 @@ impl Default for SamplerConfig {
             interval: Duration::from_millis(250),
             process_interval: Duration::from_secs(1),
             top_processes: 5,
-            cpu_temp: false,
+            cpu_temp: None,
         }
     }
 }
@@ -58,31 +77,16 @@ impl SamplerConfig {
 /// м'ютекс PCI (HWiNFO, ZenTimings), тож частіше не треба.
 const CPU_TEMP_EVERY: Duration = Duration::from_secs(1);
 
-/// Температура CPU через PawnIO: модуль відкривається один раз на весь збір, показання
-/// кешується між читаннями. Невдале відкриття — температури просто немає.
+/// Температура CPU з підставленого джерела, не частіше за [`CPU_TEMP_EVERY`]; між читаннями —
+/// останнє значення.
 struct CpuTemp {
-    #[cfg(windows)]
-    sensors: Option<crate::amd_sensors::AmdSensors>,
+    source: Option<CpuTempSource>,
     last: Option<(Instant, f32)>,
 }
 
 impl CpuTemp {
-    fn new(enabled: bool) -> Self {
-        #[cfg(windows)]
-        let sensors = enabled
-            .then(|| {
-                crate::amd_sensors::AmdSensors::open(&optimax_core::registry::WinRegistry)
-                    .map_err(|e| tracing::info!("температура CPU у метриках недоступна: {e}"))
-                    .ok()
-            })
-            .flatten();
-        #[cfg(not(windows))]
-        let _ = enabled;
-        Self {
-            #[cfg(windows)]
-            sensors,
-            last: None,
-        }
+    fn new(source: Option<CpuTempSource>) -> Self {
+        Self { source, last: None }
     }
 
     fn read(&mut self, now: Instant) -> Option<f32> {
@@ -92,17 +96,9 @@ impl CpuTemp {
         if let Some((_, t)) = fresh {
             return Some(t);
         }
-        #[cfg(windows)]
-        {
-            let t = self.sensors.as_ref()?.read_temp().ok()?;
-            self.last = Some((now, t));
-            Some(t)
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = now;
-            None
-        }
+        let t = (self.source.as_ref()?.0)()?;
+        self.last = Some((now, t));
+        Some(t)
     }
 }
 
@@ -136,7 +132,7 @@ impl Sampler {
                 // не показував усім процесам 0 %.
                 let _ = system.top_processes(config.top_processes);
                 let mut top: Vec<ProcessSample> = Vec::new();
-                let mut temp = CpuTemp::new(config.cpu_temp);
+                let mut temp = CpuTemp::new(config.cpu_temp.clone());
                 loop {
                     let wait = next.saturating_duration_since(Instant::now());
                     match stop_rx.recv_timeout(wait) {
@@ -272,8 +268,24 @@ mod tests {
 
     #[test]
     fn cpu_temp_is_absent_without_consent() {
-        let mut t = CpuTemp::new(false);
+        let mut t = CpuTemp::new(None);
         assert_eq!(t.read(Instant::now()), None);
+    }
+
+    #[test]
+    fn cpu_temp_is_read_at_most_once_a_second() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let c = calls.clone();
+        let mut t = CpuTemp::new(Some(CpuTempSource(Arc::new(move || {
+            c.fetch_add(1, Ordering::SeqCst);
+            Some(50.0)
+        }))));
+        let now = Instant::now();
+        assert_eq!(t.read(now), Some(50.0));
+        assert_eq!(t.read(now + Duration::from_millis(500)), Some(50.0));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(t.read(now + CPU_TEMP_EVERY), Some(50.0));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -283,7 +295,7 @@ mod tests {
             interval: Duration::from_millis(100),
             process_interval: Duration::from_millis(300),
             top_processes: 3,
-            cpu_temp: false,
+            cpu_temp: None,
         };
         let (sampler, rx) = Sampler::spawn(
             config,

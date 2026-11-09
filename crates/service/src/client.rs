@@ -37,7 +37,8 @@ impl Client {
         })
     }
 
-    fn call(&mut self, command: Command) -> Result<Reply, ServiceError> {
+    /// Виконує команду й повертає відповідь як є.
+    pub fn call(&mut self, command: Command) -> Result<Reply, ServiceError> {
         let id = self.next_id;
         self.next_id += 1;
         write_frame(&mut self.pipe, &Request { id, command })?;
@@ -51,11 +52,25 @@ impl Client {
         Ok(resp.reply)
     }
 
+    /// Виконує команду, що відповідає JSON-значенням типу `T`.
+    pub fn json<T: serde::de::DeserializeOwned>(
+        &mut self,
+        command: Command,
+    ) -> Result<T, ServiceError> {
+        match self.call(command)? {
+            Reply::Json(v) => serde_json::from_value(v)
+                .map_err(|e| ServiceError::Protocol(crate::protocol::ProtocolError::Json(e))),
+            Reply::Error(e) => Err(ServiceError::Refused(e)),
+            Reply::Pong(_) => Err(ServiceError::Refused("неочікувана відповідь".into())),
+        }
+    }
+
     /// Перевірка зв'язку.
     pub fn ping(&mut self) -> Result<Pong, ServiceError> {
         match self.call(Command::Ping)? {
             Reply::Pong(p) => Ok(p),
             Reply::Error(e) => Err(ServiceError::Refused(e)),
+            Reply::Json(_) => Err(ServiceError::Refused("неочікувана відповідь".into())),
         }
     }
 }

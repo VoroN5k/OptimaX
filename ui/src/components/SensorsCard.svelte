@@ -104,6 +104,7 @@
               </div>
             {/if}
           </dl>
+          {#if status.via_service}<p class="small dim">{tk("ui.sensors.via_service")}</p>{/if}
           {#if !r.clocks}
             <p class="small dim">
               {r.pm_version != null

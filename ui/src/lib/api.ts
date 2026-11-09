@@ -16,6 +16,7 @@ import type { StabInfo } from "./bindings/StabInfo";
 import type { StabRecord } from "./bindings/StabRecord";
 import type { StabEntry } from "./bindings/StabEntry";
 import type { SensorsStatus } from "./bindings/SensorsStatus";
+import type { ServiceView } from "./bindings/ServiceView";
 import type { StabView } from "./bindings/StabView";
 import type { TestKind } from "./bindings/TestKind";
 import type { HistoryView } from "./bindings/HistoryView";
@@ -103,6 +104,9 @@ export const api = {
   driverOpenPage: (url: string) => invoke<void>("driver_open_page", { url }),
   sensorsStatus: () => invoke<SensorsStatus>("sensors_status"),
   sensorsOpenSite: () => invoke<void>("sensors_open_site"),
+  serviceStatus: () => invoke<ServiceView>("service_status"),
+  serviceInstall: () => invoke<ServiceView>("service_install"),
+  serviceUninstall: () => invoke<ServiceView>("service_uninstall"),
   blackboxState: () => invoke<BlackBoxView>("blackbox_state"),
   crashReport: () => invoke<CrashReport>("crash_report"),
   hardwareInfo: () => invoke<HardwareInfo>("hardware_info"),

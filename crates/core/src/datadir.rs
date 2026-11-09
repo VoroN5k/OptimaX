@@ -56,6 +56,18 @@ pub fn shared_dir(name: &str) -> Result<PathBuf, CoreError> {
     imp::shared_dir(&imp::program_data()?, name)
 }
 
+/// SID користувача поточного процесу (`S-1-5-21-…`; той самий і з правами адміністратора).
+pub fn current_user_sid() -> Result<String, CoreError> {
+    #[cfg(windows)]
+    {
+        imp::user_sid()
+    }
+    #[cfg(not(windows))]
+    {
+        Err(CoreError::Unsupported("SID користувача"))
+    }
+}
+
 /// Колишня тека даних `%LOCALAPPDATA%\OptimaX` (для одноразового перенесення).
 pub fn legacy_dir() -> Option<PathBuf> {
     imp::local_app_data().map(|d| d.join(APP_DIR))

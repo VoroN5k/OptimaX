@@ -18,6 +18,7 @@ pub mod network;
 pub mod overlay;
 pub mod resolution;
 pub mod sensors;
+pub mod service;
 pub mod stability;
 pub mod startup;
 pub mod system;

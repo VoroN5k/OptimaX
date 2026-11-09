@@ -9,6 +9,14 @@ fn main() -> anyhow::Result<()> {
         optimax_stability::worker::run(kind, seconds);
         return Ok(());
     }
+    // Служба Windows і керування нею з інсталятора (хуки NSIS, права адміністратора).
+    match args.first().map(String::as_str) {
+        Some("--service") => return Ok(optimax_service::host::run()?),
+        Some("--stop-service") => return Ok(optimax_service::install::stop()?),
+        Some("--start-service") => return Ok(optimax_service::install::start()?),
+        Some("--uninstall-service") => return Ok(optimax_service::install::uninstall()?),
+        _ => {}
+    }
     optimax_app::run()
 }
 

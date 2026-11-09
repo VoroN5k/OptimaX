@@ -58,7 +58,7 @@ pub(super) fn local_app_data() -> Option<PathBuf> {
 }
 
 /// SID користувача процесу у вигляді `S-1-5-21-…`.
-fn user_sid() -> Result<String, CoreError> {
+pub(super) fn user_sid() -> Result<String, CoreError> {
     let mut token = HANDLE::default();
     // SAFETY: псевдодескриптор поточного процесу; `token` — вихідний параметр.
     unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }

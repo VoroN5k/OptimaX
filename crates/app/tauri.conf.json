@@ -48,6 +48,7 @@
       "webviewInstallMode": { "type": "skip" },
       "nsis": {
         "installMode": "perMachine",
+        "installerHooks": "nsis/hooks.nsh",
         "languages": ["Ukrainian", "English"]
       }
     }

@@ -9,6 +9,7 @@ import type { ExpRecord } from "../../src/lib/bindings/ExpRecord";
 import type { ExpView } from "../../src/lib/bindings/ExpView";
 import type { StabInfo } from "../../src/lib/bindings/StabInfo";
 import type { SensorsStatus } from "../../src/lib/bindings/SensorsStatus";
+import type { ServiceView } from "../../src/lib/bindings/ServiceView";
 import type { StabEntry } from "../../src/lib/bindings/StabEntry";
 import type { StabRecord } from "../../src/lib/bindings/StabRecord";
 import type { StabView } from "../../src/lib/bindings/StabView";
@@ -62,6 +63,9 @@ export interface Responses {
   driver_open_page: null;
   sensors_status: SensorsStatus;
   sensors_open_site: null;
+  service_status: ServiceView;
+  service_install: ServiceView;
+  service_uninstall: ServiceView;
   blackbox_state: BlackBoxView;
   exp_state: ExpView | null;
   exp_list: ExpRecord[];
@@ -632,6 +636,9 @@ export function defaults(): Responses {
     driver_open_page: null,
     sensors_status: { state: "not_installed" },
     sensors_open_site: null,
+    service_status: structuredClone(serviceNone),
+    service_install: structuredClone(serviceRunning),
+    service_uninstall: structuredClone(serviceNone),
     blackbox_state: { active: null, last: null },
     exp_state: null,
     exp_list: [],
@@ -648,3 +655,20 @@ export function defaults(): Responses {
     ab_finish: { report: structuredClone(abDone.report), markdown: "### OptimaX: порівняння", kept: false },
   };
 }
+
+export const serviceNone: ServiceView = {
+  state: "not_installed",
+  exe: "C:\\Program Files\\OptimaX\\OptimaX.exe",
+  from_service_exe: false,
+  ping: null,
+  error: null,
+  same_version: false,
+};
+
+export const serviceRunning: ServiceView = {
+  ...serviceNone,
+  state: "running",
+  from_service_exe: true,
+  ping: { version: "0.2.0", uptime_s: 12 },
+  same_version: true,
+};

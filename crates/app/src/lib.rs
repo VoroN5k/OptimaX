@@ -35,8 +35,8 @@ pub fn run() -> anyhow::Result<()> {
 mod app {
     use crate::commands::{
         ab, audit, blackbox, cleanup, dashboard, diagnosis, driver_online, experiment, feedback,
-        gamemode, history, lag, laptop, metrics, network, overlay, resolution, sensors, stability,
-        startup, system, tweaks, update, upscale,
+        gamemode, history, lag, laptop, metrics, network, overlay, resolution, sensors, service,
+        stability, startup, system, tweaks, update, upscale,
     };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
@@ -313,6 +313,9 @@ mod app {
                 driver_online::driver_open_page,
                 sensors::sensors_status,
                 sensors::sensors_open_site,
+                service::service_status,
+                service::service_install,
+                service::service_uninstall,
                 blackbox::blackbox_state,
             ])
             .build(tauri::generate_context!())?;

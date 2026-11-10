@@ -168,6 +168,7 @@ mod app {
             return Err(e.into());
         }
         crate::migrate::migrate_legacy();
+        crate::migrate::sync_ui_data();
         let state = AppState::new()?;
         let app = tauri::Builder::default()
             .manage(state)

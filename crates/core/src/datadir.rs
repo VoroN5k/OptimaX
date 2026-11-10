@@ -68,6 +68,55 @@ pub fn current_user_sid() -> Result<String, CoreError> {
     }
 }
 
+fn elevated() -> bool {
+    #[cfg(windows)]
+    {
+        crate::process::is_elevated()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Підтека теки користувача з даними інтерфейсу.
+pub const USER_SUBDIR: &str = "User";
+
+/// Тека даних інтерфейсу для програми **без** прав адміністратора:
+/// `%LOCALAPPDATA%\OptimaX\User` (звичайна тека користувача; тут не створюється).
+///
+/// Сюди не кладеться нічого, за чим змінюється система (журнал змін, карантин, профілі — лише
+/// в [`data_dir`], ними керує служба). Процес **з** правами адміністратора сюди не пише ніколи:
+/// тека в руках користувача, і посилання в ній перенаправило б запис куди завгодно.
+pub fn user_dir() -> Option<PathBuf> {
+    legacy_dir().map(|d| d.join(USER_SUBDIR))
+}
+
+/// Шлях до захищеної теки поточного користувача без створення й перевірки (для читання
+/// процесом без прав адміністратора, який створити її не може).
+pub fn protected_path() -> Option<PathBuf> {
+    let sid = current_user_sid().ok()?;
+    imp::program_data().ok().map(|d| d.join(APP_DIR).join(sid))
+}
+
+/// Тека даних інтерфейсу (налаштування, історія, тести стабільності, порівняння): з правами
+/// адміністратора — захищена [`data_dir`], без них — [`user_dir`] (створюється).
+pub fn ui_dir() -> Result<&'static Path, CoreError> {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    if let Some(d) = DIR.get() {
+        return Ok(d);
+    }
+    let dir = if elevated() {
+        data_dir()?.to_path_buf()
+    } else {
+        let d = user_dir().ok_or(CoreError::NotFound("%LOCALAPPDATA%".into()))?;
+        std::fs::create_dir_all(&d)
+            .map_err(|e| CoreError::InvalidData(format!("{}: {e}", d.display())))?;
+        d
+    };
+    Ok(DIR.get_or_init(|| dir))
+}
+
 /// Колишня тека даних `%LOCALAPPDATA%\OptimaX` (для одноразового перенесення).
 pub fn legacy_dir() -> Option<PathBuf> {
     imp::local_app_data().map(|d| d.join(APP_DIR))

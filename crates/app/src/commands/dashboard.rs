@@ -131,7 +131,7 @@ pub struct DashCache {
 }
 
 fn last_game_path() -> CmdResult<PathBuf> {
-    let dir = optimax_core::datadir::data_dir().map_err(|e| CmdError::Failed(e.to_string()))?;
+    let dir = optimax_core::datadir::ui_dir().map_err(|e| CmdError::Failed(e.to_string()))?;
     Ok(dir.join(LAST_GAME_FILE))
 }
 

@@ -110,7 +110,7 @@ fn failed(e: impl std::fmt::Display) -> CmdError {
 }
 
 fn sessions_dir() -> CmdResult<StdDir> {
-    let base = optimax_core::datadir::data_dir().map_err(failed)?;
+    let base = optimax_core::datadir::ui_dir().map_err(failed)?;
     StdDir::new(base.join("history").join("sessions")).map_err(failed)
 }
 

@@ -57,7 +57,8 @@ fn failed(e: impl std::fmt::Display) -> CmdError {
 }
 
 fn reports_dir() -> CmdResult<String> {
-    Ok(path::join(&data_dir()?, REPORTS_DIR))
+    let ui = optimax_core::datadir::ui_dir().map_err(failed)?;
+    Ok(path::join(&ui.display().to_string(), REPORTS_DIR))
 }
 
 /// JSON-файл як значення: немає файлу — `null`, зіпсований — рядок з причиною.

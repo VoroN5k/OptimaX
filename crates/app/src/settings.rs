@@ -118,7 +118,7 @@ impl Default for Settings {
 }
 
 fn path() -> Option<PathBuf> {
-    optimax_core::datadir::data_dir()
+    optimax_core::datadir::ui_dir()
         .ok()
         .map(|d| d.join("settings.json"))
 }

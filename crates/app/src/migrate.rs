@@ -162,3 +162,166 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 }
+
+// ---- Дані інтерфейсу між захищеною текою й текою користувача ----
+
+/// Файли даних інтерфейсу в корені теки.
+const UI_FILES: [&str; 2] = ["settings.json", "last_game.json"];
+/// Теки даних інтерфейсу (файли в них — без вкладених тек).
+const UI_DIRS: [&str; 4] = ["history", "history/sessions", "stability", "experiments"];
+/// Найбільший файл, який переносимо (стиснений запис гри на 10 хв — до десятків МБ).
+const UI_LIMIT: u64 = 128 * 1024 * 1024;
+
+/// Чи схоже на наш файл: JSON або стиснений JSON (`.gz`). З теки користувача в захищену
+/// переноситься лише таке.
+fn looks_like_ours(name: &str, bytes: &[u8]) -> bool {
+    if name.ends_with(".gz") {
+        let mut out = Vec::new();
+        let ok = std::io::Read::read_to_end(
+            &mut std::io::Read::take(flate2::read::GzDecoder::new(bytes), UI_LIMIT * 4),
+            &mut out,
+        )
+        .is_ok();
+        ok && serde_json::from_slice::<serde_json::Value>(&out).is_ok()
+    } else {
+        serde_json::from_slice::<serde_json::Value>(bytes).is_ok()
+    }
+}
+
+/// Мітка часу зміни, мс (для «новіший перемагає» у налаштуваннях).
+fn modified_ms(p: &Path) -> Option<u128> {
+    std::fs::metadata(p)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis())
+}
+
+/// Переносить відсутні в `to` файли з `from`; налаштування й останню гру — якщо в `from` новіші.
+/// `untrusted` — `from` у руках користувача: читаємо лише безпечно й перевіряємо формат.
+/// Пише лише в `to` (процес з правами адміністратора — лише в захищену теку).
+pub(crate) fn sync_dirs(from: &Path, to: &Path, untrusted: bool) -> Vec<String> {
+    let mut moved = Vec::new();
+    let mut copy = |rel: &str, newer_wins: bool| {
+        // Шлях — з окремих частин: `safefs` звіряє справжній шлях, а `/` у ньому не збігся б.
+        let join = |base: &Path| rel.split('/').fold(base.to_path_buf(), |p, c| p.join(c));
+        let (src, dst) = (join(from), join(to));
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        // Позначка незавершеного тесту стабільності належить своєму режиму.
+        if name.starts_with("running.") {
+            return;
+        }
+        if dst.exists() && !(newer_wins && modified_ms(&src) > modified_ms(&dst)) {
+            return;
+        }
+        let bytes = match safefs::read_limited(&src, UI_LIMIT) {
+            Ok(Some(b)) => b,
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!("{}: не перенесено: {e}", src.display());
+                return;
+            }
+        };
+        if untrusted && !looks_like_ours(name, &bytes) {
+            tracing::warn!("{}: не перенесено — незнайомий формат", src.display());
+            return;
+        }
+        if let Some(parent) = dst.parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                return;
+            }
+        }
+        if std::fs::write(&dst, &bytes).is_ok() {
+            moved.push(rel.to_string());
+        }
+    };
+    for f in UI_FILES {
+        copy(f, true);
+    }
+    for d in UI_DIRS {
+        let dir = d.split('/').fold(from.to_path_buf(), |p, c| p.join(c));
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for e in entries.filter_map(Result::ok) {
+            // Лише звичайні файли; посилання й теки пропускаємо.
+            if e.file_type().is_ok_and(|t| t.is_file()) {
+                if let Some(n) = e.file_name().to_str() {
+                    copy(&format!("{d}/{n}"), false);
+                }
+            }
+        }
+    }
+    moved
+}
+
+/// Вирівнює дані інтерфейсу між режимами: без прав адміністратора — з захищеної теки (читати її
+/// користувач може) у теку користувача; з правами — навпаки, з перевіркою формату.
+pub fn sync_ui_data() {
+    let elevated = optimax_core::process::is_elevated();
+    let (Some(user), Some(protected)) = (
+        optimax_core::datadir::user_dir(),
+        optimax_core::datadir::protected_path(),
+    ) else {
+        return;
+    };
+    let (from, to, untrusted) = if elevated {
+        (user, protected, true)
+    } else {
+        (protected, user, false)
+    };
+    if !from.is_dir() {
+        return;
+    }
+    let moved = sync_dirs(&from, &to, untrusted);
+    if !moved.is_empty() {
+        tracing::info!(
+            "дані інтерфейсу з {} у {}: {} файлів",
+            from.display(),
+            to.display(),
+            moved.len()
+        );
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("optimax-sync-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("тека");
+        d
+    }
+
+    #[test]
+    fn missing_files_move_and_untrusted_junk_does_not() {
+        let (from, to) = (tmp("from"), tmp("to"));
+        std::fs::create_dir_all(from.join("history")).expect("history");
+        std::fs::create_dir_all(from.join("stability")).expect("stability");
+        std::fs::write(from.join("settings.json"), br#"{"economy":true}"#).expect("s");
+        std::fs::write(from.join("history/1-a.json"), br#"{"id":"1"}"#).expect("h");
+        std::fs::write(from.join("history/2-b.json"), b"MZ\x90\x00 not json").expect("junk");
+        std::fs::write(from.join("stability/running.json"), b"{}").expect("marker");
+        std::fs::create_dir_all(to.join("history")).expect("to/history");
+        std::fs::write(to.join("history/1-a.json"), br#"{"id":"mine"}"#).expect("наявний");
+        let mut moved = sync_dirs(&from, &to, true);
+        moved.sort();
+        assert_eq!(moved, ["settings.json"]);
+        // Наявний файл не перезаписується; сміття й позначка тесту не переносяться.
+        assert_eq!(
+            std::fs::read(to.join("history/1-a.json")).expect("r"),
+            br#"{"id":"mine"}"#
+        );
+        assert!(!to.join("history/2-b.json").exists());
+        assert!(!to.join("stability/running.json").exists());
+        // З довіреної теки формат не перевіряється.
+        let moved = sync_dirs(&from, &to, false);
+        assert_eq!(moved, ["history/2-b.json"]);
+        let _ = std::fs::remove_dir_all(&from);
+        let _ = std::fs::remove_dir_all(&to);
+    }
+}

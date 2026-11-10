@@ -465,7 +465,7 @@ fn failed(e: impl std::fmt::Display) -> CmdError {
 }
 
 fn dir() -> CmdResult<PathBuf> {
-    let d = optimax_core::datadir::data_dir()
+    let d = optimax_core::datadir::ui_dir()
         .map_err(failed)?
         .join("experiments");
     std::fs::create_dir_all(&d).map_err(failed)?;

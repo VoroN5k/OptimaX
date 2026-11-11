@@ -39,20 +39,39 @@ impl Env {
     /// Теки цієї системи — з API ([`optimax_core::sysdirs`]), а не зі змінних середовища процесу:
     /// їх користувач може перевизначити, і тоді чорний список вказував би не туди.
     pub fn from_system() -> Self {
+        Self::resolve(&optimax_core::sysdirs::known)
+    }
+
+    /// Як [`Env::from_system`], але теки користувача (профіль, `LOCALAPPDATA`, `APPDATA`,
+    /// OneDrive) — **користувача процесу** `pid`: служба працює як SYSTEM, а чистить теки того,
+    /// хто під'єднався. Системні теки — ті самі для всіх.
+    pub fn for_process(pid: u32) -> Self {
+        use optimax_core::sysdirs::{self, Folder};
+        Self::resolve(&|f| match f {
+            Folder::Profile | Folder::LocalAppData | Folder::RoamingAppData | Folder::OneDrive => {
+                sysdirs::known_for_process(f, pid)
+            }
+            _ => sysdirs::known(f),
+        })
+    }
+
+    fn resolve(
+        known: &dyn Fn(optimax_core::sysdirs::Folder) -> Option<std::path::PathBuf>,
+    ) -> Self {
         use optimax_core::sysdirs::{self, Folder};
         let s =
             |p: Option<std::path::PathBuf>| p.and_then(|p| p.into_os_string().into_string().ok());
         Self::from_folders(&SystemFolders {
             windows: s(sysdirs::windows_dir()),
-            program_data: s(sysdirs::known(Folder::ProgramData)),
-            program_files: s(sysdirs::known(Folder::ProgramFiles)),
-            program_files_x86: s(sysdirs::known(Folder::ProgramFilesX86)),
-            program_files_x64: s(sysdirs::known(Folder::ProgramFilesX64)),
-            profile: s(sysdirs::known(Folder::Profile)),
-            public: s(sysdirs::known(Folder::Public)),
-            local_app_data: s(sysdirs::known(Folder::LocalAppData)),
-            roaming_app_data: s(sysdirs::known(Folder::RoamingAppData)),
-            one_drive: s(sysdirs::known(Folder::OneDrive)),
+            program_data: s(known(Folder::ProgramData)),
+            program_files: s(known(Folder::ProgramFiles)),
+            program_files_x86: s(known(Folder::ProgramFilesX86)),
+            program_files_x64: s(known(Folder::ProgramFilesX64)),
+            profile: s(known(Folder::Profile)),
+            public: s(known(Folder::Public)),
+            local_app_data: s(known(Folder::LocalAppData)),
+            roaming_app_data: s(known(Folder::RoamingAppData)),
+            one_drive: s(known(Folder::OneDrive)),
         })
     }
 
@@ -315,6 +334,17 @@ mod tests {
             let env = Env::from_system();
             assert!(env.get("SystemRoot").is_some());
             assert!(env.get("LOCALAPPDATA").is_some());
+            // Теки за токеном власного процесу — ті самі.
+            let mine = Env::for_process(std::process::id());
+            for v in [
+                "USERPROFILE",
+                "LOCALAPPDATA",
+                "APPDATA",
+                "SystemRoot",
+                "ProgramFiles",
+            ] {
+                assert_eq!(mine.get(v), env.get(v), "{v}");
+            }
         }
     }
 

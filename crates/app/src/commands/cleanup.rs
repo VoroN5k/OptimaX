@@ -2,83 +2,88 @@
 //! `cleanup-error`), сухий прогін,
 //! очищення (`cleanup-exec-progress`, `cleanup-exec-done`), карантин, журнал, «Що виросло» і
 //! штатні засоби Windows (DISM, powercfg). Вердикти визначає лише бекенд.
+//!
+//! Логіка — [`optimax_backend::cleanup::Cleaner`]: у службі OptimaX, якщо вона доступна (етап 3в
+//! з `docs/SERVICE.md`), інакше в цьому процесі. Тут — вибір шляху, події для UI й те, що
+//! потребує сесії користувача: список дисків і «Показати в Провіднику».
 
 use super::blocking;
 use crate::error::{CmdError, CmdResult};
 use crate::settings::CleanupSettings;
-use crate::state::{lock, AppState, RESTORE, SERVICES};
-use optimax_cleanup::journal::{CleanupJournal, JournalRecord, RunKind};
-use optimax_cleanup::plan::{Action, ServiceNote, Skipped};
-use optimax_cleanup::quarantine::{BatchState, Quarantine, QUARANTINE_DIR_NAME};
-use optimax_cleanup::rules::{RuleSet, Verdict};
-use optimax_cleanup::scan::{ScanOptions, ScanReport};
-use optimax_cleanup::snapshot::{growth, pick_baseline, Growth, Snapshot, SnapshotStore};
-use optimax_cleanup::system::{SystemTools, WinTools};
-use optimax_cleanup::{
-    build_plan, execute, path, scan, CancelToken, CleanPlan, Env, ExecContext, FsApi, StdFs,
+use crate::state::{lock, AppState};
+use optimax_backend::cleanup::{
+    BatchView, CleanResult, Cleaner, CleanupEvents, DryRunView, GrowthView, LastScan,
+    QuarantineSpec, QuarantineState, ScanDone, ScanMode, WinPlatform,
 };
-use optimax_tweaks::restore::{RestorePointApi, RestorePointStatus};
+use optimax_cleanup::journal::JournalRecord;
+use optimax_cleanup::path;
+use optimax_cleanup::scan::ScanReport;
+use optimax_cleanup::system::{SystemTools, WinTools};
+use optimax_service::client::Client;
+use optimax_service::protocol::Command;
+use optimax_service::ServiceError;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-/// Опис точки відновлення для очищення.
-const RESTORE_DESCRIPTION: &str = "OptimaX: очищення диска";
-/// «Що виросло» — порівняння зі сканом приблизно тижневої давності.
-const GROWTH_WINDOW_SECS: i64 = 7 * 86_400;
-/// Скільки файлів показувати в сухому прогоні для кожного об'єкта.
-const DRY_RUN_SAMPLE: usize = 200;
-/// Скільки пропущених показувати.
-const SKIPPED_SAMPLE: usize = 200;
+/// Як часто опитувати службу під час скану й очищення.
+const POLL: Duration = Duration::from_millis(150);
 
-/// Стан модуля очищення.
-#[derive(Default)]
+/// Стан модуля очищення в програмі.
 pub struct CleanupState {
-    rules: Option<Arc<RuleSet>>,
-    rule_issues: Vec<String>,
-    scan: Option<CancelToken>,
-    exec: Option<CancelToken>,
-    tool_busy: bool,
-    report: Option<ScanReport>,
-    plan: Option<(u64, Arc<CleanPlan>)>,
-    next_plan: u64,
-    restore: Option<RestorePointStatus>,
+    /// Очищення в цьому процесі (без служби); створюється, коли знадобиться.
+    local: Option<Arc<Cleaner>>,
+    /// Шляхи, показані на екрані (скан, «Що виросло»): лише їх можна відкрити в Провіднику.
+    seen: HashSet<String>,
+    /// Теки карантину, показані на екрані.
+    quarantine_dirs: Vec<String>,
+    /// Номер цього запуску програми (служба створює нову точку відновлення для нової сесії).
+    session: u64,
+}
+
+impl Default for CleanupState {
+    fn default() -> Self {
+        let started = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        Self {
+            local: None,
+            seen: HashSet::new(),
+            quarantine_dirs: Vec::new(),
+            session: (u64::from(std::process::id()) << 32) | (started & 0xFFFF_FFFF),
+        }
+    }
 }
 
 impl CleanupState {
-    /// База правил (завантажується один раз; проблеми валідації — у журнал).
-    fn rules(&mut self) -> Arc<RuleSet> {
-        if let Some(r) = &self.rules {
-            return r.clone();
-        }
-        let (rules, issues) = RuleSet::embedded(Env::from_system());
-        for i in &issues {
-            tracing::warn!("правило очищення {} ({}): {}", i.rule_id, i.file, i.problem);
-        }
-        self.rule_issues = issues
+    fn local(&mut self) -> Arc<Cleaner> {
+        self.local
+            .get_or_insert_with(|| Arc::new(Cleaner::new(Box::new(WinPlatform::local()))))
+            .clone()
+    }
+
+    fn remember(&mut self, report: &ScanReport) {
+        for i in report
+            .items
             .iter()
-            .map(|i| format!("{} ({}): {}", i.rule_id, i.file, i.problem))
-            .collect();
-        let rules = Arc::new(rules);
-        self.rules = Some(rules.clone());
-        rules
-    }
-
-    fn cancel(&self) {
-        for t in self.scan.iter().chain(self.exec.iter()) {
-            t.cancel();
+            .chain(report.unknown.iter())
+            .chain(report.protected_zones.iter())
+        {
+            self.seen.insert(i.path.to_lowercase());
+            for d in &i.top_subdirs {
+                self.seen.insert(d.path.to_lowercase());
+            }
+        }
+        for (p, _) in &report.sizes {
+            self.seen.insert(p.to_lowercase());
         }
     }
 
-    fn busy(&self) -> Option<&'static str> {
-        if self.scan.is_some() {
-            Some("скан ще триває")
-        } else if self.exec.is_some() {
-            Some("очищення ще триває")
-        } else if self.tool_busy {
-            Some("штатне очищення Windows ще триває")
-        } else {
-            None
+    fn remember_quarantine(&mut self, dir: &str) {
+        if !self.quarantine_dirs.iter().any(|d| path::eq_ci(d, dir)) {
+            self.quarantine_dirs.push(dir.to_string());
         }
     }
 }
@@ -119,92 +124,6 @@ pub struct ScanView {
     pub rule_issues: Vec<String>,
 }
 
-/// Об'єкт сухого прогону.
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-pub struct DryRunItem {
-    /// Корінь правила.
-    pub path: String,
-    /// Правило.
-    pub rule_id: String,
-    /// Вердикт.
-    pub verdict: Verdict,
-    /// Дія.
-    pub action: Action,
-    /// Файлів.
-    pub files: u64,
-    /// Байтів.
-    pub bytes: u64,
-    /// Перші файли.
-    pub sample: Vec<String>,
-}
-
-/// Сухий прогін.
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-pub struct DryRunView {
-    /// Номер плану (виконати можна лише його).
-    pub plan_id: u64,
-    /// Об'єкти.
-    pub items: Vec<DryRunItem>,
-    /// До видалення (🟢).
-    pub delete_bytes: u64,
-    /// До карантину (🟡).
-    pub quarantine_bytes: u64,
-    /// Файлів.
-    pub files: u64,
-    /// Відкинуто ще на етапі плану (перші).
-    pub skipped: Vec<Skipped>,
-    /// Усього відкинуто.
-    pub skipped_total: u64,
-    /// Служби, які буде тимчасово зупинено.
-    pub services: Vec<String>,
-    /// Тека карантину.
-    pub quarantine_dir: String,
-    /// Карантин на тому ж диску, що й файли 🟡: місце звільниться лише після терміну.
-    pub quarantine_same_volume: bool,
-    /// Термін карантину, днів.
-    pub quarantine_days: u32,
-    /// Перед очищенням буде створено точку відновлення.
-    pub restore_point_pending: bool,
-}
-
-/// Підсумок очищення.
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-pub struct ExecView {
-    /// Запис журналу.
-    pub record: JournalRecord,
-    /// Служби.
-    pub services: Vec<ServiceNote>,
-    /// Карантин на тому ж диску (місце ще не звільнено).
-    pub quarantine_same_volume: bool,
-    /// Скасовано посередині.
-    pub cancelled: bool,
-}
-
-/// Партія карантину (без списку файлів).
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-pub struct BatchView {
-    /// Ідентифікатор.
-    pub id: String,
-    /// Створено.
-    pub created_unix: i64,
-    /// Кінець карантину.
-    pub expires_unix: i64,
-    /// Байтів.
-    pub bytes: u64,
-    /// Файлів.
-    pub files: u64,
-    /// На тому ж диску, що й оригінали.
-    pub same_volume: bool,
-    /// Термін минув.
-    pub expired: bool,
-    /// Тека.
-    pub dir: String,
-}
-
 /// Карантин.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -221,40 +140,6 @@ pub struct QuarantineView {
     pub other_drives: Vec<DriveView>,
 }
 
-/// Рядок «Що виросло».
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-pub struct GrowthItem {
-    /// Зміна.
-    pub growth: Growth,
-    /// Вердикт для шляху.
-    pub verdict: Verdict,
-    /// Правило.
-    pub rule_id: Option<String>,
-}
-
-/// Що виросло.
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-pub struct GrowthView {
-    /// Базовий знімок.
-    pub since_unix: i64,
-    /// Поточний знімок.
-    pub now_unix: i64,
-    /// Обидва знімки повні.
-    pub full: bool,
-    /// Зміни.
-    pub items: Vec<GrowthItem>,
-}
-
-fn now_unix() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .and_then(|d| i64::try_from(d.as_secs()).ok())
-        .unwrap_or(0)
-}
-
 fn failed(e: impl std::fmt::Display) -> CmdError {
     CmdError::Failed(e.to_string())
 }
@@ -265,36 +150,26 @@ pub(crate) fn data_dir() -> CmdResult<String> {
     path::normalize(&dir.to_string_lossy()).map_err(failed)
 }
 
+pub(crate) fn journal_path() -> CmdResult<String> {
+    Ok(path::join(&data_dir()?, "cleanup-journal.json"))
+}
+
 fn system_drive() -> String {
     optimax_core::sysdirs::system_drive()
         .and_then(|d| path::normalize(&format!("{d}\\")).ok())
         .unwrap_or_else(|| r"C:\".to_string())
 }
 
-fn quarantine_root(settings: &CleanupSettings) -> CmdResult<String> {
-    match settings
-        .quarantine_drive
-        .as_deref()
-        .and_then(|d| path::normalize(d).ok())
-        .filter(|d| path::is_drive_root(d))
-    {
-        // На іншому диску — така сама захищена тека: `D:\OptimaX\<SID>\Quarantine`.
-        Some(drive) => {
-            let dir = optimax_core::datadir::secure_dir_on(std::path::Path::new(&drive))
-                .map_err(failed)?;
-            let dir = path::normalize(&dir.to_string_lossy()).map_err(failed)?;
-            Ok(path::join(&dir, QUARANTINE_DIR_NAME))
-        }
-        None => Ok(path::join(&data_dir()?, QUARANTINE_DIR_NAME)),
+fn spec(state: &AppState) -> QuarantineSpec {
+    let s = lock(&state.settings).cleanup.clone();
+    QuarantineSpec {
+        drive: s.quarantine_drive,
+        days: s.quarantine_days,
     }
 }
 
-fn quarantine_index() -> CmdResult<String> {
-    Ok(path::join(&data_dir()?, "quarantine.json"))
-}
-
-pub(crate) fn journal_path() -> CmdResult<String> {
-    Ok(path::join(&data_dir()?, "cleanup-journal.json"))
+fn session(state: &AppState) -> u64 {
+    lock(&state.cleanup).session
 }
 
 fn list_drives() -> Vec<DriveView> {
@@ -332,75 +207,12 @@ fn drive_view(root: &str) -> Option<DriveView> {
         .find(|d| path::eq_ci(&d.root, root))
 }
 
-/// Точка відновлення один раз за сесію перед системними змінами / очищенням системного диска.
-fn ensure_restore_point(app: &AppHandle, allow_without: bool) -> CmdResult<()> {
-    let state = app.state::<AppState>();
-    if lock(&state.cleanup).restore.is_some() {
-        return Ok(());
-    }
-    let status = match RESTORE.create(RESTORE_DESCRIPTION) {
-        Ok(sequence) => RestorePointStatus::Created { sequence },
-        Err(e) => {
-            let reason = e.to_string();
-            if !allow_without {
-                tracing::warn!("точку відновлення не створено ({reason}) — питаю користувача");
-                return Err(CmdError::RestorePoint(reason));
-            }
-            tracing::warn!("очищення без точки відновлення (за згодою користувача): {reason}");
-            RestorePointStatus::SkippedByUser { reason }
-        }
-    };
-    if let RestorePointStatus::Created { sequence } = &status {
-        tracing::info!("створено точку відновлення №{sequence} перед очищенням");
-    }
-    lock(&state.cleanup).restore = Some(status);
-    Ok(())
-}
-
-/// Знімає «зайнято» з модуля при виході з області видимості (навіть після помилки).
-struct ToolGuard(AppHandle);
-
-impl ToolGuard {
-    fn acquire(app: &AppHandle) -> CmdResult<Self> {
-        let state = app.state::<AppState>();
-        let mut c = lock(&state.cleanup);
-        if let Some(why) = c.busy() {
-            return Err(failed(why));
-        }
-        c.tool_busy = true;
-        Ok(Self(app.clone()))
-    }
-}
-
-impl Drop for ToolGuard {
-    fn drop(&mut self) {
-        lock(&self.0.state::<AppState>().cleanup).tool_busy = false;
-    }
-}
-
-/// При виході: зупиняє скан і очищення після поточного файлу (DISM не переривається).
-pub fn cancel_all(state: &CleanupState) {
-    state.cancel();
-}
-
-/// Диски.
-#[tauri::command]
-pub async fn cleanup_drives() -> CmdResult<Vec<DriveView>> {
-    blocking(|| Ok(list_drives())).await
-}
-
-/// Останній звіт скану цієї сесії (щоб екран не сканував заново після переходу між вкладками).
-#[tauri::command]
-pub fn cleanup_last_scan(state: State<'_, AppState>) -> Option<ScanView> {
-    let c = lock(&state.cleanup);
-    let issues = c.rule_issues.clone();
-    let report = c.report.clone()?;
-    drop(c);
-    Some(make_view(report, issues))
-}
-
-fn make_view(report: ScanReport, rule_issues: Vec<String>) -> ScanView {
-    let sum = |v: Verdict| {
+fn make_view(scan: LastScan) -> ScanView {
+    let LastScan {
+        report,
+        rule_issues,
+    } = scan;
+    let sum = |v: optimax_cleanup::Verdict| {
         report
             .items
             .iter()
@@ -408,7 +220,10 @@ fn make_view(report: ScanReport, rule_issues: Vec<String>) -> ScanView {
             .map(|i| i.eligible_bytes)
             .sum::<u64>()
     };
-    let (safe_bytes, consequences_bytes) = (sum(Verdict::Safe), sum(Verdict::Consequences));
+    let (safe_bytes, consequences_bytes) = (
+        sum(optimax_cleanup::Verdict::Safe),
+        sum(optimax_cleanup::Verdict::Consequences),
+    );
     let drive = drive_view(&report.drive);
     let suggest_move = drive.as_ref().is_some_and(|d| {
         const GIB: u64 = 1 << 30;
@@ -426,167 +241,281 @@ fn make_view(report: ScanReport, rule_issues: Vec<String>) -> ScanView {
     }
 }
 
-/// Починає скан диска. `full` — обхід усього диска (довше; показує «Невідоме» й дає повний знімок).
-#[tauri::command]
-pub fn cleanup_scan_start(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    drive: String,
-    full: bool,
-) -> CmdResult<()> {
-    let root = path::normalize(&drive)
-        .ok()
-        .filter(|r| path::is_drive_root(r))
-        .ok_or_else(|| CmdError::Forbidden(format!("«{drive}» — не корінь диска")))?;
-    let (cancel, rules, issues) = {
-        let mut c = lock(&state.cleanup);
-        if let Some(why) = c.busy() {
-            return Err(failed(why));
-        }
-        let t = CancelToken::new();
-        c.scan = Some(t.clone());
-        c.plan = None;
-        let rules = c.rules();
-        (t, rules, c.rule_issues.clone())
-    };
-    let spawned = std::thread::Builder::new()
-        .name("optimax-cleanup-scan".into())
-        .spawn(move || {
-            run_scan(&app, &root, full, &cancel, &rules, issues, true);
-        });
-    if let Err(e) = spawned {
-        lock(&state.cleanup).scan = None;
-        return Err(failed(e));
-    }
-    Ok(())
+// ---- Куди йти: служба чи цей процес ----
+
+enum Route {
+    Local(Arc<Cleaner>),
+    Remote(Client),
 }
 
-/// Сканує диск (блокує потік). `cancel` уже стоїть у `CleanupState::scan` — тут знімається.
-/// `keep` — запам'ятати звіт для екрана «Очищення» (інакше лише повернути).
-fn run_scan(
-    app: &AppHandle,
-    root: &str,
-    full: bool,
-    cancel: &CancelToken,
-    rules: &RuleSet,
-    issues: Vec<String>,
-    keep: bool,
-) -> ScanView {
-    let threads = std::thread::available_parallelism()
-        .map(|n| (n.get() / 2).clamp(1, 6))
-        .unwrap_or(2);
-    tracing::info!(
-        "скан {root} ({})",
-        if full {
-            "повний"
-        } else {
-            "за правилами"
+/// Служба, якщо вона доступна (і з'єднання вдалося), інакше — очищення в цьому процесі.
+fn route(state: &AppState) -> Route {
+    if state.link.service_usable() {
+        match Client::connect() {
+            Ok(c) => return Route::Remote(c),
+            Err(e) => state.link.forget_service(&e),
         }
-    );
-    let opts = ScanOptions {
-        drive: root.to_string(),
-        full,
-        now_unix: now_unix(),
-        threads,
-    };
-    // Проміжний звіт лише для показу: вибір і сухий прогін ідуть за остаточним.
-    let report = scan(
-        &StdFs,
-        rules,
-        &opts,
-        cancel,
+    }
+    Route::Local(lock(&state.cleanup).local())
+}
+
+/// Команда службі: відповідь — результат її [`Cleaner`]. Обрив — помилка (стан дії невідомий),
+/// наступна дія піде вже без служби.
+fn ask<T: serde::de::DeserializeOwned>(
+    c: &mut Client,
+    state: &AppState,
+    cmd: Command,
+) -> CmdResult<T> {
+    match c.json::<CleanResult<T>>(cmd) {
+        Ok(r) => r.map_err(CmdError::from),
+        Err(ServiceError::Refused(m)) => Err(CmdError::Failed(m)),
+        Err(e) => {
+            state.link.forget_service(&e);
+            Err(CmdError::Failed(format!(
+                "служба OptimaX не відповіла: {e}"
+            )))
+        }
+    }
+}
+
+/// Дія через службу або в цьому процесі — та сама логіка.
+fn call<T: serde::de::DeserializeOwned>(
+    state: &AppState,
+    cmd: Command,
+    local: impl FnOnce(&Cleaner) -> CleanResult<T>,
+) -> CmdResult<T> {
+    match route(state) {
+        Route::Remote(mut c) => ask(&mut c, state, cmd),
+        Route::Local(c) => local(&c).map_err(CmdError::from),
+    }
+}
+
+/// Чого чекати, опитуючи службу.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Wait {
+    Scan,
+    Exec,
+}
+
+/// Опитує службу до кінця скану чи очищення й передає хід в інтерфейс тими самими подіями, що й
+/// без служби. Повертає завершений скан (для [`Wait::Scan`]).
+fn remote_wait(app: &AppHandle, mut c: Client, wait: Wait) -> CmdResult<Option<ScanDone>> {
+    let state = app.state::<AppState>();
+    loop {
+        std::thread::sleep(POLL);
+        let e: CleanupEvents = ask(&mut c, &state, Command::CleanupPoll)?;
+        if let Some(p) = e.scan_progress {
+            let _ = app.emit("cleanup-progress", p);
+        }
+        if let Some(s) = e.scan_partial {
+            let _ = app.emit("cleanup-scan-partial", make_view(s));
+        }
+        if let Some(p) = e.exec_progress {
+            let _ = app.emit("cleanup-exec-progress", p);
+        }
+        if let Some(d) = e.scan_done {
+            lock(&state.cleanup).remember(&d.scan.report);
+            if d.kept {
+                let _ = app.emit("cleanup-scan-done", make_view(d.scan.clone()));
+            }
+            if wait == Wait::Scan {
+                return Ok(Some(d));
+            }
+        }
+        if let Some(r) = e.exec_done {
+            match r {
+                Ok(v) => {
+                    let _ = app.emit("cleanup-exec-done", v);
+                }
+                Err(e) => {
+                    let _ = app.emit("cleanup-error", CmdError::from(e));
+                }
+            }
+            if wait == Wait::Exec {
+                return Ok(None);
+            }
+        }
+    }
+}
+
+/// Опитування служби в окремому потоці (скан чи очищення екрана «Очищення»).
+fn spawn_wait(app: &AppHandle, c: Client, wait: Wait) -> CmdResult<()> {
+    let handle = app.clone();
+    std::thread::Builder::new()
+        .name("optimax-cleanup-poll".into())
+        .spawn(move || {
+            if let Err(e) = remote_wait(&handle, c, wait) {
+                tracing::warn!("очищення через службу: {e:?}");
+                let _ = handle.emit("cleanup-error", e);
+            }
+        })
+        .map(|_| ())
+        .map_err(failed)
+}
+
+/// При виході: зупиняє скан і очищення після поточного файлу (DISM не переривається) — і в
+/// цьому процесі, і в службі.
+pub fn cancel_all(state: &AppState) {
+    if let Some(c) = lock(&state.cleanup).local.clone() {
+        c.cancel_all();
+    }
+    if let Route::Remote(mut c) = route(state) {
+        let _ = c.json::<CleanResult<()>>(Command::CleanupScanCancel);
+        let _ = c.json::<CleanResult<()>>(Command::CleanupExecCancel);
+    }
+}
+
+// ---- Команди ----
+
+/// Диски.
+#[tauri::command]
+pub async fn cleanup_drives() -> CmdResult<Vec<DriveView>> {
+    blocking(|| Ok(list_drives())).await
+}
+
+fn last_scan(state: &AppState) -> CmdResult<Option<LastScan>> {
+    let scan = call(state, Command::CleanupLastScan, |c| Ok(c.last_scan()))?;
+    if let Some(s) = &scan {
+        lock(&state.cleanup).remember(&s.report);
+    }
+    Ok(scan)
+}
+
+/// Останній звіт скану цієї сесії (щоб екран не сканував заново після переходу між вкладками).
+#[tauri::command]
+pub async fn cleanup_last_scan(app: AppHandle) -> CmdResult<Option<ScanView>> {
+    blocking(move || Ok(last_scan(&app.state::<AppState>())?.map(make_view))).await
+}
+
+/// Сканує в цьому процесі: хід і результат — подіями (проміжні — лише для звіту екрана).
+fn run_local_scan(
+    app: &AppHandle,
+    c: &Cleaner,
+    job: optimax_backend::cleanup::ScanJob,
+) -> ScanDone {
+    let kept = job.keeps();
+    let report = job.run(
+        c,
         &|p| {
             let _ = app.emit("cleanup-progress", p);
         },
         &|r| {
-            if keep {
-                let _ = app.emit("cleanup-scan-partial", make_view(r.clone(), issues.clone()));
-            }
+            let s = LastScan {
+                report: r.clone(),
+                rule_issues: c.rule_issues(),
+            };
+            let _ = app.emit("cleanup-scan-partial", make_view(s));
         },
     );
-    if !report.cancelled {
-        save_snapshot(&report);
-    }
-    tracing::info!(
-        "скан {root}: {} об'єктів за правилами, {} невідомих, {} мс{}",
-        report.items.len(),
-        report.unknown.len(),
-        report.duration_ms,
-        if report.cancelled {
-            " (скасовано)"
-        } else {
-            ""
-        }
-    );
-    let state = app.state::<AppState>();
-    let issues = {
-        let mut c = lock(&state.cleanup);
-        if keep {
-            c.report = Some(report.clone());
-        }
-        c.scan = None;
-        c.rule_issues.clone()
+    lock(&app.state::<AppState>().cleanup).remember(&report);
+    let scan = LastScan {
+        report,
+        rule_issues: c.rule_issues(),
     };
-    let view = make_view(report, issues);
-    if keep {
-        let _ = app.emit("cleanup-scan-done", view.clone());
+    if kept {
+        let _ = app.emit("cleanup-scan-done", make_view(scan.clone()));
     }
-    view
+    ScanDone { scan, kept }
+}
+
+/// Починає скан диска. `full` — обхід усього диска (довше; показує «Невідоме» й дає повний знімок).
+#[tauri::command]
+pub async fn cleanup_scan_start(app: AppHandle, drive: String, full: bool) -> CmdResult<()> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        match route(&state) {
+            Route::Remote(mut c) => {
+                let cmd = Command::CleanupScanStart {
+                    drive,
+                    full,
+                    background: false,
+                };
+                ask::<()>(&mut c, &state, cmd)?;
+                spawn_wait(&app, c, Wait::Scan)
+            }
+            Route::Local(c) => {
+                let job = c.start_scan(&drive, full, ScanMode::Screen)?;
+                let handle = app.clone();
+                let cleaner = c.clone();
+                let slot = Arc::new(std::sync::Mutex::new(Some(job)));
+                let in_thread = slot.clone();
+                let spawned = std::thread::Builder::new()
+                    .name("optimax-cleanup-scan".into())
+                    .spawn(move || {
+                        let job = in_thread
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .take();
+                        if let Some(job) = job {
+                            run_local_scan(&handle, &cleaner, job);
+                        }
+                    });
+                if let Err(e) = spawned {
+                    let job = slot
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .take();
+                    if let Some(job) = job {
+                        job.abandon(&c);
+                    }
+                    return Err(failed(e));
+                }
+                Ok(())
+            }
+        }
+    })
+    .await
 }
 
 /// Швидкий скан системного диска за правилами для головного екрана (блокує потік; лише
 /// метадані, нічого не видаляє). Звіт стає й звітом екрана «Очищення», якщо там ще порожньо.
 pub(crate) fn scan_system_drive(app: &AppHandle) -> CmdResult<ScanView> {
-    let root = system_drive();
     let state = app.state::<AppState>();
-    let (cancel, rules, issues, keep) = {
-        let mut c = lock(&state.cleanup);
-        if let Some(why) = c.busy() {
-            return Err(failed(why));
+    let root = system_drive();
+    let done = match route(&state) {
+        Route::Remote(mut c) => {
+            let cmd = Command::CleanupScanStart {
+                drive: root,
+                full: false,
+                background: true,
+            };
+            ask::<()>(&mut c, &state, cmd)?;
+            remote_wait(app, c, Wait::Scan)?
+                .ok_or_else(|| failed("служба не повернула звіт скану"))?
         }
-        let t = CancelToken::new();
-        c.scan = Some(t.clone());
-        let keep = c.report.is_none();
-        let rules = c.rules();
-        (t, rules, c.rule_issues.clone(), keep)
+        Route::Local(c) => {
+            let job = c.start_scan(&root, false, ScanMode::Background)?;
+            run_local_scan(app, &c, job)
+        }
     };
-    Ok(run_scan(app, &root, false, &cancel, &rules, issues, keep))
+    Ok(make_view(done.scan))
 }
 
 /// Останній завершений скан системного диска цієї сесії (з екрана «Очищення» чи головного).
 pub(crate) fn last_system_scan(state: &AppState) -> Option<ScanView> {
     let root = system_drive();
-    let c = lock(&state.cleanup);
-    let report = c
-        .report
-        .as_ref()
-        .filter(|r| !r.cancelled && path::eq_ci(&r.drive, &root))?
-        .clone();
-    let issues = c.rule_issues.clone();
-    drop(c);
-    Some(make_view(report, issues))
-}
-
-fn save_snapshot(report: &ScanReport) {
-    let (Ok(dir), Some(letter)) = (data_dir(), path::drive_letter(&report.drive)) else {
-        return;
-    };
-    let snap = Snapshot {
-        unix: report.started_unix,
-        full: report.full,
-        sizes: report.sizes.iter().cloned().collect(),
-    };
-    if let Err(e) = SnapshotStore::new(&StdFs, &dir, letter).push(snap) {
-        tracing::warn!("не вдалося зберегти знімок розмірів: {e}");
-    }
+    last_scan(state)
+        .ok()
+        .flatten()
+        .filter(|s| !s.report.cancelled && path::eq_ci(&s.report.drive, &root))
+        .map(make_view)
 }
 
 /// Зупиняє скан (звіт — за тим, що встигли побачити).
 #[tauri::command]
-pub fn cleanup_scan_cancel(state: State<'_, AppState>) {
-    if let Some(c) = lock(&state.cleanup).scan.as_ref() {
-        c.cancel();
-    }
+pub async fn cleanup_scan_cancel(app: AppHandle) -> CmdResult<()> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        // Скасування не падає: служба зникла — то й дії вже немає.
+        if let Err(e) = call(&state, Command::CleanupScanCancel, |c| {
+            c.cancel_scan();
+            Ok(())
+        }) {
+            tracing::warn!("скасування очищення: {e:?}");
+        }
+        Ok(())
+    })
+    .await
 }
 
 /// Сухий прогін: точний список файлів, сума й вердикти. Нічого не змінює.
@@ -594,79 +523,15 @@ pub fn cleanup_scan_cancel(state: State<'_, AppState>) {
 pub async fn cleanup_dry_run(app: AppHandle, paths: Vec<String>) -> CmdResult<DryRunView> {
     blocking(move || {
         let state = app.state::<AppState>();
-        let (rules, report, restore_done) = {
-            let mut c = lock(&state.cleanup);
-            if let Some(why) = c.busy() {
-                return Err(failed(why));
-            }
-            let report = c
-                .report
-                .clone()
-                .ok_or_else(|| CmdError::NotFound("спершу проскануй диск".into()))?;
-            (c.rules(), report, c.restore.is_some())
+        let q = spec(&state);
+        let cmd = Command::CleanupDryRun {
+            paths: paths.clone(),
+            quarantine_drive: q.drive.clone(),
+            quarantine_days: q.days,
         };
-        if paths.is_empty() {
-            return Err(CmdError::Forbidden("нічого не вибрано".into()));
-        }
-        // Вибрати можна лише об'єкти з останнього скану, позначені як доступні для очищення.
-        for p in &paths {
-            let ok = report
-                .items
-                .iter()
-                .any(|i| i.selectable && path::eq_ci(&i.path, p));
-            if !ok {
-                return Err(CmdError::Forbidden(format!(
-                    "{p}: не можна вибрати для очищення"
-                )));
-            }
-        }
-        let plan = build_plan(&StdFs, &rules, &paths, now_unix(), &CancelToken::new())?;
-        let settings = lock(&state.settings).cleanup.clone();
-        let qdir = quarantine_root(&settings)?;
-        let qdrive = path::drive_letter(&qdir);
-        let view = DryRunView {
-            plan_id: 0,
-            items: plan
-                .items
-                .iter()
-                .map(|i| DryRunItem {
-                    path: i.root.clone(),
-                    rule_id: i.rule_id.clone(),
-                    verdict: i.verdict,
-                    action: i.action,
-                    files: i.files.len() as u64,
-                    bytes: i.bytes(),
-                    sample: i
-                        .files
-                        .iter()
-                        .take(DRY_RUN_SAMPLE)
-                        .map(|f| f.path.clone())
-                        .collect(),
-                })
-                .collect(),
-            delete_bytes: plan.delete_bytes(),
-            quarantine_bytes: plan.quarantine_bytes(),
-            files: plan.file_count() as u64,
-            skipped: plan.skipped.iter().take(SKIPPED_SAMPLE).cloned().collect(),
-            skipped_total: plan.skipped.len() as u64,
-            services: plan.services.clone(),
-            quarantine_same_volume: plan
-                .items
-                .iter()
-                .any(|i| i.action == Action::Quarantine && path::drive_letter(&i.root) == qdrive),
-            quarantine_dir: qdir,
-            quarantine_days: settings.quarantine_days,
-            restore_point_pending: !restore_done
-                && path::drive_letter(&system_drive()).is_some_and(|d| plan.touches_drive(d)),
-        };
-        let mut c = lock(&state.cleanup);
-        c.next_plan += 1;
-        let id = c.next_plan;
-        c.plan = Some((id, Arc::new(plan)));
-        Ok(DryRunView {
-            plan_id: id,
-            ..view
-        })
+        let view = call(&state, cmd, |c| c.dry_run(&paths, &q))?;
+        lock(&state.cleanup).remember_quarantine(&view.quarantine_dir);
+        Ok(view)
     })
     .await
 }
@@ -681,353 +546,189 @@ pub async fn cleanup_execute(
 ) -> CmdResult<()> {
     blocking(move || {
         let state = app.state::<AppState>();
-        let plan = {
-            let c = lock(&state.cleanup);
-            if let Some(why) = c.busy() {
-                return Err(failed(why));
+        let q = spec(&state);
+        let session = session(&state);
+        match route(&state) {
+            Route::Remote(mut c) => {
+                let cmd = Command::CleanupExecute {
+                    plan_id,
+                    allow_without_restore_point,
+                    session,
+                    quarantine_drive: q.drive,
+                    quarantine_days: q.days,
+                };
+                ask::<()>(&mut c, &state, cmd)?;
+                spawn_wait(&app, c, Wait::Exec)
             }
-            match &c.plan {
-                Some((id, p)) if *id == plan_id => p.clone(),
-                _ => {
-                    return Err(CmdError::NotFound(format!(
-                        "план #{plan_id}: зроби сухий прогін ще раз"
-                    )))
+            Route::Local(c) => {
+                let job = c.start_exec(plan_id, allow_without_restore_point, session, &q)?;
+                let handle = app.clone();
+                let cleaner = c.clone();
+                let slot = Arc::new(std::sync::Mutex::new(Some(job)));
+                let in_thread = slot.clone();
+                let spawned = std::thread::Builder::new()
+                    .name("optimax-cleanup-exec".into())
+                    .spawn(move || {
+                        let job = in_thread
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .take();
+                        let Some(job) = job else { return };
+                        // Модуль звільняється до повідомлення: UI одразу запускає новий скан.
+                        match job.run(&cleaner, &|p| {
+                            let _ = handle.emit("cleanup-exec-progress", p);
+                        }) {
+                            Ok(view) => {
+                                let _ = handle.emit("cleanup-exec-done", view);
+                            }
+                            Err(e) => {
+                                let _ = handle.emit("cleanup-error", CmdError::from(e));
+                            }
+                        }
+                    });
+                if let Err(e) = spawned {
+                    let job = slot
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .take();
+                    if let Some(job) = job {
+                        job.abandon(&c, &e.to_string());
+                    }
+                    return Err(failed(e));
                 }
+                Ok(())
             }
-        };
-        // Запис у журнал — до будь-яких кроків: навіть невдала спроба має лишити слід.
-        let journal = CleanupJournal::new(&StdFs, &journal_path()?);
-        let jid = journal.begin(RunKind::Clean, now_unix())?;
-        tracing::info!(
-            "очищення #{jid}: {} файлів за планом #{plan_id}; без точки відновлення: {}",
-            plan.file_count(),
-            if allow_without_restore_point {
-                "дозволено"
-            } else {
-                "ні"
-            }
-        );
-        let abort = |e: CmdError| {
-            let msg = format!("не виконано: {}", e.message());
-            tracing::warn!("очищення #{jid} {msg}");
-            let _ = journal.finish(jid, now_unix(), Vec::new(), |r| r.note = Some(msg));
-            e
-        };
-        if path::drive_letter(&system_drive()).is_some_and(|d| plan.touches_drive(d)) {
-            tracing::info!("очищення #{jid}: точка відновлення…");
-            ensure_restore_point(&app, allow_without_restore_point).map_err(abort)?;
         }
-        let (cancel, rules) = {
-            let mut c = lock(&state.cleanup);
-            if let Some(why) = c.busy() {
-                return Err(abort(failed(why)));
-            }
-            // План виконується один раз.
-            c.plan = None;
-            let t = CancelToken::new();
-            c.exec = Some(t.clone());
-            (t, c.rules())
-        };
-        let settings = lock(&state.settings).cleanup.clone();
-        let handle = app.clone();
-        let spawned = std::thread::Builder::new()
-            .name("optimax-cleanup-exec".into())
-            .spawn(move || {
-                let result = run_clean(&handle, jid, &rules, &plan, &settings, &cancel);
-                // Спершу знімаємо «зайнято», потім повідомляємо UI: він одразу запускає новий скан.
-                lock(&handle.state::<AppState>().cleanup).exec = None;
-                match result {
-                    Ok(view) => {
-                        let _ = handle.emit("cleanup-exec-done", view);
-                    }
-                    Err(e) => {
-                        tracing::error!("очищення не вдалося: {e:?}");
-                        let _ = handle.emit("cleanup-error", e);
-                    }
-                }
-            });
-        if let Err(e) = spawned {
-            lock(&state.cleanup).exec = None;
-            return Err(abort(failed(e)));
+    })
+    .await
+}
+
+/// Зупиняє очищення після поточного файлу.
+#[tauri::command]
+pub async fn cleanup_exec_cancel(app: AppHandle) -> CmdResult<()> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        // Скасування не падає: служба зникла — то й дії вже немає.
+        if let Err(e) = call(&state, Command::CleanupExecCancel, |c| {
+            c.cancel_exec();
+            Ok(())
+        }) {
+            tracing::warn!("скасування очищення: {e:?}");
         }
         Ok(())
     })
     .await
 }
 
-fn run_clean(
-    app: &AppHandle,
-    jid: u64,
-    rules: &RuleSet,
-    plan: &CleanPlan,
-    settings: &CleanupSettings,
-    cancel: &CancelToken,
-) -> CmdResult<ExecView> {
-    let fs = StdFs;
-    let journal = CleanupJournal::new(&fs, &journal_path()?);
-    let needs_q = plan.items.iter().any(|i| i.action == Action::Quarantine);
-    let mut quarantine = if needs_q {
-        Some(Quarantine::open(
-            &fs,
-            &quarantine_index()?,
-            &quarantine_root(settings)?,
-            settings.quarantine_days,
-        )?)
-    } else {
-        None
-    };
-    let ctx = ExecContext {
-        fs: &fs,
-        rules,
-        services: Some(&SERVICES),
-        now_unix: now_unix(),
-        cancel,
-    };
-    let result = execute(&ctx, plan, quarantine.as_mut(), &|p| {
-        let _ = app.emit("cleanup-exec-progress", p);
-    });
-    let res = match result {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = e.to_string();
-            let _ = journal.finish(jid, now_unix(), Vec::new(), |r| r.note = Some(msg));
-            return Err(e.into());
-        }
-    };
-    let same_volume = res
-        .batch_id
-        .as_ref()
-        .and_then(|id| quarantine.as_ref()?.batches().iter().find(|b| &b.id == id))
-        .is_some_and(|b| b.same_volume);
-    let services_note = res
-        .services
-        .iter()
-        .map(|s| {
-            format!(
-                "служба {}: {}{}",
-                s.name,
-                if s.was_running {
-                    if s.restored {
-                        "зупинялась, запущена знову"
-                    } else {
-                        "зупинялась, НЕ запущена знову"
-                    }
-                } else {
-                    "не працювала, не чіпали"
-                },
-                s.error
-                    .as_deref()
-                    .map(|e| format!(" ({e})"))
-                    .unwrap_or_default()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("; ");
-    let record = journal.finish(jid, now_unix(), res.lines.clone(), |r| {
-        r.freed_bytes = res.freed_bytes;
-        r.quarantined_bytes = res.quarantined_bytes;
-        r.batch_id = res.batch_id.clone();
-        r.note = (!services_note.is_empty()).then_some(services_note);
-    })?;
-    tracing::info!(
-        "очищення: видалено {} файлів ({} байтів), у карантин {} файлів ({} байтів), пропущено {}{}",
-        res.deleted_files,
-        res.freed_bytes,
-        res.quarantined_files,
-        res.quarantined_bytes,
-        res.skipped.len(),
-        if res.cancelled { ", скасовано" } else { "" }
-    );
-    Ok(ExecView {
-        record,
-        services: res.services,
-        quarantine_same_volume: same_volume,
-        cancelled: res.cancelled,
-    })
-}
-
-/// Зупиняє очищення після поточного файлу.
-#[tauri::command]
-pub fn cleanup_exec_cancel(state: State<'_, AppState>) {
-    if let Some(c) = lock(&state.cleanup).exec.as_ref() {
-        c.cancel();
-    }
-}
-
 /// Журнал очищення (найновіші — останні).
 #[tauri::command]
-pub async fn cleanup_journal() -> CmdResult<Vec<JournalRecord>> {
-    blocking(|| Ok(CleanupJournal::new(&StdFs, &journal_path()?).load()?)).await
+pub async fn cleanup_journal(app: AppHandle) -> CmdResult<Vec<JournalRecord>> {
+    blocking(move || {
+        call(
+            &app.state::<AppState>(),
+            Command::CleanupJournal,
+            Cleaner::journal_records,
+        )
+    })
+    .await
 }
 
 /// «Що виросло»: останній знімок диска порівняно зі знімком приблизно тижневої давності.
 #[tauri::command]
 pub async fn cleanup_growth(app: AppHandle, drive: String) -> CmdResult<Option<GrowthView>> {
     blocking(move || {
-        let letter = path::normalize(&drive)
-            .ok()
-            .filter(|r| path::is_drive_root(r))
-            .and_then(|r| path::drive_letter(&r))
-            .ok_or_else(|| CmdError::Forbidden(format!("«{drive}» — не корінь диска")))?;
-        let all = SnapshotStore::new(&StdFs, &data_dir()?, letter).load()?;
-        let Some((current, history)) = all.split_last() else {
-            return Ok(None);
+        let state = app.state::<AppState>();
+        let cmd = Command::CleanupGrowth {
+            drive: drive.clone(),
         };
-        let Some(base) = pick_baseline(history, current.unix, GROWTH_WINDOW_SECS) else {
-            return Ok(None);
-        };
-        let rules = lock(&app.state::<AppState>().cleanup).rules();
-        let report = growth(base, current);
-        Ok(Some(GrowthView {
-            since_unix: report.since_unix,
-            now_unix: report.now_unix,
-            full: report.full,
-            items: report
-                .items
-                .into_iter()
-                .map(|g| {
-                    let cls = rules.classify(&g.path);
-                    GrowthItem {
-                        verdict: cls.verdict,
-                        rule_id: cls
-                            .rule
-                            .and_then(|i| rules.get(i))
-                            .map(|r| r.rule.id.clone()),
-                        growth: g,
-                    }
-                })
-                .collect(),
-        }))
+        let view = call(&state, cmd, |c| c.growth(&drive))?;
+        if let Some(v) = &view {
+            let mut st = lock(&state.cleanup);
+            for i in &v.items {
+                st.seen.insert(i.growth.path.to_lowercase());
+            }
+        }
+        Ok(view)
     })
     .await
-}
-
-fn quarantine_view(settings: &CleanupSettings) -> CmdResult<QuarantineView> {
-    let fs = StdFs;
-    let dir = quarantine_root(settings)?;
-    let q = Quarantine::open(&fs, &quarantine_index()?, &dir, settings.quarantine_days)?;
-    let now = now_unix();
-    let sys = system_drive();
-    Ok(QuarantineView {
-        on_system_drive: path::drive_letter(&dir) == path::drive_letter(&sys),
-        batches: q
-            .batches()
-            .iter()
-            .filter(|b| b.state == BatchState::Active)
-            .map(|b| BatchView {
-                id: b.id.clone(),
-                created_unix: b.created_unix,
-                expires_unix: b.expires_unix,
-                bytes: b.bytes(),
-                files: b.entries.len() as u64,
-                same_volume: b.same_volume,
-                expired: b.expires_unix <= now,
-                dir: b.dir.clone(),
-            })
-            .collect(),
-        other_drives: list_drives()
-            .into_iter()
-            .filter(|d| !d.is_system && !d.removable)
-            .collect(),
-        settings: settings.clone(),
-        dir,
-    })
 }
 
 /// Карантин: тека, налаштування, активні партії.
 #[tauri::command]
 pub async fn cleanup_quarantine(app: AppHandle) -> CmdResult<QuarantineView> {
     blocking(move || {
-        let settings = lock(&app.state::<AppState>().settings).cleanup.clone();
-        quarantine_view(&settings)
+        let state = app.state::<AppState>();
+        let settings = lock(&state.settings).cleanup.clone();
+        let q = spec(&state);
+        let cmd = Command::CleanupQuarantine {
+            quarantine_drive: q.drive.clone(),
+            quarantine_days: q.days,
+        };
+        let QuarantineState {
+            dir,
+            on_system_drive,
+            batches,
+        } = call(&state, cmd, |c| c.quarantine(&q))?;
+        {
+            let mut st = lock(&state.cleanup);
+            st.remember_quarantine(&dir);
+            for b in &batches {
+                st.remember_quarantine(&b.dir);
+            }
+        }
+        Ok(QuarantineView {
+            dir,
+            settings,
+            on_system_drive,
+            batches,
+            other_drives: list_drives()
+                .into_iter()
+                .filter(|d| !d.is_system && !d.removable)
+                .collect(),
+        })
     })
     .await
+}
+
+fn batch_action(state: &AppState, id: &str, restore: bool) -> CmdResult<JournalRecord> {
+    let q = spec(state);
+    let cmd = Command::CleanupBatch {
+        id: id.to_string(),
+        restore,
+        quarantine_drive: q.drive.clone(),
+        quarantine_days: q.days,
+    };
+    call(state, cmd, |c| c.batch(id, restore, &q))
 }
 
 /// Відновлює партію карантину.
 #[tauri::command]
 pub async fn cleanup_quarantine_restore(app: AppHandle, id: String) -> CmdResult<JournalRecord> {
-    blocking(move || batch_action(&app, &id, RunKind::Restore)).await
+    blocking(move || batch_action(&app.state::<AppState>(), &id, true)).await
 }
 
 /// Видаляє партію карантину остаточно.
 #[tauri::command]
 pub async fn cleanup_quarantine_purge(app: AppHandle, id: String) -> CmdResult<JournalRecord> {
-    blocking(move || batch_action(&app, &id, RunKind::Purge)).await
-}
-
-fn batch_action(app: &AppHandle, id: &str, kind: RunKind) -> CmdResult<JournalRecord> {
-    let _guard = ToolGuard::acquire(app)?;
-    let state = app.state::<AppState>();
-    let settings = lock(&state.settings).cleanup.clone();
-    let rules = lock(&state.cleanup).rules();
-    let fs = StdFs;
-    let journal = CleanupJournal::new(&fs, &journal_path()?);
-    let mut q = Quarantine::open(
-        &fs,
-        &quarantine_index()?,
-        &quarantine_root(&settings)?,
-        settings.quarantine_days,
-    )?;
-    let jid = journal.begin(kind, now_unix())?;
-    let result = match kind {
-        RunKind::Restore => q.restore(id, &rules),
-        _ => q.purge(id),
-    };
-    let out = match result {
-        Ok(o) => o,
-        Err(e) => {
-            let msg = e.to_string();
-            let _ = journal.finish(jid, now_unix(), Vec::new(), |r| r.note = Some(msg));
-            return Err(e.into());
-        }
-    };
-    let record = journal.finish(jid, now_unix(), out.lines, |r| {
-        r.batch_id = Some(id.to_string());
-        match kind {
-            RunKind::Restore => r.restored_bytes = out.bytes,
-            _ => r.freed_bytes = out.bytes,
-        }
-    })?;
-    tracing::info!(
-        "карантин {id}: {} {} байтів",
-        if kind == RunKind::Restore {
-            "відновлено"
-        } else {
-            "видалено остаточно"
-        },
-        out.bytes
-    );
-    Ok(record)
+    blocking(move || batch_action(&app.state::<AppState>(), &id, false)).await
 }
 
 /// Після старту: якщо користувач увімкнув автоочищення, видаляє партії з минулим терміном
 /// (кожна — окремим записом у журналі).
 pub fn startup_auto_purge(app: &AppHandle) {
-    let settings = lock(&app.state::<AppState>().settings).cleanup.clone();
-    if !settings.auto_purge {
+    let state = app.state::<AppState>();
+    if !lock(&state.settings).cleanup.auto_purge {
         return;
     }
-    let expired = quarantine_index()
-        .and_then(|idx| {
-            Quarantine::open(
-                &StdFs,
-                &idx,
-                &quarantine_root(&settings)?,
-                settings.quarantine_days,
-            )
-            .map_err(CmdError::from)
-        })
-        .map(|q| q.expired(now_unix()))
-        .unwrap_or_default();
-    for id in expired {
-        match batch_action(app, &id, RunKind::Purge) {
-            Ok(r) => tracing::info!(
-                "автоочищення карантину: партія {id} видалена, звільнено {} байтів",
-                r.freed_bytes
-            ),
-            Err(e) => tracing::warn!("автоочищення карантину: партія {id}: {e:?}"),
-        }
+    let q = spec(&state);
+    let cmd = Command::CleanupAutoPurge {
+        quarantine_drive: q.drive.clone(),
+        quarantine_days: q.days,
+    };
+    match call(&state, cmd, |c| Ok(c.auto_purge(&q))) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("автоочищення карантину: видалено партій — {n}"),
+        Err(e) => tracing::warn!("автоочищення карантину: {e:?}"),
     }
 }
 
@@ -1039,36 +740,15 @@ pub async fn cleanup_dism(
     allow_without_restore_point: bool,
 ) -> CmdResult<JournalRecord> {
     blocking(move || {
-        let _guard = ToolGuard::acquire(&app)?;
-        ensure_restore_point(&app, allow_without_restore_point)?;
-        let sys = system_drive();
-        let free = || drive_view(&sys).map(|d| d.free_bytes);
-        let fs = StdFs;
-        let journal = CleanupJournal::new(&fs, &journal_path()?);
-        let jid = journal.begin(RunKind::Dism, now_unix())?;
-        let before = free();
-        tracing::info!("DISM /StartComponentCleanup: почато (може тривати кілька хвилин)");
-        let out = WinTools.dism_component_cleanup();
-        let after = free();
-        let freed = match (before, after) {
-            (Some(b), Some(a)) => a.saturating_sub(b),
-            _ => 0,
+        let state = app.state::<AppState>();
+        let session = session(&state);
+        let cmd = Command::CleanupDism {
+            allow_without_restore_point,
+            session,
         };
-        let (ok, note) = match &out {
-            Ok(o) => (o.ok(), format!("код завершення {}\n{}", o.code, o.output)),
-            Err(e) => (false, e.to_string()),
-        };
-        let record = journal.finish(jid, now_unix(), Vec::new(), |r| {
-            r.freed_bytes = freed;
-            r.note = Some(note.clone());
-        })?;
-        if ok {
-            tracing::info!("DISM завершено, вільного місця більше на {freed} байтів (виміряно)");
-            Ok(record)
-        } else {
-            tracing::error!("DISM завершився з помилкою: {note}");
-            Err(failed(format!("DISM завершився з помилкою: {note}")))
-        }
+        call(&state, cmd, |c| {
+            c.dism(allow_without_restore_point, session)
+        })
     })
     .await
 }
@@ -1082,80 +762,62 @@ pub async fn cleanup_hibernate(
     allow_without_restore_point: bool,
 ) -> CmdResult<JournalRecord> {
     blocking(move || {
-        let _guard = ToolGuard::acquire(&app)?;
-        if !enable {
-            ensure_restore_point(&app, allow_without_restore_point)?;
-        }
-        let fs = StdFs;
-        let hiberfil = path::join(&system_drive(), "hiberfil.sys");
-        let size = || fs.metadata(&hiberfil).ok().map(|m| m.len);
-        let before = size();
-        let journal = CleanupJournal::new(&fs, &journal_path()?);
-        let kind = if enable {
-            RunKind::HibernateOn
-        } else {
-            RunKind::HibernateOff
+        let state = app.state::<AppState>();
+        let session = session(&state);
+        let cmd = Command::CleanupHibernate {
+            enable,
+            allow_without_restore_point,
+            session,
         };
-        let jid = journal.begin(kind, now_unix())?;
-        let out = WinTools.set_hibernate(enable);
-        let after = size();
-        let (ok, note) = match &out {
-            Ok(o) => (
-                o.ok(),
-                format!(
-                    "powercfg /hibernate {}: код {}\n{}",
-                    if enable { "on" } else { "off" },
-                    o.code,
-                    o.output
-                ),
-            ),
-            Err(e) => (false, e.to_string()),
-        };
-        let freed = match (before, after) {
-            (Some(b), None) => b,
-            _ => 0,
-        };
-        let record = journal.finish(jid, now_unix(), Vec::new(), |r| {
-            r.freed_bytes = freed;
-            r.note = Some(note.clone());
-        })?;
-        if ok {
-            tracing::info!(
-                "гібернацію {}; hiberfil.sys: {}",
-                if enable {
-                    "увімкнено"
-                } else {
-                    "вимкнено"
-                },
-                if after.is_some() { "є" } else { "немає" }
-            );
-            Ok(record)
-        } else {
-            Err(failed(note))
-        }
+        call(&state, cmd, |c| {
+            c.hibernate(enable, allow_without_restore_point, session)
+        })
     })
     .await
 }
 
-/// Показує об'єкт у Провіднику. Лише шляхи з останнього скану або тека карантину.
+/// Показує об'єкт у Провіднику (у сесії користувача, тому завжди з програми). Лише шляхи, які
+/// екран отримав від скану чи «Що виросло», або тека карантину.
 #[tauri::command]
 pub fn cleanup_reveal(state: State<'_, AppState>, path: String) -> CmdResult<()> {
     let p = path::normalize(&path).map_err(|e| CmdError::Forbidden(e.to_string()))?;
-    let known = lock(&state.cleanup).report.as_ref().is_some_and(|r| {
-        r.items
-            .iter()
-            .chain(r.unknown.iter())
-            .chain(r.protected_zones.iter())
-            .any(|i| {
-                path::eq_ci(&i.path, &p) || i.top_subdirs.iter().any(|d| path::eq_ci(&d.path, &p))
-            })
-            || r.sizes.iter().any(|(s, _)| path::eq_ci(s, &p))
-    });
-    let settings = lock(&state.settings).cleanup.clone();
-    let in_quarantine = quarantine_root(&settings).is_ok_and(|q| path::is_within(&p, &q));
-    if !known && !in_quarantine {
+    let allowed = {
+        let st = lock(&state.cleanup);
+        st.seen.contains(&p.to_lowercase())
+            || st.quarantine_dirs.iter().any(|q| path::is_within(&p, q))
+    };
+    if !allowed {
         return Err(CmdError::Forbidden(format!("{p}: невідомий шлях")));
     }
     WinTools.reveal(&p)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reveal_allows_only_shown_paths() {
+        let mut st = CleanupState::default();
+        let report = ScanReport {
+            drive: r"C:\".into(),
+            full: false,
+            started_unix: 0,
+            duration_ms: 0,
+            items: Vec::new(),
+            unknown: Vec::new(),
+            protected_zones: Vec::new(),
+            scanned_bytes: 0,
+            unreadable_dirs: 0,
+            cancelled: false,
+            sizes: vec![(r"C:\Users\Test\AppData\Local\Temp".into(), 10)],
+        };
+        st.remember(&report);
+        st.remember_quarantine(r"D:\OptimaX\S-1-5-21-1\Quarantine");
+        assert!(st.seen.contains(r"c:\users\test\appdata\local\temp"));
+        assert!(!st.seen.contains(r"c:\windows"));
+        st.remember_quarantine(r"d:\optimax\s-1-5-21-1\quarantine");
+        assert_eq!(st.quarantine_dirs.len(), 1);
+    }
 }

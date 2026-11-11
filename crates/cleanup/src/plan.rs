@@ -13,11 +13,11 @@ use crate::rules::{RuleSet, Verdict};
 use crate::scan::{expand_roots, walk_root, Candidate};
 use crate::{CancelToken, CleanupError};
 use optimax_core::service::{ServiceApi, ServiceState};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Що зробити з файлами об'єкта.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
@@ -28,7 +28,7 @@ pub enum Action {
 }
 
 /// Чому файл пропущено.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "kind", content = "detail", rename_all = "snake_case")]
 pub enum SkipReason {
@@ -116,7 +116,7 @@ impl PlanItem {
 }
 
 /// Пропущений під час планування / виконання об'єкт.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Skipped {
     /// Шлях.
@@ -293,7 +293,7 @@ pub fn build_plan(
 }
 
 /// Прогрес виконання.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ExecProgress {
     /// Оброблено файлів.
@@ -307,7 +307,7 @@ pub struct ExecProgress {
 }
 
 /// Зміна стану служби під час очищення.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ServiceNote {
     /// Служба.

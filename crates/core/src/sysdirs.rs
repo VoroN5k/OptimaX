@@ -67,6 +67,12 @@ pub fn known(folder: Folder) -> Option<PathBuf> {
     imp::known(folder)
 }
 
+/// Відома тека **користувача процесу** `pid` (служба як SYSTEM: теки того, хто під'єднався, а не
+/// свої). Береться з токена процесу, тож як і [`known`], теки користувача задає він сам.
+pub fn known_for_process(folder: Folder, pid: u32) -> Option<PathBuf> {
+    imp::known_for_process(folder, pid)
+}
+
 /// `explorer.exe` з теки Windows (не з `PATH`).
 pub fn explorer() -> Option<PathBuf> {
     windows_dir().map(|w| w.join("explorer.exe"))
@@ -89,6 +95,10 @@ mod imp {
     }
 
     pub(super) fn known(_folder: Folder) -> Option<PathBuf> {
+        None
+    }
+
+    pub(super) fn known_for_process(_folder: Folder, _pid: u32) -> Option<PathBuf> {
         None
     }
 }

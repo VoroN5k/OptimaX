@@ -2,11 +2,12 @@
 //! тому виконується в службі, а без служби — у самій програмі.
 //!
 //! Датчики CPU через PawnIO ([`sensors`]), запис гри ([`record`]), стеження й оверлей ([`watch`]),
-//! зміни системи з журналом і відкатом ([`changes`]).
+//! зміни системи з журналом і відкатом ([`changes`]), очищення диска ([`cleanup`]).
 
 #![forbid(unsafe_code)]
 
 pub mod changes;
+pub mod cleanup;
 pub mod record;
 pub mod sensors;
 pub mod watch;
@@ -17,6 +18,7 @@ pub use self::service::handler;
 #[cfg(windows)]
 mod service {
     use crate::changes::ChangesHost;
+    use crate::cleanup::{Cleaner, CleanupHost, WinPlatform};
     use crate::record::{RecordSpec, Recorder};
     use crate::sensors::SensorCache;
     use crate::watch::{LiveHost, WatchHost, WatchSpec};
@@ -39,6 +41,7 @@ mod service {
         watch: WatchHost,
         live: LiveHost,
         changes: ChangesHost,
+        cleanup: CleanupHost,
         presentmon: Arc<OnceLock<BundledPresentMon>>,
     }
 
@@ -145,11 +148,18 @@ mod service {
             watch: WatchHost::new(),
             live: LiveHost::new(),
             changes: ChangesHost::new(),
+            cleanup: CleanupHost::new(Box::new(|sid: &str| {
+                WinPlatform::for_user(sid).map(|p| Cleaner::new(Box::new(p)))
+            })),
             presentmon: Arc::new(OnceLock::new()),
         };
         Arc::new(move |peer: &Peer, cmd: &Command| {
             // Зміни системи — від імені того, хто під'єднався (його журнал і гілка HKCU).
             if let Some(r) = b.changes.handle(peer, cmd) {
+                return r;
+            }
+            // Очищення — теж від його імені: його теки правил, журнал і карантин.
+            if let Some(r) = b.cleanup.handle(peer.pid, &peer.sid, cmd) {
                 return r;
             }
             other(&b, cmd)
@@ -204,6 +214,21 @@ mod service {
             | Command::JournalRollback { .. }
             | Command::JournalRollbackAll
             | Command::JournalRecover => Reply::Error("журнал змін недоступний".into()),
+            // Очищення обробляє `CleanupHost` вище.
+            Command::CleanupScanStart { .. }
+            | Command::CleanupScanCancel
+            | Command::CleanupPoll
+            | Command::CleanupLastScan
+            | Command::CleanupDryRun { .. }
+            | Command::CleanupExecute { .. }
+            | Command::CleanupExecCancel
+            | Command::CleanupJournal
+            | Command::CleanupGrowth { .. }
+            | Command::CleanupQuarantine { .. }
+            | Command::CleanupBatch { .. }
+            | Command::CleanupAutoPurge { .. }
+            | Command::CleanupDism { .. }
+            | Command::CleanupHibernate { .. } => Reply::Error("очищення недоступне".into()),
         }
     }
 }

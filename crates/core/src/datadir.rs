@@ -44,6 +44,15 @@ pub fn secure_dir_on(base: &Path) -> Result<PathBuf, CoreError> {
     imp::secure_dir_on(base)
 }
 
+/// Як [`secure_dir_on`], але для **заданого** користувача (служба: карантин клієнта на іншому
+/// диску — `D:\OptimaX\<SID>`).
+pub fn secure_dir_of(base: &Path, sid: &str) -> Result<PathBuf, CoreError> {
+    if !is_plain_sid(sid) {
+        return Err(CoreError::InvalidData(format!("неочікуваний SID: {sid}")));
+    }
+    imp::secure_dir_for(base, sid)
+}
+
 /// Спільна для всіх користувачів підтека `%ProgramData%\OptimaX\<name>` (напр. `bin` для
 /// вбудованого PresentMon): лише SYSTEM і Адміністратори, без читання для користувачів.
 /// `name` — одне ім'я без роздільників.

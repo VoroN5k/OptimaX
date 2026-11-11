@@ -8,7 +8,7 @@ use crate::path;
 use crate::pattern::Pattern;
 use crate::rules::{Category, LoadedRule, Method, RuleSet, Verdict};
 use crate::CancelToken;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
@@ -26,7 +26,7 @@ pub const SNAPSHOT_MIN_BYTES: u64 = 100 * 1024 * 1024;
 pub const SNAPSHOT_MAX_DEPTH: usize = 5;
 
 /// Опис правила для показу (без внутрішніх полів).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RuleInfo {
     /// Ідентифікатор.
@@ -66,7 +66,7 @@ impl RuleInfo {
 }
 
 /// Підтека рядка повного скану (менша за поріг окремого рядка).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct SubDir {
     /// Шлях.
@@ -76,7 +76,7 @@ pub struct SubDir {
 }
 
 /// Об'єкт у звіті скану.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Item {
     /// Шлях (корінь правила або тека з повного скану).
@@ -115,7 +115,7 @@ pub struct Item {
 }
 
 /// Звіт скану.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ScanReport {
     /// Корінь диска (`C:\`).
@@ -146,7 +146,7 @@ pub struct ScanReport {
 }
 
 /// Фаза скану.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum ScanPhase {
@@ -157,7 +157,7 @@ pub enum ScanPhase {
 }
 
 /// Прогрес скану.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ScanProgress {
     /// Фаза.

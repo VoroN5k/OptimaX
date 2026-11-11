@@ -6,8 +6,13 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
 use windows::core::GUID;
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Security::{TOKEN_IMPERSONATE, TOKEN_QUERY};
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::SystemInformation::{GetSystemDirectoryW, GetSystemWindowsDirectoryW};
+use windows::Win32::System::Threading::{
+    OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 use windows::Win32::UI::Shell::{
     FOLDERID_CommonStartup, FOLDERID_LocalAppData, FOLDERID_Profile, FOLDERID_ProgramData,
     FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX64, FOLDERID_ProgramFilesX86, FOLDERID_Public,
@@ -57,9 +62,35 @@ fn guid(folder: Folder) -> GUID {
 }
 
 pub(super) fn known(folder: Folder) -> Option<PathBuf> {
+    known_with(folder, None)
+}
+
+/// Закриває дескриптор при виході з області видимості.
+struct Handle(HANDLE);
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        // SAFETY: дескриптор отримано від системи й закривається один раз.
+        let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
+pub(super) fn known_for_process(folder: Folder, pid: u32) -> Option<PathBuf> {
+    // SAFETY: звичайний виклик; дескриптор закриває `Handle`.
+    let process =
+        Handle(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?);
+    let mut token = HANDLE::default();
+    // SAFETY: дескриптор процесу живий; `token` — вихідний параметр (закриває `Handle`).
+    // SHGetKnownFolderPath з токеном вимагає TOKEN_QUERY і TOKEN_IMPERSONATE.
+    unsafe { OpenProcessToken(process.0, TOKEN_QUERY | TOKEN_IMPERSONATE, &mut token) }.ok()?;
+    let token = Handle(token);
+    known_with(folder, Some(token.0))
+}
+
+fn known_with(folder: Folder, token: Option<HANDLE>) -> Option<PathBuf> {
     let id = guid(folder);
-    // SAFETY: `id` — валідний GUID; рядок звільняється CoTaskMemFree нижче.
-    let p = unsafe { SHGetKnownFolderPath(&id, KNOWN_FOLDER_FLAG(0), None) }.ok()?;
+    // SAFETY: `id` — валідний GUID, токен (якщо є) живий; рядок звільняється CoTaskMemFree нижче.
+    let p = unsafe { SHGetKnownFolderPath(&id, KNOWN_FOLDER_FLAG(0), token) }.ok()?;
     // SAFETY: система повернула нуль-термінований рядок.
     let s = unsafe { p.to_string() }.ok();
     // SAFETY: рядок виділено SHGetKnownFolderPath через CoTaskMemAlloc.
@@ -88,5 +119,13 @@ mod tests {
             assert!(known(f).unwrap().is_absolute(), "{f:?}");
         }
         assert!(explorer().unwrap().is_file());
+        // Теки за токеном власного процесу — ті самі, що й без токена.
+        for f in [
+            Folder::Profile,
+            Folder::LocalAppData,
+            Folder::RoamingAppData,
+        ] {
+            assert_eq!(known_for_process(f, std::process::id()), known(f), "{f:?}");
+        }
     }
 }

@@ -30,7 +30,7 @@ pub struct Snapshot {
 }
 
 /// Зміна розміру.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Growth {
     /// Шлях.
@@ -44,7 +44,7 @@ pub struct Growth {
 }
 
 /// Що виросло.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GrowthReport {
     /// Базовий знімок (Unix-секунди).

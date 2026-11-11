@@ -64,6 +64,7 @@ optimax-history = { workspace = true, features = ["ts"] }
 optimax-experiment = { workspace = true, features = ["ts"] }
 optimax-stability = { workspace = true, features = ["ts"] }
 optimax-service = { workspace = true, features = ["ts"] }
+optimax-backend = { workspace = true, features = ["ts"] }
 
 [lints]
 workspace = true

@@ -14,7 +14,7 @@ pub const SERVICE_DISPLAY: &str = "OptimaX";
 /// Ім'я каналу.
 pub const PIPE_NAME: &str = r"\\.\pipe\OptimaX";
 /// Версія протоколу: змінюється, коли старий клієнт і нова служба вже не зрозуміють одне одного.
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 /// Найбільший кадр, байт: більший — помилка й розрив з'єднання. Найбільше важить результат
 /// запису гри (кадри, знімки, потоки): 10 хв на високому FPS — десятки МБ JSON.
 pub const MAX_FRAME: u32 = 128 * 1024 * 1024;
@@ -129,6 +129,94 @@ pub enum Command {
     JournalRollbackAll,
     /// Довести до кінця записи, що лишилися після збою.
     JournalRecover,
+    /// Почати скан диска (теки правил — користувача, що під'єднався). Хід —
+    /// [`Command::CleanupPoll`].
+    CleanupScanStart {
+        /// Корінь диска (`C:\`).
+        drive: String,
+        /// Обхід усього диска.
+        full: bool,
+        /// Фоновий скан для головного екрана: звіт екрана «Очищення» не замінює, якщо він уже є.
+        background: bool,
+    },
+    /// Зупинити скан.
+    CleanupScanCancel,
+    /// Хід і результат скану чи очищення з минулого опитування.
+    CleanupPoll,
+    /// Останній звіт скану.
+    CleanupLastScan,
+    /// Сухий прогін для об'єктів **з останнього скану служби** (шляхи звіряються з ним).
+    CleanupDryRun {
+        /// Корені об'єктів зі звіту.
+        paths: Vec<String>,
+        /// Диск карантину з налаштувань (`None` — тека даних).
+        quarantine_drive: Option<String>,
+        /// Термін карантину, днів.
+        quarantine_days: u32,
+    },
+    /// Виконати план сухого прогону (за номером). Хід — [`Command::CleanupPoll`].
+    CleanupExecute {
+        /// Номер плану.
+        plan_id: u64,
+        /// Користувач погодився продовжити без точки відновлення.
+        allow_without_restore_point: bool,
+        /// Номер сесії програми.
+        session: u64,
+        /// Диск карантину.
+        quarantine_drive: Option<String>,
+        /// Термін карантину, днів.
+        quarantine_days: u32,
+    },
+    /// Зупинити очищення після поточного файлу.
+    CleanupExecCancel,
+    /// Журнал очищення.
+    CleanupJournal,
+    /// «Що виросло» для диска.
+    CleanupGrowth {
+        /// Корінь диска.
+        drive: String,
+    },
+    /// Карантин: тека й активні партії.
+    CleanupQuarantine {
+        /// Диск карантину.
+        quarantine_drive: Option<String>,
+        /// Термін карантину, днів.
+        quarantine_days: u32,
+    },
+    /// Відновити (`restore`) або остаточно видалити партію карантину.
+    CleanupBatch {
+        /// Партія.
+        id: String,
+        /// Відновити (інакше — видалити).
+        restore: bool,
+        /// Диск карантину.
+        quarantine_drive: Option<String>,
+        /// Термін карантину, днів.
+        quarantine_days: u32,
+    },
+    /// Видалити партії з минулим терміном (автоочищення, якщо користувач його ввімкнув).
+    CleanupAutoPurge {
+        /// Диск карантину.
+        quarantine_drive: Option<String>,
+        /// Термін карантину, днів.
+        quarantine_days: u32,
+    },
+    /// `DISM /StartComponentCleanup`.
+    CleanupDism {
+        /// Користувач погодився продовжити без точки відновлення.
+        allow_without_restore_point: bool,
+        /// Номер сесії програми.
+        session: u64,
+    },
+    /// `powercfg /hibernate on|off`.
+    CleanupHibernate {
+        /// Увімкнути.
+        enable: bool,
+        /// Користувач погодився продовжити без точки відновлення.
+        allow_without_restore_point: bool,
+        /// Номер сесії програми.
+        session: u64,
+    },
 }
 
 /// Запит клієнта.

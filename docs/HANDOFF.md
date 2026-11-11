@@ -200,7 +200,10 @@ Actions (`.github/workflows/release.yml`) збирає zip, інсталятор
 - **Етап 3б зроблено:** твіки, журнал і відкат через службу (`tweaks::Changes`,
   `app::changes::ChangeHub`, `backend::changes`, `WinUserRegistry`, `Peer`), розділ 15
   `docs/SERVICE.md`.
-- Далі: 3в — очищення в службі.
+- **Етап 3в зроблено:** очищення через службу (`backend::cleanup::Cleaner` — логіка, спільна для
+  служби й програми; `CleanupHost`, `Env::for_process`, `sysdirs::known_for_process`,
+  `datadir::secure_dir_of`), розділ 16 `docs/SERVICE.md`.
+- Далі: 3г — автозавантаження, залишки режиму гри, точка відновлення очищення.
 
 ## 2u. Розширені датчики через PawnIO (2026-11-09)
 

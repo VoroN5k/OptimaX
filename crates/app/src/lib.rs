@@ -88,7 +88,7 @@ mod app {
         if let Some(c) = lock(&state.net_test).as_ref() {
             c.cancel();
         }
-        cleanup::cancel_all(&lock(&state.cleanup));
+        cleanup::cancel_all(state);
         resolution::cancel_session(state);
         experiment::cancel_session(state);
         stability::cancel_session(state);

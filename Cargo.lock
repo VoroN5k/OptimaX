@@ -2439,6 +2439,7 @@ dependencies = [
 name = "optimax-backend"
 version = "0.2.0"
 dependencies = [
+ "optimax-cleanup",
  "optimax-core",
  "optimax-frametime",
  "optimax-metrics",
@@ -2446,7 +2447,9 @@ dependencies = [
  "optimax-tweaks",
  "serde",
  "serde_json",
+ "sysinfo",
  "tracing",
+ "ts-rs",
 ]
 
 [[package]]

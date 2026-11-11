@@ -106,6 +106,18 @@ impl From<optimax_cleanup::CleanupError> for CmdError {
     }
 }
 
+impl From<optimax_backend::cleanup::CleanError> for CmdError {
+    fn from(e: optimax_backend::cleanup::CleanError) -> Self {
+        use optimax_backend::cleanup::CleanError;
+        match e {
+            CleanError::RestorePoint(m) => Self::RestorePoint(m),
+            CleanError::Forbidden(m) => Self::Forbidden(m),
+            CleanError::NotFound(m) => Self::NotFound(m),
+            CleanError::Failed(m) => Self::Failed(m),
+        }
+    }
+}
+
 failed_from!(
     optimax_core::CoreError,
     optimax_gamemode::GameModeError,

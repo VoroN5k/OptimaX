@@ -103,16 +103,20 @@ pub fn stop() -> Result<(), ServiceError> {
     Ok(())
 }
 
-/// Запускає встановлену службу (після оновлення exe).
+/// Запускає встановлену службу (після оновлення exe). Заодно знімає відкладений автозапуск, який
+/// ставили версії до 3д, — щоб оновлення інсталятором його прибрало без переустановлення.
 pub fn start() -> Result<(), ServiceError> {
     let mgr =
         ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT).map_err(os)?;
     let Ok(svc) = mgr.open_service(
         SERVICE_NAME,
-        ServiceAccess::QUERY_STATUS | ServiceAccess::START,
+        ServiceAccess::QUERY_STATUS | ServiceAccess::START | ServiceAccess::CHANGE_CONFIG,
     ) else {
         return Ok(());
     };
+    if let Err(e) = svc.set_delayed_auto_start(false) {
+        tracing::warn!("служба: не вдалося зняти відкладений автозапуск: {e}");
+    }
     if svc
         .query_status()
         .is_ok_and(|s| s.current_state == ServiceState::Stopped)
@@ -180,7 +184,9 @@ pub fn install(sid: &str) -> Result<std::path::PathBuf, ServiceError> {
     let _ = svc.set_description(
         "OptimaX: вимірювання для діагностики ігор. Встановлено за згодою користувача; видаляється в «Налаштуваннях» OptimaX.",
     );
-    let _ = svc.set_delayed_auto_start(true);
+    // Звичайний автозапуск (не відкладений): служба готова до входу в Windows, тож програма,
+    // відкрита одразу після входу, не просить UAC. Поки з'єднання немає, служба лише чекає.
+    let _ = svc.set_delayed_auto_start(false);
     svc.start(&[] as &[&std::ffi::OsStr]).map_err(os)?;
     if !wait_for(&svc, ServiceState::Running) {
         return Err(os("служба не запустилась (див. service.log)"));

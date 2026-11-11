@@ -20,7 +20,7 @@ use optimax_gamemode::{
     end_session, preview_changes, session_plan, start_session, GameProfile, ProfileStore,
     ProfileTest, SessionReport,
 };
-use optimax_tweaks::{Desired, Plan, TweakError, TweakId};
+use optimax_tweaks::{Changes, Desired, Plan, TweakError, TweakId};
 
 /// Без зміни.
 const OFF: Variant = 0;
@@ -140,7 +140,7 @@ pub fn ab_start(
         ));
     }
     let desired: Desired = desired.into();
-    let plan = lock(&state.engine).plan(&desired)?;
+    let plan = lock(&state.changes).plan(&desired)?;
     if plan.is_noop() {
         return Err(CmdError::Failed(
             "система вже у стані «після» — порівнювати нічого".into(),
@@ -202,7 +202,7 @@ pub fn ab_start_profile(
         .ok_or_else(|| CmdError::NotFound(format!("немає профілю для {exe}")))?;
     let game = running_game(&profile.exe)?;
     let session_plan = session_plan(&PROCESSES, &profile, &game)?;
-    let changes = preview_changes(&lock(&state.engine), &session_plan);
+    let changes = preview_changes(&mut *lock(&state.changes), &session_plan);
     if changes.is_empty() {
         return Err(CmdError::Failed(
             "профіль зараз нічого не змінює для цієї гри — порівнювати нічого".into(),
@@ -252,7 +252,7 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
                 return Err(CmdError::Failed("прогін уже йде".into()));
             }
             let arm = next_variant(&s.runs, s.policy.variants);
-            let mut engine = lock(&state.engine);
+            let mut engine = lock(&state.changes);
             let confirm = FlagConfirm::new(allow_without_restore_point);
             let cancelled = |confirm: &FlagConfirm| {
                 confirm.reason().map_or(
@@ -283,7 +283,7 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
                 (AbSubject::Profile { profile, session }, ON) if session.is_none() => {
                     // Гру могли перезапустити між прогонами — шукаємо процес щоразу.
                     let game = running_game(&profile.exe)?;
-                    match start_session(&mut engine, &PROCESSES, &MEMORY, profile, &game, &confirm)
+                    match start_session(&mut *engine, &PROCESSES, &MEMORY, profile, &game, &confirm)
                     {
                         Ok(report) => *session = Some(report),
                         Err(TweakError::Cancelled) => return Err(cancelled(&confirm)),
@@ -292,7 +292,7 @@ pub async fn ab_run_next(app: AppHandle, allow_without_restore_point: bool) -> C
                 }
                 (AbSubject::Profile { session, .. }, OFF) => {
                     if let Some(report) = session.take() {
-                        end_session(&mut engine, &report);
+                        end_session(&mut *engine, &report);
                     }
                 }
                 _ => {}
@@ -349,7 +349,7 @@ pub fn ab_finish(state: State<'_, AppState>, keep: bool) -> CmdResult<AbFinal> {
             // Залишаємо лише виміряний приріст (CLAUDE.md, розд. 6).
             let kept = keep && effect == Outcome::Better;
             if let (false, Some(id)) = (kept, *active_entry) {
-                lock(&state.engine).rollback(id)?;
+                lock(&state.changes).rollback(id)?;
             }
             kept
         }
@@ -357,7 +357,7 @@ pub fn ab_finish(state: State<'_, AppState>, keep: bool) -> CmdResult<AbFinal> {
             // Профіль сам діє лише в режимі гри: після тесту все повертаємо, а результат
             // зберігаємо в профіль, щоб його було видно на екрані «Ігри».
             if let Some(report) = session {
-                end_session(&mut lock(&state.engine), report);
+                end_session(&mut *lock(&state.changes), report);
             }
             let mut updated = (**profile).clone();
             let delta = |e: Option<&optimax_experiment::Estimate>| e.map_or(0.0, |e| e.delta_pct);
@@ -398,12 +398,12 @@ pub fn cancel_session(state: &AppState) -> CmdResult<()> {
             AbSubject::Tweak {
                 active_entry: Some(id),
                 ..
-            } => lock(&state.engine).rollback(*id)?,
+            } => lock(&state.changes).rollback(*id)?,
             AbSubject::Profile {
                 session: Some(report),
                 ..
             } => {
-                end_session(&mut lock(&state.engine), report);
+                end_session(&mut *lock(&state.changes), report);
             }
             _ => {}
         }

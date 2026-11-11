@@ -20,7 +20,9 @@ use windows::Win32::Security::{
     TOKEN_USER,
 };
 use windows::Win32::Storage::FileSystem::CreateDirectoryW;
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 
 /// Спільна тека програми: SYSTEM і Адміністратори — повний доступ, більше нікого.
 const SDDL_APP: &str = "O:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
@@ -59,9 +61,26 @@ pub(super) fn local_app_data() -> Option<PathBuf> {
 
 /// SID користувача процесу у вигляді `S-1-5-21-…`.
 pub(super) fn user_sid() -> Result<String, CoreError> {
+    // SAFETY: псевдодескриптор поточного процесу закривати не треба.
+    token_sid(unsafe { GetCurrentProcess() })
+}
+
+/// SID користувача процесу `pid` (служба як SYSTEM може відкрити будь-який процес користувача).
+pub(super) fn process_sid(pid: u32) -> Result<String, CoreError> {
+    // SAFETY: звичайний виклик; дескриптор закривається нижче один раз.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+        .map_err(|e| os_err("OpenProcess", &e))?;
+    let sid = token_sid(process);
+    // SAFETY: дескриптор отримано від OpenProcess, закривається один раз.
+    let _ = unsafe { CloseHandle(process) };
+    sid
+}
+
+/// SID користувача з токена процесу.
+fn token_sid(process: HANDLE) -> Result<String, CoreError> {
     let mut token = HANDLE::default();
-    // SAFETY: псевдодескриптор поточного процесу; `token` — вихідний параметр.
-    unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }
+    // SAFETY: дескриптор процесу живий на час виклику; `token` — вихідний параметр.
+    unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) }
         .map_err(|e| os_err("OpenProcessToken", &e))?;
     let result = (|| {
         let mut len = 0u32;
@@ -93,11 +112,7 @@ pub(super) fn user_sid() -> Result<String, CoreError> {
     let _ = unsafe { CloseHandle(token) };
     let sid = result?;
     // Ім'я теки — лише SID: жодних роздільників чи `..`.
-    if sid.starts_with("S-")
-        && sid
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == '-' || c == 'S')
-    {
+    if super::is_plain_sid(&sid) {
         Ok(sid)
     } else {
         Err(CoreError::InvalidData(format!("неочікуваний SID: {sid}")))
@@ -217,11 +232,15 @@ pub(super) fn shared_dir(base: &Path, name: &str) -> Result<PathBuf, CoreError> 
 }
 
 pub(super) fn secure_dir_on(base: &Path) -> Result<PathBuf, CoreError> {
+    secure_dir_for(base, &user_sid()?)
+}
+
+/// `<base>\OptimaX\<sid>` з читанням для цього SID (SID уже перевірено `is_plain_sid`).
+pub(super) fn secure_dir_for(base: &Path, sid: &str) -> Result<PathBuf, CoreError> {
     let app = base.join(APP_DIR);
     ensure(&app, SDDL_APP)?;
-    let sid = user_sid()?;
-    let user = app.join(&sid);
-    ensure(&user, &sddl_user(&sid))?;
+    let user = app.join(sid);
+    ensure(&user, &sddl_user(sid))?;
     Ok(user)
 }
 
@@ -233,6 +252,7 @@ mod tests {
     fn current_user_sid_is_plain() {
         let sid = user_sid().unwrap();
         assert!(sid.starts_with("S-1-"), "{sid}");
+        assert_eq!(process_sid(std::process::id()).unwrap(), sid);
     }
 
     /// Довгий шлях без префікса `\\?\` (для `mklink` і порівнянь).

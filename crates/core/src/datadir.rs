@@ -56,6 +56,38 @@ pub fn shared_dir(name: &str) -> Result<PathBuf, CoreError> {
     imp::shared_dir(&imp::program_data()?, name)
 }
 
+/// Захищена тека даних **заданого** користувача `%ProgramData%\OptimaX\<SID>` (для служби, що
+/// працює як SYSTEM: тека береться з SID клієнта, а не своя). Створює й перевіряє, як
+/// [`data_dir`]; користувач із цим SID має лише читання.
+pub fn data_dir_for(sid: &str) -> Result<PathBuf, CoreError> {
+    if !is_plain_sid(sid) {
+        return Err(CoreError::InvalidData(format!("неочікуваний SID: {sid}")));
+    }
+    imp::secure_dir_for(&imp::program_data()?, sid)
+}
+
+/// Рядок схожий на SID (`S-1-…`, лише цифри й дефіси): годиться як ім'я теки й шлях у
+/// `HKEY_USERS` без роздільників і `..`.
+pub fn is_plain_sid(sid: &str) -> bool {
+    sid.len() <= 184
+        && sid.strip_prefix("S-1-").is_some_and(|rest| {
+            !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit() || c == '-')
+        })
+}
+
+/// SID користувача, від імені якого працює процес `pid` (для служби: хто під'єднався).
+pub fn process_user_sid(pid: u32) -> Result<String, CoreError> {
+    #[cfg(windows)]
+    {
+        imp::process_sid(pid)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        Err(CoreError::Unsupported("SID процесу"))
+    }
+}
+
 /// SID користувача поточного процесу (`S-1-5-21-…`; той самий і з правами адміністратора).
 pub fn current_user_sid() -> Result<String, CoreError> {
     #[cfg(windows)]
@@ -143,6 +175,10 @@ mod imp {
         Err(CoreError::Unsupported("тека даних OptimaX"))
     }
 
+    pub(super) fn secure_dir_for(_base: &Path, _sid: &str) -> Result<PathBuf, CoreError> {
+        Err(CoreError::Unsupported("тека даних OptimaX"))
+    }
+
     pub(super) fn shared_dir(_base: &Path, _name: &str) -> Result<PathBuf, CoreError> {
         Err(CoreError::Unsupported("тека даних OptimaX"))
     }
@@ -159,5 +195,24 @@ mod tests {
     #[test]
     fn untrusted_name_keeps_original_visible() {
         assert_eq!(untrusted_name("OptimaX", 5), "OptimaX.untrusted-5");
+    }
+
+    #[test]
+    fn plain_sids_only() {
+        assert!(is_plain_sid(
+            "S-1-5-21-1004336348-1177238915-682003330-1001"
+        ));
+        assert!(is_plain_sid("S-1-5-18"));
+        for bad in [
+            "",
+            "S-1-",
+            "S-1-5\\..",
+            "S-1-5-21/x",
+            "..",
+            "s-1-5-18",
+            "S-1-5-18 ",
+        ] {
+            assert!(!is_plain_sid(bad), "{bad}");
+        }
     }
 }

@@ -12,6 +12,7 @@ optimax-core.workspace = true
 optimax-metrics.workspace = true
 optimax-frametime.workspace = true
 optimax-service.workspace = true
+optimax-tweaks.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

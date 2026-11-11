@@ -9,7 +9,7 @@ use optimax_core::service::WinServices;
 use optimax_frametime::{BundledPresentMon, CancelToken, RecordProgress};
 use optimax_metrics::Sampler;
 use optimax_tweaks::restore::WinRestorePoint;
-use optimax_tweaks::{Confirm, Engine, FileStore, Plan};
+use optimax_tweaks::{Confirm, Plan};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
@@ -62,8 +62,8 @@ impl Confirm for FlagConfirm {
 
 /// Стан застосунку.
 pub struct AppState {
-    /// Рушій змін (спільний для UI і режиму гри).
-    pub engine: Arc<Mutex<Engine<'static>>>,
+    /// Зміни системи — через службу або рушій у процесі (спільні для UI, A/B і режиму гри).
+    pub changes: Arc<Mutex<crate::changes::ChangeHub>>,
     /// Плани, показані користувачу: застосувати можна лише план із цього списку.
     pub plans: Mutex<HashMap<u64, Plan>>,
     /// Лічильник номерів планів.
@@ -123,16 +123,12 @@ pub struct AppState {
 pub const LOG_TAIL: usize = 1000;
 
 impl AppState {
-    /// Створює стан. Журнал змін — `journal.json` у захищеній теці даних.
+    /// Створює стан. Журнал змін — `journal.json` у захищеній теці даних (відкривається при
+    /// першій зміні: службою або рушієм у процесі).
     pub fn new() -> anyhow::Result<Self> {
-        let store = FileStore::default_location()?;
-        // Сховище журналу живе весь час роботи програми — свідомо «відпускаємо» один раз.
-        let store: &'static FileStore = Box::leak(Box::new(store));
-        let engine = Engine::new(&REGISTRY, &POWER, &RESTORE, store)?
-            .with_processes(&PROCESSES)
-            .with_services(&SERVICES);
+        let link = Arc::new(crate::link::Link::new());
         Ok(Self {
-            engine: Arc::new(Mutex::new(engine)),
+            changes: Arc::new(Mutex::new(crate::changes::ChangeHub::new(link.clone()))),
             plans: Mutex::new(HashMap::new()),
             next_plan_id: Mutex::new(1),
             metrics: Mutex::new(None),
@@ -158,7 +154,7 @@ impl AppState {
             last_diagnosis: Mutex::new(None),
             log_tail: Mutex::new(VecDeque::with_capacity(LOG_TAIL)),
             processes: Mutex::new(None),
-            link: Arc::new(crate::link::Link::new()),
+            link,
         })
     }
 

@@ -362,6 +362,7 @@ fn pending_entry_after_crash_is_rolled_back() {
             created_unix: 0,
             state: EntryState::Pending,
             restore_point: None,
+            client_pid: None,
         }])
         .unwrap();
     reg.write_value(
@@ -398,6 +399,7 @@ fn pending_entry_that_never_happened_is_marked_failed() {
             created_unix: 0,
             state: EntryState::Pending,
             restore_point: None,
+            client_pid: None,
         }])
         .unwrap();
     let mut e = Engine::new(&reg, &power, &restore, &store).unwrap();
@@ -702,6 +704,7 @@ mod forged_journal {
             created_unix: 0,
             state,
             restore_point: None,
+            client_pid: None,
         }
     }
 
@@ -873,4 +876,78 @@ mod forged_journal {
             assert!(!is_known_target(e), "{}", e.target.location());
         }
     }
+}
+
+/// Живлення з підтримкою оверлейного режиму (MemPower його не має).
+struct OverlayPower(MemPower, std::sync::Mutex<Option<String>>);
+
+impl PowerApi for OverlayPower {
+    fn active_scheme(&self) -> Result<String, CoreError> {
+        self.0.active_scheme()
+    }
+    fn set_active_scheme(&self, guid: &str) -> Result<(), CoreError> {
+        self.0.set_active_scheme(guid)
+    }
+    fn schemes(&self) -> Result<Vec<optimax_core::power::PowerScheme>, CoreError> {
+        self.0.schemes()
+    }
+    fn overlay_supported(&self) -> bool {
+        true
+    }
+    fn overlay_scheme(&self) -> Result<Option<String>, CoreError> {
+        Ok(self.1.lock().unwrap().clone())
+    }
+    fn set_overlay_scheme(&self, guid: Option<&str>) -> Result<(), CoreError> {
+        *self.1.lock().unwrap() = guid.map(str::to_string);
+        Ok(())
+    }
+}
+
+#[test]
+fn power_mode_only_known_overlays() {
+    use optimax_core::power::overlay_guids as og;
+    let reg = MemRegistry::new();
+    let power = OverlayPower(MemPower::new(guids::BALANCED), Default::default());
+    let restore = CountingRestore::ok();
+    let store = MemStore::new();
+    let mut e = Engine::new(&reg, &power, &restore, &store).unwrap();
+    // Довільний GUID — не наш режим (служба виконує запити програми без прав).
+    let bad = e.plan(&Desired::PowerMode(Some(guids::HIGH_PERFORMANCE.into())));
+    assert!(matches!(bad, Err(TweakError::Forbidden(_))), "{bad:?}");
+    let plan = e
+        .plan(&Desired::PowerMode(Some(
+            og::BEST_PERFORMANCE.to_uppercase(),
+        )))
+        .unwrap();
+    let out = e.apply(&plan, &Answer(false)).unwrap();
+    assert_eq!(
+        power.overlay_scheme().unwrap().as_deref(),
+        Some(og::BEST_PERFORMANCE)
+    );
+    e.rollback(out.entry_ids[0]).unwrap();
+    assert_eq!(power.overlay_scheme().unwrap(), None);
+}
+
+#[test]
+fn reload_sees_journal_written_by_another_writer_and_reset_session_asks_again() {
+    let reg = registry_with_gamebar(None);
+    let power = MemPower::new(guids::BALANCED);
+    let restore = CountingRestore::ok();
+    let store = MemStore::new();
+    let mut e = Engine::new(&reg, &power, &restore, &store).unwrap();
+    e.set_client(Some(42));
+    let plan = e.plan(&Desired::GameMode(false)).unwrap();
+    e.apply(&plan, &Answer(false)).unwrap();
+    assert_eq!(store.snapshot()[0].client_pid, Some(42));
+    // Інший процес відкотив зміну й зберіг журнал.
+    let mut other = Engine::new(&reg, &power, &restore, &store).unwrap();
+    other.rollback_all();
+    assert_eq!(e.active().count(), 1);
+    e.reload().unwrap();
+    assert_eq!(e.active().count(), 0);
+    // Нова сесія — нова точка відновлення перед першою зміною.
+    e.reset_session();
+    let plan = e.plan(&Desired::GameMode(false)).unwrap();
+    let out = e.apply(&plan, &Answer(false)).unwrap();
+    assert!(out.restore_point.is_some());
 }

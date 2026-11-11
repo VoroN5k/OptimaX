@@ -13,7 +13,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use self::windows::WinRegistry;
+pub use self::windows::{WinRegistry, WinUserRegistry};
 
 /// Корінь реєстру.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

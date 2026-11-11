@@ -9,6 +9,7 @@ use crate::journal::{EntryState, JournalEntry, JournalStore};
 use crate::restore::{RestorePointApi, RestorePointStatus};
 use crate::startup::{self, exe_from_command, is_plain_file_name, is_system_path, StartupSource};
 use crate::TweakError;
+use optimax_core::memory::MemoryApi;
 use optimax_core::power::PowerApi;
 use optimax_core::process::{is_protected_process, PriorityClass, ProcessApi};
 use optimax_core::registry::{RegHive, RegValue, RegistryWriteApi};
@@ -32,7 +33,7 @@ pub trait Confirm {
 }
 
 /// Результат застосування.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ApplyOutcome {
     /// Номери записів журналу.
     pub entry_ids: Vec<u64>,
@@ -41,7 +42,7 @@ pub struct ApplyOutcome {
 }
 
 /// Результат масового відкату.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RollbackSummary {
     /// Відкочені записи.
     pub rolled_back: Vec<u64>,
@@ -110,8 +111,10 @@ pub struct Engine<'a> {
     store: &'a dyn JournalStore,
     processes: Option<&'a dyn ProcessApi>,
     services: Option<&'a dyn ServiceApi>,
+    memory: Option<&'a dyn MemoryApi>,
     entries: Vec<JournalEntry>,
     session_restore: Option<RestorePointStatus>,
+    client_pid: Option<u32>,
 }
 
 impl<'a> Engine<'a> {
@@ -129,9 +132,36 @@ impl<'a> Engine<'a> {
             store,
             processes: None,
             services: None,
+            memory: None,
             entries: store.load()?,
             session_restore: None,
+            client_pid: None,
         })
+    }
+
+    /// Дозволяє очищати standby-пам'ять ([`Engine::purge_standby`]).
+    #[must_use]
+    pub fn with_memory(mut self, memory: &'a dyn MemoryApi) -> Self {
+        self.memory = Some(memory);
+        self
+    }
+
+    /// Перечитує журнал із диска (його могла змінити програма без служби або служба). Точка
+    /// відновлення сесії зберігається.
+    pub fn reload(&mut self) -> Result<(), TweakError> {
+        self.entries = self.store.load()?;
+        Ok(())
+    }
+
+    /// Нова сесія: перед наступною зміною знову створюється точка відновлення (служба живе
+    /// довше за програму, а сесія — це один запуск програми).
+    pub fn reset_session(&mut self) {
+        self.session_restore = None;
+    }
+
+    /// PID програми, від імені якої служба робить наступні зміни (пишеться в журнал).
+    pub fn set_client(&mut self, pid: Option<u32>) {
+        self.client_pid = pid;
     }
 
     /// Дозволяє змінювати пріоритети процесів.
@@ -156,6 +186,16 @@ impl<'a> Engine<'a> {
     fn services(&self) -> Result<&'a dyn ServiceApi, TweakError> {
         self.services
             .ok_or(TweakError::Unavailable("керування службами"))
+    }
+
+    /// Очищає standby-список пам'яті (разова дія, у журналі без відкату).
+    pub fn purge_standby(&mut self) -> Result<u64, TweakError> {
+        let memory = self
+            .memory
+            .ok_or(TweakError::Unavailable("керування пам'яттю"))?;
+        self.perform(TweakId::StandbyPurge, SettingTarget::StandbyList, || {
+            memory.purge_standby()
+        })
     }
 
     /// Усі записи журналу.
@@ -367,6 +407,16 @@ impl<'a> Engine<'a> {
                 }
                 let current = self.power.overlay_scheme()?;
                 let normalized = guid.as_deref().map(|g| g.trim().to_ascii_lowercase());
+                if let Some(g) = &normalized {
+                    use optimax_core::power::overlay_guids as og;
+                    if ![og::ECONOMY, og::BETTER_PERFORMANCE, og::BEST_PERFORMANCE]
+                        .contains(&g.as_str())
+                    {
+                        return Err(TweakError::Forbidden(format!(
+                            "{g}: невідомий режим живлення"
+                        )));
+                    }
+                }
                 if current == normalized {
                     Vec::new()
                 } else {
@@ -577,6 +627,7 @@ impl<'a> Engine<'a> {
             created_unix: now_unix(),
             state: EntryState::Pending,
             restore_point: self.session_restore.clone(),
+            client_pid: self.client_pid,
         });
         self.save()?;
         tracing::info!(
@@ -623,6 +674,7 @@ impl<'a> Engine<'a> {
             created_unix: now_unix(),
             state: EntryState::Pending,
             restore_point: self.session_restore.clone(),
+            client_pid: self.client_pid,
         });
         self.save()?;
         let result = action();
@@ -761,6 +813,54 @@ impl<'a> Engine<'a> {
             self.save()?;
         }
         Ok(pending.len())
+    }
+}
+
+/// Зміни системи: рушій у цьому процесі ([`Engine`]) або служба OptimaX, що тримає свій рушій.
+/// Ті самі дії, що й в [`Engine`]; усі — `&mut self`, бо представник служби веде з'єднання.
+pub trait Changes: Send {
+    /// План (нічого не змінює).
+    fn plan(&mut self, desired: &Desired) -> Result<Plan, TweakError>;
+    /// Застосовує план, показаний користувачу.
+    fn apply(&mut self, plan: &Plan, confirm: &dyn Confirm) -> Result<ApplyOutcome, TweakError>;
+    /// Очищає standby-список пам'яті.
+    fn purge_standby(&mut self) -> Result<u64, TweakError>;
+    /// Усі записи журналу.
+    fn entries(&mut self) -> Result<Vec<JournalEntry>, TweakError>;
+    /// Відкочує один запис.
+    fn rollback(&mut self, id: u64) -> Result<(), TweakError>;
+    /// Відкочує задані записи, від найновішого.
+    fn rollback_ids(&mut self, ids: &[u64]) -> RollbackSummary;
+    /// Відкочує всі діючі зміни.
+    fn rollback_all(&mut self) -> RollbackSummary;
+    /// Доводить до кінця записи, що лишилися після збою.
+    fn recover_pending(&mut self) -> Result<usize, TweakError>;
+}
+
+impl Changes for Engine<'_> {
+    fn plan(&mut self, desired: &Desired) -> Result<Plan, TweakError> {
+        Engine::plan(self, desired)
+    }
+    fn apply(&mut self, plan: &Plan, confirm: &dyn Confirm) -> Result<ApplyOutcome, TweakError> {
+        Engine::apply(self, plan, confirm)
+    }
+    fn purge_standby(&mut self) -> Result<u64, TweakError> {
+        Engine::purge_standby(self)
+    }
+    fn entries(&mut self) -> Result<Vec<JournalEntry>, TweakError> {
+        Ok(Engine::entries(self).to_vec())
+    }
+    fn rollback(&mut self, id: u64) -> Result<(), TweakError> {
+        Engine::rollback(self, id)
+    }
+    fn rollback_ids(&mut self, ids: &[u64]) -> RollbackSummary {
+        Engine::rollback_ids(self, ids)
+    }
+    fn rollback_all(&mut self) -> RollbackSummary {
+        Engine::rollback_all(self)
+    }
+    fn recover_pending(&mut self) -> Result<usize, TweakError> {
+        Engine::recover_pending(self)
     }
 }
 

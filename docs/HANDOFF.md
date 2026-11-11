@@ -197,7 +197,10 @@ Actions (`.github/workflows/release.yml`) збирає zip, інсталятор
   `LiveHandle`).
 - **Етап 3а зроблено:** дві теки даних (`datadir::ui_dir`, `migrate::sync_ui_data`), план 3б–3д —
   розділ 14 `docs/SERVICE.md`.
-- Далі: 3б — твіки й відкат у службі.
+- **Етап 3б зроблено:** твіки, журнал і відкат через службу (`tweaks::Changes`,
+  `app::changes::ChangeHub`, `backend::changes`, `WinUserRegistry`, `Peer`), розділ 15
+  `docs/SERVICE.md`.
+- Далі: 3в — очищення в службі.
 
 ## 2u. Розширені датчики через PawnIO (2026-11-09)
 

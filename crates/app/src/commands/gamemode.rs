@@ -1,5 +1,6 @@
 //! Режим гри: профілі та фоновий стежник (подія `gamemode`).
 
+use crate::changes::ChangeHub;
 use crate::dto::{GameModeEvent, ProfilePreview, RollbackResult};
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState, FlagConfirm, MEMORY, PROCESSES};
@@ -10,7 +11,7 @@ use optimax_gamemode::{
     end_session, scan, start_session, step, GameProfile, ProfileStore, SessionReport, WatchEvent,
     WatchState,
 };
-use optimax_tweaks::{Confirm, Desired, Engine, TweakError};
+use optimax_tweaks::{Changes, Confirm, Desired, TweakError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -88,7 +89,7 @@ pub fn gamemode_start(app: AppHandle, state: State<'_, AppState>) -> CmdResult<(
         ));
     }
     let stop = Arc::new(AtomicBool::new(false));
-    let engine = state.engine.clone();
+    let engine = state.changes.clone();
     let allow = state.gamemode_allow_without_restore.clone();
     let handle = {
         let stop = stop.clone();
@@ -131,7 +132,7 @@ fn exe_path_of(pid: u32) -> Option<String> {
 /// відеокарти під час запуску гри, тож він постійний (не відкочується після сесії) і діє з
 /// наступного запуску; запис — у журналі змін («Резервні копії»).
 fn remember_path_and_gpu(
-    engine: &mut Engine<'_>,
+    engine: &mut dyn Changes,
     profile: &GameProfile,
     game: &ProcessInfo,
     confirm: &dyn Confirm,
@@ -167,8 +168,8 @@ fn remember_path_and_gpu(
     }
 }
 
-fn finish(app: &AppHandle, engine: &Mutex<Engine<'static>>, game: &str, report: &SessionReport) {
-    let result: RollbackResult = end_session(&mut lock(engine), report).into();
+fn finish(app: &AppHandle, engine: &Mutex<ChangeHub>, game: &str, report: &SessionReport) {
+    let result: RollbackResult = end_session(&mut *lock(engine), report).into();
     let _ = app.emit(
         "gamemode",
         GameModeEvent::Ended {
@@ -180,7 +181,7 @@ fn finish(app: &AppHandle, engine: &Mutex<Engine<'static>>, game: &str, report: 
 
 fn watch_loop(
     app: &AppHandle,
-    engine: &Mutex<Engine<'static>>,
+    engine: &Mutex<ChangeHub>,
     allow: &Mutex<bool>,
     profiles: &[GameProfile],
     stop: &AtomicBool,
@@ -215,7 +216,7 @@ fn watch_loop(
                 };
                 let confirm = FlagConfirm::new(allowed);
                 let result = start_session(
-                    &mut lock(engine),
+                    &mut *lock(engine),
                     &PROCESSES,
                     &MEMORY,
                     profile,
@@ -227,7 +228,7 @@ fn watch_loop(
                         waiting_confirm = None;
                         // Окремо від сесії: вибір відеокарти не відкочується після гри.
                         if let Some(t) =
-                            remember_path_and_gpu(&mut lock(engine), profile, &game, &confirm)
+                            remember_path_and_gpu(&mut *lock(engine), profile, &game, &confirm)
                         {
                             report.applied.push(t);
                         }

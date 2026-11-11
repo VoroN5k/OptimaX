@@ -24,9 +24,18 @@ const LOG_MAX: u64 = 1024 * 1024;
 
 define_windows_service!(ffi_service_main, service_main);
 
+/// Хто під'єднався: процес і його користувач (з токена процесу, не зі слів клієнта).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Peer {
+    /// PID клієнта.
+    pub pid: u32,
+    /// SID користувача клієнта (`S-1-5-21-…`).
+    pub sid: String,
+}
+
 /// Виконавець команд, крім `ping` (його служба відповідає сама). Підставляє `app`, щоб цей крейт
 /// не залежав від доменних крейтів.
-pub type Handler = Arc<dyn Fn(&Command) -> Reply + Send + Sync>;
+pub type Handler = Arc<dyn Fn(&Peer, &Command) -> Reply + Send + Sync>;
 
 /// Виконавець для `service_main`: диспетчер служб викликає звичайну функцію без стану, тож
 /// виконавець передається через статичну комірку. Записується один раз до старту диспетчера,
@@ -170,6 +179,14 @@ fn handle(mut conn: PipeStream, own_exe: &Path, started: Instant, handler: &Hand
         tracing::warn!("відхилено клієнта {pid}: {}", image.display());
         return;
     }
+    // Чий це процес — з його токена: від цього залежать тека журналу й гілка HKCU для змін.
+    let peer = match optimax_core::datadir::process_user_sid(pid) {
+        Ok(sid) => Peer { pid, sid },
+        Err(e) => {
+            tracing::warn!("клієнт {pid}: користувача не визначено: {e}");
+            return;
+        }
+    };
     let theirs: Hello = match read_frame(&mut conn) {
         Ok(h) => h,
         Err(e) => {
@@ -196,7 +213,7 @@ fn handle(mut conn: PipeStream, own_exe: &Path, started: Instant, handler: &Hand
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 uptime_s: started.elapsed().as_secs(),
             }),
-            other => handler(other),
+            other => handler(&peer, other),
         };
         if write_frame(&mut conn, &Response { id: req.id, reply }).is_err() {
             return;
@@ -225,8 +242,9 @@ mod tests {
         let server = {
             let (name, stop) = (name.clone(), stop.clone());
             std::thread::spawn(move || {
-                let handler: Handler = Arc::new(|c: &Command| match c {
+                let handler: Handler = Arc::new(|peer: &Peer, c: &Command| match c {
                     Command::CpuTemp => Reply::Json(serde_json::json!(42.5)),
+                    Command::JournalEntries => Reply::Json(serde_json::json!(peer.sid)),
                     _ => Reply::Error("не в тесті".into()),
                 });
                 listen(&name, &sddl, &exe, &stop, Instant::now(), &handler, || {
@@ -263,6 +281,17 @@ mod tests {
         .expect("cpu_temp");
         let r: Response = read_frame(&mut c).expect("відповідь");
         assert_eq!(r.reply, Reply::Json(serde_json::json!(42.5)));
+        // Виконавець знає, чий процес під'єднався (з токена).
+        write_frame(
+            &mut c,
+            &Request {
+                id: 7,
+                command: Command::JournalEntries,
+            },
+        )
+        .expect("journal");
+        let r: Response = read_frame(&mut c).expect("відповідь");
+        assert_eq!(r.reply, Reply::Json(serde_json::json!(sid)));
         drop(c);
 
         // Другий сервер з тим самим іменем як «перший екземпляр» не створиться.

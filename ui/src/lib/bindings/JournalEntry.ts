@@ -39,4 +39,9 @@ state: EntryState,
 /**
  * Точка відновлення, створена в цій сесії перед першою зміною.
  */
-restore_point: RestorePointStatus | null, };
+restore_point: RestorePointStatus | null, 
+/**
+ * PID програми, що попросила зміну через службу OptimaX (`None` — зміну зробила сама
+ * програма, без служби).
+ */
+client_pid: number | null, };

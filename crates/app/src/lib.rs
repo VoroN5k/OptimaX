@@ -4,6 +4,8 @@
 //! Бінарник (`main.rs`) лише викликає [`run`]; маніфест адміністратора вбудовується лише в нього.
 
 #[cfg(windows)]
+mod changes;
+#[cfg(windows)]
 mod commands;
 #[cfg(windows)]
 mod dto;
@@ -50,13 +52,14 @@ mod app {
 
     /// Після аварійного завершення: доводить незавершені зміни й повертає залишки режиму гри.
     fn startup_recovery(state: &AppState) {
-        let mut engine = lock(&state.engine);
+        use optimax_tweaks::Changes;
+        let mut engine = lock(&state.changes);
         let mut report = StartupReport::default();
         match engine.recover_pending() {
             Ok(n) => report.recovered_pending = u32::try_from(n).unwrap_or(u32::MAX),
             Err(e) => report.error = Some(e.to_string()),
         }
-        report.restored_gamemode = restore_leftovers(&mut engine).into();
+        report.restored_gamemode = restore_leftovers(&mut *engine).into();
         if report.recovered_pending > 0 || !report.restored_gamemode.rolled_back.is_empty() {
             tracing::warn!(
                 "відновлення після збою: оброблено {} записів, повернуто змін режиму гри: {}",

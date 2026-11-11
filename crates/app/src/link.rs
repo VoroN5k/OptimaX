@@ -62,7 +62,7 @@ impl Link {
         v
     }
 
-    fn forget_service(&self, why: &dyn std::fmt::Display) {
+    pub(crate) fn forget_service(&self, why: &dyn std::fmt::Display) {
         tracing::warn!("служба OptimaX не відповіла, читаю сам: {why}");
         *self.usable.lock().unwrap_or_else(PoisonError::into_inner) = Some((Instant::now(), false));
     }

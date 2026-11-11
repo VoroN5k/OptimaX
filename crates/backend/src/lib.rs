@@ -1,10 +1,12 @@
 //! Бекенд OptimaX без Tauri (етап 2 з `docs/SERVICE.md`): те, що потребує прав адміністратора й
 //! тому виконується в службі, а без служби — у самій програмі.
 //!
-//! Датчики CPU через PawnIO ([`sensors`]), запис гри ([`record`]), стеження й оверлей ([`watch`]).
+//! Датчики CPU через PawnIO ([`sensors`]), запис гри ([`record`]), стеження й оверлей ([`watch`]),
+//! зміни системи з журналом і відкатом ([`changes`]).
 
 #![forbid(unsafe_code)]
 
+pub mod changes;
 pub mod record;
 pub mod sensors;
 pub mod watch;
@@ -14,6 +16,7 @@ pub use self::service::handler;
 
 #[cfg(windows)]
 mod service {
+    use crate::changes::ChangesHost;
     use crate::record::{RecordSpec, Recorder};
     use crate::sensors::SensorCache;
     use crate::watch::{LiveHost, WatchHost, WatchSpec};
@@ -21,7 +24,7 @@ mod service {
     use optimax_frametime::watch::Watcher;
     use optimax_frametime::{record_in_session, BundledPresentMon, FrametimeError};
     use optimax_metrics::{CpuTempSource, GpuApi, NvmlGpu, SysinfoSource};
-    use optimax_service::host::Handler;
+    use optimax_service::host::{Handler, Peer};
     use optimax_service::protocol::{Command, Reply};
     use std::sync::{Arc, OnceLock};
 
@@ -35,6 +38,7 @@ mod service {
         recorder: Recorder,
         watch: WatchHost,
         live: LiveHost,
+        changes: ChangesHost,
         presentmon: Arc<OnceLock<BundledPresentMon>>,
     }
 
@@ -140,9 +144,20 @@ mod service {
             recorder: Recorder::new(),
             watch: WatchHost::new(),
             live: LiveHost::new(),
+            changes: ChangesHost::new(),
             presentmon: Arc::new(OnceLock::new()),
         };
-        Arc::new(move |cmd: &Command| match cmd {
+        Arc::new(move |peer: &Peer, cmd: &Command| {
+            // Зміни системи — від імені того, хто під'єднався (його журнал і гілка HKCU).
+            if let Some(r) = b.changes.handle(peer, cmd) {
+                return r;
+            }
+            other(&b, cmd)
+        })
+    }
+
+    fn other(b: &Backend, cmd: &Command) -> Reply {
+        match cmd {
             Command::Sensors => json(&b.sensors.read()),
             Command::CpuTemp => json(&b.sensors.temp()),
             Command::RecordStart { spec } => b.record_start(spec),
@@ -181,6 +196,14 @@ mod service {
             }
             // `ping` служба відповідає сама.
             Command::Ping => Reply::Error("ping обробляє служба".into()),
-        })
+            // Зміни обробляє `ChangesHost` вище.
+            Command::TweakPlan { .. }
+            | Command::TweakApply { .. }
+            | Command::PurgeStandby
+            | Command::JournalEntries
+            | Command::JournalRollback { .. }
+            | Command::JournalRollbackAll
+            | Command::JournalRecover => Reply::Error("журнал змін недоступний".into()),
+        }
     }
 }

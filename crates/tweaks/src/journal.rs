@@ -53,6 +53,10 @@ pub struct JournalEntry {
     pub state: EntryState,
     /// Точка відновлення, створена в цій сесії перед першою зміною.
     pub restore_point: Option<RestorePointStatus>,
+    /// PID програми, що попросила зміну через службу OptimaX (`None` — зміну зробила сама
+    /// програма, без служби).
+    #[serde(default)]
+    pub client_pid: Option<u32>,
 }
 
 /// Сховище журналу.
@@ -169,6 +173,7 @@ mod tests {
             created_unix: 1_700_000_000,
             state: EntryState::Applied,
             restore_point: Some(RestorePointStatus::Created { sequence: 42 }),
+            client_pid: None,
         }
     }
 

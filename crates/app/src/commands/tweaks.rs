@@ -4,7 +4,7 @@ use crate::dto::{ApplyResult, PlanHandle, PowerSchemes, RollbackResult, UiDesire
 use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState, FlagConfirm, POWER};
 use optimax_core::power::PowerApi;
-use optimax_tweaks::{JournalEntry, TweakError};
+use optimax_tweaks::{Changes, JournalEntry, TweakError};
 use tauri::State;
 
 /// Схеми живлення в системі й активна схема.
@@ -22,7 +22,7 @@ pub fn tweak_plan(state: State<'_, AppState>, desired: UiDesired) -> CmdResult<P
     if let UiDesired::StartupApp { source, name, .. } = &desired {
         super::startup::validate(*source, name)?;
     }
-    let plan = lock(&state.engine).plan(&desired.into())?;
+    let plan = lock(&state.changes).plan(&desired.into())?;
     let mut next = lock(&state.next_plan_id);
     let id = *next;
     *next += 1;
@@ -43,7 +43,7 @@ pub fn tweak_apply(
         .cloned()
         .ok_or_else(|| CmdError::NotFound(format!("план #{plan_id} — переглянь зміни ще раз")))?;
     let confirm = FlagConfirm::new(allow_without_restore_point);
-    let result = lock(&state.engine).apply(&plan, &confirm);
+    let result = lock(&state.changes).apply(&plan, &confirm);
     match result {
         Ok(out) => {
             lock(&state.plans).remove(&plan_id);
@@ -62,18 +62,18 @@ pub fn tweak_apply(
 
 /// Журнал змін (найновіші — останні).
 #[tauri::command]
-pub fn journal_entries(state: State<'_, AppState>) -> Vec<JournalEntry> {
-    lock(&state.engine).entries().to_vec()
+pub fn journal_entries(state: State<'_, AppState>) -> CmdResult<Vec<JournalEntry>> {
+    Ok(lock(&state.changes).entries()?)
 }
 
 /// Відкочує один запис.
 #[tauri::command]
 pub fn journal_rollback(state: State<'_, AppState>, id: u64) -> CmdResult<()> {
-    Ok(lock(&state.engine).rollback(id)?)
+    Ok(lock(&state.changes).rollback(id)?)
 }
 
 /// Відкочує всі діючі зміни.
 #[tauri::command]
 pub fn journal_rollback_all(state: State<'_, AppState>) -> RollbackResult {
-    lock(&state.engine).rollback_all().into()
+    lock(&state.changes).rollback_all().into()
 }

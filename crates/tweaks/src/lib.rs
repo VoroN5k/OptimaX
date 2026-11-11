@@ -19,7 +19,7 @@ pub mod startup;
 
 pub use catalog::{Desired, TweakId, TweakInfo};
 pub use change::{Plan, PlannedChange, SettingTarget, SettingValue};
-pub use engine::{ApplyOutcome, Confirm, Engine};
+pub use engine::{ApplyOutcome, Changes, Confirm, Engine, RollbackSummary};
 pub use journal::{EntryState, FileStore, JournalEntry, JournalStore, MemStore};
 pub use restore::{RestorePointApi, RestorePointStatus};
 
@@ -77,4 +77,7 @@ pub enum TweakError {
     /// Помилка журналу.
     #[error("журнал змін: {0}")]
     Journal(String),
+    /// Служба OptimaX відмовила (текст її рушія) або не відповіла.
+    #[error("{0}")]
+    Remote(String),
 }

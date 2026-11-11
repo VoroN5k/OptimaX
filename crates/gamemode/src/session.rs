@@ -5,9 +5,8 @@ use optimax_core::memory::MemoryApi;
 use optimax_core::process::{PriorityClass, ProcessApi, ProcessInfo};
 use optimax_core::service::ServiceState;
 use optimax_core::Text;
-use optimax_tweaks::engine::RollbackSummary;
 use optimax_tweaks::{
-    Confirm, Desired, Engine, EntryState, PlannedChange, RestorePointStatus, SettingTarget,
+    Changes, Confirm, Desired, EntryState, PlannedChange, RestorePointStatus, RollbackSummary,
     TweakError, TweakId,
 };
 
@@ -137,7 +136,7 @@ pub fn session_plan(
 
 /// Зміни, які застосує план (для показу «що зміниться»). Те, що вже в потрібному стані
 /// або не планується, просто не потрапляє в список.
-pub fn preview_changes(engine: &Engine<'_>, plan: &SessionPlan) -> Vec<PlannedChange> {
+pub fn preview_changes(engine: &mut dyn Changes, plan: &SessionPlan) -> Vec<PlannedChange> {
     plan.wanted
         .iter()
         .filter_map(|(d, _)| engine.plan(d).ok())
@@ -148,7 +147,7 @@ pub fn preview_changes(engine: &Engine<'_>, plan: &SessionPlan) -> Vec<PlannedCh
 /// Застосовує профіль до запущеної гри. Помилка окремої зміни не зупиняє решту
 /// (її видно в `skipped`); відмова користувача без точки відновлення — скасовує все.
 pub fn start_session(
-    engine: &mut Engine<'_>,
+    engine: &mut dyn Changes,
     processes: &dyn ProcessApi,
     memory: &dyn MemoryApi,
     profile: &GameProfile,
@@ -206,9 +205,7 @@ pub fn start_session(
         match memory.status() {
             Ok(status) if status.is_low() => {
                 let mib = status.available_bytes / (1024 * 1024);
-                match engine.perform(TweakId::StandbyPurge, SettingTarget::StandbyList, || {
-                    memory.purge_standby()
-                }) {
+                match engine.purge_standby() {
                     Ok(_) => report
                         .applied
                         .push(Text::new("gm.applied.standby").arg("free", mib)),
@@ -241,15 +238,23 @@ fn label_target(d: &Desired) -> String {
 }
 
 /// Повертає все, що змінила сесія.
-pub fn end_session(engine: &mut Engine<'_>, report: &SessionReport) -> RollbackSummary {
+pub fn end_session(engine: &mut dyn Changes, report: &SessionReport) -> RollbackSummary {
     engine.rollback_ids(&report.entry_ids)
 }
 
 /// Після аварійного завершення: повертає служби й пріоритети, що лишилися від режиму гри.
 /// Інші зміни користувача (схема живлення тощо) не чіпає.
-pub fn restore_leftovers(engine: &mut Engine<'_>) -> RollbackSummary {
-    let ids: Vec<u64> = engine
-        .entries()
+pub fn restore_leftovers(engine: &mut dyn Changes) -> RollbackSummary {
+    let entries = match engine.entries() {
+        Ok(e) => e,
+        Err(e) => {
+            return RollbackSummary {
+                rolled_back: Vec::new(),
+                failed: vec![(0, e.to_string())],
+            }
+        }
+    };
+    let ids: Vec<u64> = entries
         .iter()
         .filter(|e| {
             e.state == EntryState::Applied
@@ -271,6 +276,7 @@ mod tests {
     use optimax_core::registry::MemRegistry;
     use optimax_core::service::{MemServices, ServiceApi};
     use optimax_tweaks::restore::FakeRestore;
+    use optimax_tweaks::Engine;
     use optimax_tweaks::MemStore;
 
     const GIB: u64 = 1024 * 1024 * 1024;
@@ -339,9 +345,10 @@ mod tests {
         let mut engine = Engine::new(&w.reg, &w.power, &restore, &w.store)
             .unwrap()
             .with_processes(&w.procs)
-            .with_services(&w.svc);
+            .with_services(&w.svc)
+            .with_memory(&mem);
         let plan = session_plan(&w.procs, &full_profile(), &game).unwrap();
-        let preview = preview_changes(&engine, &plan);
+        let preview = preview_changes(&mut engine, &plan);
         // Гра (вище середнього), chrome (нижче середнього), WSearch (зупинити); SysMain уже
         // зупинена — її в переліку немає.
         assert_eq!(preview.len(), 3);
@@ -364,7 +371,8 @@ mod tests {
         let mut engine = Engine::new(&w.reg, &w.power, &restore, &w.store)
             .unwrap()
             .with_processes(&w.procs)
-            .with_services(&w.svc);
+            .with_services(&w.svc)
+            .with_memory(&mem);
 
         let report =
             start_session(&mut engine, &w.procs, &mem, &full_profile(), &game, &Yes).unwrap();
@@ -405,7 +413,8 @@ mod tests {
         let mut engine = Engine::new(&w.reg, &w.power, &restore, &w.store)
             .unwrap()
             .with_processes(&w.procs)
-            .with_services(&w.svc);
+            .with_services(&w.svc)
+            .with_memory(&mem);
         let mut p = GameProfile::new("game.exe");
         p.purge_standby_when_low = true;
         let r = start_session(&mut engine, &w.procs, &mem, &p, &game, &Yes).unwrap();
@@ -446,7 +455,8 @@ mod tests {
         let mut engine = Engine::new(&w.reg, &w.power, &restore, &w.store)
             .unwrap()
             .with_processes(&w.procs)
-            .with_services(&w.svc);
+            .with_services(&w.svc)
+            .with_memory(&mem);
         let r = start_session(&mut engine, &w.procs, &mem, &full_profile(), &game, &No);
         assert!(matches!(r, Err(TweakError::Cancelled)));
         assert_eq!(w.procs.priority(&game).unwrap(), PriorityClass::Normal);
@@ -465,7 +475,8 @@ mod tests {
             let mut engine = Engine::new(&w.reg, &w.power, &restore, &w.store)
                 .unwrap()
                 .with_processes(&w.procs)
-                .with_services(&w.svc);
+                .with_services(&w.svc)
+                .with_memory(&mem);
             // Зміна користувача, зроблена окремо від режиму гри.
             let plan = engine
                 .plan(&Desired::PowerScheme(guids::BALANCED.into()))
@@ -479,7 +490,8 @@ mod tests {
         let mut engine = Engine::new(&w.reg, &w.power, &restore, &w.store)
             .unwrap()
             .with_processes(&w.procs)
-            .with_services(&w.svc);
+            .with_services(&w.svc)
+            .with_memory(&mem);
         let s = restore_leftovers(&mut engine);
         assert_eq!(s.rolled_back.len(), 2);
         assert_eq!(w.svc.state("WSearch").unwrap(), ServiceState::Running);
@@ -499,6 +511,7 @@ mod localization {
     use optimax_core::service::MemServices;
     use optimax_core::Catalog;
     use optimax_tweaks::restore::FakeRestore;
+    use optimax_tweaks::Engine;
     use optimax_tweaks::MemStore;
 
     struct Yes;
@@ -539,7 +552,8 @@ mod localization {
             let mut engine = Engine::new(&reg, &power, &restore, &store)
                 .unwrap()
                 .with_processes(&procs)
-                .with_services(&svc);
+                .with_services(&svc)
+                .with_memory(&mem);
             let profile = GameProfile {
                 exe: "game.exe".into(),
                 game_priority: if high {

@@ -8,14 +8,20 @@ use optimax_core::Catalog;
 use std::collections::HashMap;
 use tauri::State;
 
-/// Версія, права адміністратора, версія PresentMon.
-#[tauri::command]
-pub fn app_info() -> AppInfo {
+/// Версія, права адміністратора, служба, версія PresentMon.
+pub fn info(link: &crate::link::Link) -> AppInfo {
     AppInfo {
         version: env!("CARGO_PKG_VERSION").into(),
         elevated: optimax_core::process::is_elevated(),
+        service: link.service_usable(),
         presentmon_version: optimax_frametime::presentmon::PRESENTMON_VERSION.into(),
     }
+}
+
+/// Відомості про програму для інтерфейсу.
+#[tauri::command]
+pub fn app_info(state: State<'_, AppState>) -> AppInfo {
+    info(&state.link)
 }
 
 /// Український каталог: інтерфейс рендерить тексти `{key, args}` сам.

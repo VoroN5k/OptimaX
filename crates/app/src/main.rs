@@ -15,6 +15,15 @@ fn main() -> anyhow::Result<()> {
         Some("--stop-service") => return Ok(optimax_service::install::stop()?),
         Some("--start-service") => return Ok(optimax_service::install::start()?),
         Some("--uninstall-service") => return Ok(optimax_service::install::uninstall()?),
+        // Встановлення служби з програми без прав: вона запускає цей exe з UAC і чекає коду.
+        Some("--install-service") => {
+            let sid = args.get(1).map(String::as_str).unwrap_or_default();
+            if let Err(e) = optimax_service::install::install(sid) {
+                optimax_core::dialog::show_error("OptimaX", &format!("Службу не встановлено: {e}"));
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
         _ => {}
     }
     optimax_app::run()

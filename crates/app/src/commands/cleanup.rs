@@ -144,9 +144,17 @@ fn failed(e: impl std::fmt::Display) -> CmdError {
     CmdError::Failed(e.to_string())
 }
 
-/// Захищена тека даних (`%ProgramData%\OptimaX\<SID>`).
+/// Захищена тека даних (`%ProgramData%\OptimaX\<SID>`) — для читання звітом. Без прав
+/// адміністратора її не створюємо й не перевіряємо (це робить служба), лише читаємо.
 pub(crate) fn data_dir() -> CmdResult<String> {
-    let dir = optimax_core::datadir::data_dir().map_err(failed)?;
+    let dir = if optimax_core::process::is_elevated() {
+        optimax_core::datadir::data_dir()
+            .map_err(failed)?
+            .to_path_buf()
+    } else {
+        optimax_core::datadir::protected_path()
+            .ok_or_else(|| failed("не знайдено %ProgramData%"))?
+    };
     path::normalize(&dir.to_string_lossy()).map_err(failed)
 }
 

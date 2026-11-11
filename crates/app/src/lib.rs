@@ -10,6 +10,8 @@ mod commands;
 #[cfg(windows)]
 mod dto;
 #[cfg(windows)]
+mod elevation;
+#[cfg(windows)]
 mod error;
 #[cfg(windows)]
 mod link;
@@ -165,14 +167,33 @@ mod app {
             .with(UiLogLayer::new(log_tx))
             .try_init();
 
-        // Без захищеної теки даних працювати не можна: журнал змін і карантин мають лежати там,
-        // куди не пише звичайний процес. Помилку показуємо, а не мовчки падаємо.
-        if let Err(e) = optimax_core::datadir::data_dir() {
-            tracing::error!("тека даних недоступна: {e}");
-            optimax_core::dialog::show_error("OptimaX", &format!("Тека даних недоступна: {e}"));
-            return Err(e.into());
+        // Служба є — працюємо без прав; немає — перезапуск з правами (UAC).
+        match crate::elevation::decide() {
+            crate::elevation::Start::Here => {}
+            crate::elevation::Start::Relaunched | crate::elevation::Start::Declined => {
+                return Ok(())
+            }
         }
-        crate::migrate::migrate_legacy();
+        let elevated = optimax_core::process::is_elevated();
+        tracing::info!(
+            "права: {}",
+            if elevated {
+                "адміністратор"
+            } else {
+                "звичайні (зміни — через службу)"
+            }
+        );
+        // З правами без захищеної теки даних працювати не можна: журнал змін і карантин мають
+        // лежати там, куди не пише звичайний процес. Помилку показуємо, а не мовчки падаємо.
+        // Без прав теку створює й пише служба.
+        if elevated {
+            if let Err(e) = optimax_core::datadir::data_dir() {
+                tracing::error!("тека даних недоступна: {e}");
+                optimax_core::dialog::show_error("OptimaX", &format!("Тека даних недоступна: {e}"));
+                return Err(e.into());
+            }
+            crate::migrate::migrate_legacy();
+        }
         crate::migrate::sync_ui_data();
         let state = AppState::new()?;
         let app = tauri::Builder::default()
@@ -323,6 +344,7 @@ mod app {
                 service::service_status,
                 service::service_install,
                 service::service_uninstall,
+                service::app_relaunch_elevated,
                 blackbox::blackbox_state,
             ])
             .build(tauri::generate_context!())?;

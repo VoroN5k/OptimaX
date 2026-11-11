@@ -1,5 +1,5 @@
-//! Служба OptimaX (етап 1): стан, встановлення за згодою, перевірка зв'язку, видалення.
-//! Поки служба нічого не робить, крім відповіді на `ping`; програма працює як раніше.
+//! Служба OptimaX: стан, встановлення за згодою, перевірка зв'язку, видалення. Програма без
+//! прав адміністратора (працює через службу) встановлює й видаляє її через копію себе з UAC.
 
 use super::blocking;
 use crate::error::{CmdError, CmdResult};
@@ -68,13 +68,32 @@ pub async fn service_status() -> CmdResult<ServiceView> {
     blocking(|| Ok(view())).await
 }
 
+/// Те саме дію виконує копія програми з правами адміністратора (запит UAC); чекаємо її коду.
+fn elevated_helper(args: &[&str]) -> CmdResult<()> {
+    use optimax_core::elevate::{is_cancelled, run_elevated};
+    let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    match run_elevated(&args, true) {
+        Ok(Some(0) | None) => Ok(()),
+        Ok(Some(code)) => Err(CmdError::Failed(format!("дію не виконано (код {code})"))),
+        Err(e) if is_cancelled(&e) => {
+            Err(CmdError::Failed("скасовано у вікні Windows (UAC)".into()))
+        }
+        Err(e) => Err(failed(e)),
+    }
+}
+
 /// Встановлює службу для поточного користувача (UI показує згоду до виклику).
 #[tauri::command]
 pub async fn service_install() -> CmdResult<ServiceView> {
     blocking(|| {
         let sid = optimax_core::datadir::current_user_sid().map_err(failed)?;
-        let exe = install::install(&sid).map_err(failed)?;
-        tracing::info!("службу OptimaX встановлено: {}", exe.display());
+        if optimax_core::process::is_elevated() {
+            let exe = install::install(&sid).map_err(failed)?;
+            tracing::info!("службу OptimaX встановлено: {}", exe.display());
+        } else {
+            elevated_helper(&["--install-service", &sid])?;
+            tracing::info!("службу OptimaX переустановлено (з UAC)");
+        }
         Ok(view())
     })
     .await
@@ -84,9 +103,29 @@ pub async fn service_install() -> CmdResult<ServiceView> {
 #[tauri::command]
 pub async fn service_uninstall() -> CmdResult<ServiceView> {
     blocking(|| {
-        install::uninstall().map_err(failed)?;
+        if optimax_core::process::is_elevated() {
+            install::uninstall().map_err(failed)?;
+        } else {
+            elevated_helper(&["--uninstall-service"])?;
+        }
         tracing::info!("службу OptimaX видалено");
         Ok(view())
     })
     .await
+}
+
+/// Перезапускає програму з правами адміністратора (служби немає, а без прав зміни системи не
+/// працюють). Після запуску копії ця завершується.
+#[tauri::command]
+pub fn app_relaunch_elevated(app: tauri::AppHandle) -> CmdResult<()> {
+    match crate::elevation::relaunch() {
+        Ok(()) => {
+            app.exit(0);
+            Ok(())
+        }
+        Err(e) if optimax_core::elevate::is_cancelled(&e) => {
+            Err(CmdError::Failed("скасовано у вікні Windows (UAC)".into()))
+        }
+        Err(e) => Err(failed(e)),
+    }
 }

@@ -13,6 +13,10 @@ version: string,
  */
 elevated: boolean, 
 /**
+ * Служба OptimaX доступна цій копії програми (зміни системи — через неї).
+ */
+service: boolean, 
+/**
  * Версія вбудованого PresentMon.
  */
 presentmon_version: string, };

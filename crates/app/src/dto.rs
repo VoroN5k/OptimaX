@@ -14,6 +14,8 @@ pub struct AppInfo {
     pub version: String,
     /// Запущено з правами адміністратора.
     pub elevated: bool,
+    /// Служба OptimaX доступна цій копії програми (зміни системи — через неї).
+    pub service: bool,
     /// Версія вбудованого PresentMon.
     pub presentmon_version: String,
 }

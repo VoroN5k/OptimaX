@@ -107,6 +107,7 @@ export const api = {
   serviceStatus: () => invoke<ServiceView>("service_status"),
   serviceInstall: () => invoke<ServiceView>("service_install"),
   serviceUninstall: () => invoke<ServiceView>("service_uninstall"),
+  relaunchElevated: () => invoke<void>("app_relaunch_elevated"),
   blackboxState: () => invoke<BlackBoxView>("blackbox_state"),
   crashReport: () => invoke<CrashReport>("crash_report"),
   hardwareInfo: () => invoke<HardwareInfo>("hardware_info"),

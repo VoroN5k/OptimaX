@@ -6,6 +6,7 @@ pub mod clock;
 pub mod datadir;
 pub mod date;
 pub mod dialog;
+pub mod elevate;
 pub mod error;
 pub mod etw;
 pub mod finding;

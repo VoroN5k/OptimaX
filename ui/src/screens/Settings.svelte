@@ -244,7 +244,7 @@
   <Card title={tk("ui.settings.about")}>
     <dl class="kv">
       <dt>{tk("ui.settings.version")}</dt><dd>{ui.info?.version ?? "—"}</dd>
-      <dt>{tk("ui.settings.rights")}</dt><dd>{ui.info?.elevated ? tk("ui.status.admin") : tk("ui.status.no_admin")}</dd>
+      <dt>{tk("ui.settings.rights")}</dt><dd>{ui.info?.elevated ? tk("ui.status.admin") : ui.info?.service ? tk("ui.status.service") : tk("ui.status.no_admin")}</dd>
       <dt>PresentMon</dt><dd>{ui.info?.presentmon_version ?? "—"}</dd>
       <dt>{tk("ui.settings.privacy")}</dt><dd>{tk("ui.settings.privacy_text")}</dd>
     </dl>

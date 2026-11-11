@@ -609,7 +609,7 @@ export const abDone: AbView = {
 
 export function defaults(): Responses {
   return {
-    app_info: { version: "0.0.0-test", elevated: true, presentmon_version: "2.6.0" },
+    app_info: { version: "0.0.0-test", elevated: true, service: false, presentmon_version: "2.6.0" },
     get_settings: structuredClone(settings),
     set_settings: null,
     startup_report: { recovered_pending: 0, restored_gamemode: { rolled_back: [], failed: [] }, error: null },

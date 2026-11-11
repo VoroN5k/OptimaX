@@ -27,7 +27,7 @@ async function boot(): Promise<void> {
     const [info, settings, startup] = await Promise.all([api.appInfo(), api.getSettings(), api.startupReport()]);
     ui.info = info;
     ui.settings = settings;
-    if (!info.elevated) logLocal("warn", tk("ui.status.no_admin_log"));
+    if (!info.elevated && !info.service) logLocal("warn", tk("ui.status.no_admin_log"));
     if (startup.recovered_pending > 0 || startup.restored_gamemode.rolled_back.length > 0) {
       logLocal(
         "warn",

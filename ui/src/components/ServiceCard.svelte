@@ -3,13 +3,14 @@
   import { api, asCmdError } from "../lib/api";
   import type { ServiceView } from "../lib/bindings/ServiceView";
   import { tk } from "../lib/i18n";
+  import { ui } from "../lib/state.svelte";
   import Button from "./Button.svelte";
   import Card from "./Card.svelte";
   import Modal from "./Modal.svelte";
   import StateView from "./StateView.svelte";
 
-  // Служба OptimaX (етап 1): стан, встановлення лише за згодою, перевірка зв'язку, видалення.
-  // Що вона вміє й чи довіряє цьому exe — вирішує бекенд.
+  // Служба OptimaX: стан, встановлення лише за згодою, перевірка зв'язку, видалення. Що вона вміє
+  // й чи довіряє цьому exe — вирішує бекенд. Без прав і без служби — перезапуск з правами.
   let view = $state<ServiceView | null>(null);
   let error = $state<string | null>(null);
   let busy = $state(false);
@@ -39,6 +40,21 @@
     removing = false;
     await run(api.serviceUninstall);
   }
+
+  async function relaunch() {
+    busy = true;
+    error = null;
+    try {
+      await api.relaunchElevated();
+    } catch (e) {
+      error = asCmdError(e).message;
+    } finally {
+      busy = false;
+    }
+  }
+
+  // Програма без прав, а служба не відповідає цій копії — зміни системи не працюватимуть.
+  const needsRights = $derived(ui.info !== null && !ui.info?.elevated && view !== null && view.ping === null);
 </script>
 
 <Card title={tk("ui.service.title")} subtitle={tk("ui.service.subtitle")}>
@@ -60,8 +76,14 @@
       {/if}
       {#if view.error}<p class="small warn">{tk("ui.service.no_link", { error: view.error })}</p>{/if}
       <p class="small dim">{tk("ui.service.stage1")}</p>
+      {#if needsRights}
+        <p class="small warn">{tk("ui.service.needs_rights")}</p>
+      {/if}
       <div class="actions">
         <Button variant="secondary" icon="refresh" loading={busy} onclick={() => run(api.serviceStatus)}>{tk("ui.service.check")}</Button>
+        {#if needsRights}
+          <Button variant="primary" disabled={busy} onclick={relaunch}>{tk("ui.service.relaunch")}</Button>
+        {/if}
         {#if view.state === "not_installed"}
           <Button variant="primary" icon="play" disabled={busy} onclick={() => (consent = true)}>{tk("ui.service.install")}</Button>
         {:else}

@@ -12,6 +12,10 @@
   const ready = new Set<ScreenId>([
     "analysis", "optimization", "games", "diagnosis", "hardware", "laptop", "network", "stability", "upscale", "cleanup", "startup", "backups", "settings",
   ]);
+  // Права: адміністратор, без прав, але через службу, або без прав і без служби.
+  const rights = $derived(
+    ui.info?.elevated ? tk("ui.status.admin") : ui.info?.service ? tk("ui.status.service") : tk("ui.status.no_admin"),
+  );
 </script>
 
 <nav class="sidebar" aria-label={tk("ui.nav.label")}>
@@ -45,11 +49,11 @@
   <div class="status small">
     <span
       class="dot"
-      class:ok={ui.info?.elevated}
-      title={ui.info?.elevated ? tk("ui.status.admin") : tk("ui.status.no_admin")}
+      class:ok={ui.info?.elevated || ui.info?.service}
+      title={rights}
       aria-hidden="true"
     ></span>
-    <span>{ui.info?.elevated ? tk("ui.status.admin") : tk("ui.status.no_admin")}</span>
+    <span>{rights}</span>
     <span class="dim ver">v{ui.info?.version ?? "…"}</span>
   </div>
 </nav>

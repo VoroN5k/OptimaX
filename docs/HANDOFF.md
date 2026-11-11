@@ -206,7 +206,10 @@ Actions (`.github/workflows/release.yml`) збирає zip, інсталятор
 - **Етап 3г зроблено:** профілі ігор через службу (`backend::profiles::ProfilesHost`,
   `app::profiles`), служба сама перевіряє файл у теці «Автозавантаження» клієнта
   (`UserChanges::with_startup_files`), `PROTOCOL` = 4; розділ 17 `docs/SERVICE.md`.
-- Далі: 3д — маніфест `asInvoker`, перезапуск з UAC без служби.
+- **Етап 3д зроблено:** маніфест `asInvoker`, `app::elevation` (працювати / перезапуск з UAC /
+  відмова), `core::elevate::run_elevated`, встановлення й видалення служби з UAC-копії,
+  `AppInfo.service`; розділ 18 `docs/SERVICE.md`.
+- Далі: етап 4 `docs/SERVICE.md` (агент у треї, постійний журнал) — лише за окремим рішенням.
 
 ## 2u. Розширені датчики через PawnIO (2026-11-09)
 

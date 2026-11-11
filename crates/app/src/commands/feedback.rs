@@ -5,7 +5,6 @@
 use super::audit::collect_hardware;
 use super::blocking;
 use super::cleanup::{data_dir, journal_path};
-use super::system::app_info;
 use crate::dto::{AppInfo, DiagnosisResult, HardwareInfo, StartupReport};
 use crate::error::{CmdError, CmdResult};
 use crate::log_layer::LogLine;
@@ -79,6 +78,7 @@ pub async fn feedback_report(state: State<'_, AppState>) -> CmdResult<String> {
     let last_diagnosis = lock(&state.last_diagnosis).clone();
     let log: Vec<LogLine> = lock(&state.log_tail).iter().cloned().collect();
     let link = settings.pawnio_sensors.then(|| state.link.clone());
+    let app = super::system::info(&state.link);
     blocking(move || {
         let created_unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -87,7 +87,7 @@ pub async fn feedback_report(state: State<'_, AppState>) -> CmdResult<String> {
         let report = FeedbackReport {
             format: FORMAT,
             created_unix,
-            app: app_info(),
+            app,
             os: OsInfo {
                 name: sysinfo::System::long_os_version(),
                 kernel: sysinfo::System::kernel_version(),

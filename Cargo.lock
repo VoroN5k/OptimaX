@@ -2442,6 +2442,7 @@ dependencies = [
  "optimax-cleanup",
  "optimax-core",
  "optimax-frametime",
+ "optimax-gamemode",
  "optimax-metrics",
  "optimax-service",
  "optimax-tweaks",

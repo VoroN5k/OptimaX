@@ -17,6 +17,8 @@ mod log_layer;
 #[cfg(windows)]
 mod migrate;
 #[cfg(windows)]
+mod profiles;
+#[cfg(windows)]
 mod release_notes;
 #[cfg(windows)]
 mod report;

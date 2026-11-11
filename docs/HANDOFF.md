@@ -203,7 +203,10 @@ Actions (`.github/workflows/release.yml`) збирає zip, інсталятор
 - **Етап 3в зроблено:** очищення через службу (`backend::cleanup::Cleaner` — логіка, спільна для
   служби й програми; `CleanupHost`, `Env::for_process`, `sysdirs::known_for_process`,
   `datadir::secure_dir_of`), розділ 16 `docs/SERVICE.md`.
-- Далі: 3г — автозавантаження, залишки режиму гри, точка відновлення очищення.
+- **Етап 3г зроблено:** профілі ігор через службу (`backend::profiles::ProfilesHost`,
+  `app::profiles`), служба сама перевіряє файл у теці «Автозавантаження» клієнта
+  (`UserChanges::with_startup_files`), `PROTOCOL` = 4; розділ 17 `docs/SERVICE.md`.
+- Далі: 3д — маніфест `asInvoker`, перезапуск з UAC без служби.
 
 ## 2u. Розширені датчики через PawnIO (2026-11-09)
 

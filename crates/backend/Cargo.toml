@@ -17,6 +17,7 @@ optimax-core.workspace = true
 optimax-cleanup.workspace = true
 optimax-metrics.workspace = true
 optimax-frametime.workspace = true
+optimax-gamemode.workspace = true
 optimax-service.workspace = true
 optimax-tweaks.workspace = true
 serde.workspace = true

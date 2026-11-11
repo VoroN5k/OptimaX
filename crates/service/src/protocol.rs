@@ -14,7 +14,7 @@ pub const SERVICE_DISPLAY: &str = "OptimaX";
 /// Ім'я каналу.
 pub const PIPE_NAME: &str = r"\\.\pipe\OptimaX";
 /// Версія протоколу: змінюється, коли старий клієнт і нова служба вже не зрозуміють одне одного.
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 /// Найбільший кадр, байт: більший — помилка й розрив з'єднання. Найбільше важить результат
 /// запису гри (кадри, знімки, потоки): 10 хв на високому FPS — десятки МБ JSON.
 pub const MAX_FRAME: u32 = 128 * 1024 * 1024;
@@ -216,6 +216,18 @@ pub enum Command {
         allow_without_restore_point: bool,
         /// Номер сесії програми.
         session: u64,
+    },
+    /// Профілі ігор користувача, що під'єднався.
+    ProfilesList,
+    /// Додати або замінити профіль (служба зберігає безпечну версію).
+    ProfileSave {
+        /// `optimax_gamemode::GameProfile` у JSON.
+        profile: serde_json::Value,
+    },
+    /// Видалити профіль за ім'ям exe.
+    ProfileRemove {
+        /// Ім'я exe гри.
+        exe: String,
     },
 }
 

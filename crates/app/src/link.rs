@@ -17,7 +17,7 @@ use optimax_metrics::{GpuApi, NvmlGpu, SysinfoSource};
 use optimax_service::client::Client;
 use optimax_service::install::{self, SvcState};
 use optimax_service::protocol::Command;
-use optimax_service::{same_file, service_exe};
+use optimax_service::{same_file, service_exe, ServiceError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
@@ -78,6 +78,35 @@ impl Link {
                 None
             }
         }
+    }
+
+    /// Команда службі, якщо вона доступна. `None` — служби немає (дія — у цьому процесі);
+    /// `Some(Err)` — служба відмовила або обірвалась посеред дії (тоді наступна дія піде вже без
+    /// неї, а ця не повторюється: її стан невідомий).
+    pub fn ask_service<T: serde::de::DeserializeOwned>(
+        &self,
+        cmd: Command,
+    ) -> Option<CmdResult<T>> {
+        if !self.service_usable() {
+            return None;
+        }
+        let mut c = match Client::connect() {
+            Ok(c) => c,
+            Err(e) => {
+                self.forget_service(&e);
+                return None;
+            }
+        };
+        Some(match c.json::<T>(cmd) {
+            Ok(v) => Ok(v),
+            Err(ServiceError::Refused(m)) => Err(CmdError::Failed(m)),
+            Err(e) => {
+                self.forget_service(&e);
+                Err(CmdError::Failed(format!(
+                    "служба OptimaX не відповіла: {e}"
+                )))
+            }
+        })
     }
 
     /// Датчики PawnIO і чи прочитано через службу.

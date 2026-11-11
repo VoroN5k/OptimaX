@@ -4,9 +4,11 @@
 //! ([`optimax_tweaks::Desired`]). План складає й перевіряє рушій служби, запам'ятовує його й
 //! повертає номер — застосувати можна лише план із цим номером. Журнал кожного користувача — у
 //! його захищеній теці (`%ProgramData%\OptimaX\<SID>`), `HKCU` — його гілка `HKEY_USERS\<SID>`,
-//! пріоритет змінюється лише процесам цього самого користувача.
+//! пріоритет змінюється лише процесам цього самого користувача. Запис автозапуску з теки
+//! «Автозавантаження» служба перевіряє сама: файл має лежати в теці цього користувача.
 
 use optimax_service::protocol::{Command, Reply};
+use optimax_tweaks::startup::StartupSource;
 use optimax_tweaks::{ApplyOutcome, Changes, Confirm, Desired, Engine, Plan, TweakError};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -59,12 +61,17 @@ fn json<T: Serialize>(v: &T) -> Result<Reply, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Чи лежить файл `name` у теці автозавантаження джерела (`pid` — процес клієнта: тека
+/// «Автозавантаження» — його користувача).
+pub type StartupFileCheck = Box<dyn Fn(u32, StartupSource, &str) -> bool + Send>;
+
 /// Зміни одного користувача: рушій, складені плани, поточна сесія програми.
 pub struct UserChanges {
     engine: Engine<'static>,
     plans: VecDeque<(u64, Plan)>,
     next_plan: u64,
     session: Option<u64>,
+    startup_files: Option<StartupFileCheck>,
 }
 
 impl UserChanges {
@@ -75,13 +82,23 @@ impl UserChanges {
             plans: VecDeque::new(),
             next_plan: 1,
             session: None,
+            startup_files: None,
         }
+    }
+
+    /// Перевірка записів із тек «Автозавантаження» (без неї рушій перевіряє лише, що це ім'я
+    /// файлу).
+    pub fn with_startup_files(mut self, check: StartupFileCheck) -> Self {
+        self.startup_files = Some(check);
+        self
     }
 
     /// Виконує команду змін; `None` — команда не про зміни.
     pub fn handle(&mut self, pid: u32, cmd: &Command) -> Option<Reply> {
         let result = match cmd {
-            Command::TweakPlan { desired } => self.prepare(pid).and_then(|()| self.plan(desired)),
+            Command::TweakPlan { desired } => {
+                self.prepare(pid).and_then(|()| self.plan(pid, desired))
+            }
             Command::TweakApply {
                 plan_id,
                 allow_without_restore_point,
@@ -118,9 +135,18 @@ impl UserChanges {
         Ok(())
     }
 
-    fn plan(&mut self, desired: &serde_json::Value) -> Result<Reply, String> {
+    fn plan(&mut self, pid: u32, desired: &serde_json::Value) -> Result<Reply, String> {
         let desired: Desired = serde_json::from_value(desired.clone())
             .map_err(|e| format!("некоректний запит зміни: {e}"))?;
+        if let (Desired::StartupApp { source, name, .. }, Some(check)) =
+            (&desired, &self.startup_files)
+        {
+            if source.run_key().is_none() && !check(pid, *source, name) {
+                return Err(format!(
+                    "{name}: такого файлу в теці автозавантаження немає"
+                ));
+            }
+        }
         let plan = self.engine.plan(&desired).map_err(|e| e.to_string())?;
         let id = self.next_plan;
         self.next_plan += 1;
@@ -175,10 +201,12 @@ mod windows {
     use optimax_core::process::{PriorityClass, ProcessApi, ProcessInfo, WinProcesses};
     use optimax_core::registry::WinUserRegistry;
     use optimax_core::service::WinServices;
+    use optimax_core::sysdirs::{known, known_for_process, Folder};
     use optimax_core::CoreError;
     use optimax_service::host::Peer;
     use optimax_service::protocol::{Command, Reply};
     use optimax_tweaks::restore::WinRestorePoint;
+    use optimax_tweaks::startup::{is_plain_file_name, StartupSource};
     use optimax_tweaks::{Engine, FileStore};
     use std::collections::HashMap;
     use std::sync::{Mutex, PoisonError};
@@ -254,6 +282,19 @@ mod windows {
             .map_err(|e| e.to_string())
     }
 
+    /// Файл у теці «Автозавантаження»: своя тека — за токеном процесу клієнта (у SYSTEM вона
+    /// інша), спільна — одна на всіх.
+    fn startup_file_exists(pid: u32, source: StartupSource, name: &str) -> bool {
+        let dir = match source {
+            StartupSource::UserFolder => known_for_process(Folder::Startup, pid),
+            StartupSource::CommonFolder => known(Folder::CommonStartup),
+            StartupSource::UserRun | StartupSource::MachineRun | StartupSource::MachineRun32 => {
+                return true
+            }
+        };
+        is_plain_file_name(name) && dir.is_some_and(|d| d.join(name).is_file())
+    }
+
     /// Зміни всіх користувачів, що під'єднувались (зазвичай один — той, хто ставив службу).
     #[derive(Default)]
     pub struct ChangesHost {
@@ -277,7 +318,9 @@ mod windows {
                 match engine_for(&peer.sid) {
                     Ok(e) => {
                         tracing::info!("служба: журнал змін для {}", peer.sid);
-                        users.insert(peer.sid.clone(), UserChanges::new(e));
+                        let user =
+                            UserChanges::new(e).with_startup_files(Box::new(startup_file_exists));
+                        users.insert(peer.sid.clone(), user);
                     }
                     Err(e) => return Some(Reply::Error(format!("журнал змін недоступний: {e}"))),
                 }
@@ -456,6 +499,31 @@ mod tests {
         let entries: Vec<JournalEntry> =
             serde_json::from_value(ok(h.handle(1, &Command::JournalEntries))).unwrap();
         assert_eq!(entries[0].id, 40);
+    }
+
+    #[test]
+    fn startup_folder_entry_must_exist_for_the_client() {
+        let (h, _, _) = host(Ok(1));
+        // Файл є лише в теці клієнта з PID 7.
+        let mut h = h.with_startup_files(Box::new(|pid, source, name| {
+            pid == 7 && source == StartupSource::UserFolder && name == "Discord.lnk"
+        }));
+        let plan = |name: &str| Command::TweakPlan {
+            desired: serde_json::to_value(Desired::StartupApp {
+                source: StartupSource::UserFolder,
+                name: name.into(),
+                enabled: false,
+            })
+            .unwrap(),
+        };
+        let r: PlanReply = serde_json::from_value(ok(h.handle(7, &plan("Discord.lnk")))).unwrap();
+        assert_eq!(r.plan.changes.len(), 1);
+        for (pid, name) in [(7, "Steam.lnk"), (8, "Discord.lnk")] {
+            assert!(
+                matches!(h.handle(pid, &plan(name)), Some(Reply::Error(e)) if e.contains("немає")),
+                "{pid} {name}"
+            );
+        }
     }
 
     #[test]

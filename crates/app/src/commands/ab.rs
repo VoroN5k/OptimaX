@@ -17,8 +17,8 @@ use optimax_experiment::report::render_markdown;
 use optimax_experiment::{evaluate, next_variant, Outcome, Policy, Report, Run, Status, Variant};
 use optimax_frametime::{CancelToken, StartMode, Target};
 use optimax_gamemode::{
-    end_session, preview_changes, session_plan, start_session, GameProfile, ProfileStore,
-    ProfileTest, SessionReport,
+    end_session, preview_changes, session_plan, start_session, GameProfile, ProfileTest,
+    SessionReport,
 };
 use optimax_tweaks::{Changes, Desired, Plan, TweakError, TweakId};
 
@@ -90,10 +90,6 @@ impl AbSession {
             profile: matches!(self.subject, AbSubject::Profile { .. }),
         }
     }
-}
-
-fn profiles() -> CmdResult<ProfileStore> {
-    ProfileStore::default_location().map_err(|e| CmdError::Failed(e.to_string()))
 }
 
 /// Запущений процес гри (перший за іменем).
@@ -195,10 +191,7 @@ pub fn ab_start_profile(
             "A/B-тест уже йде — заверши або скасуй його".into(),
         ));
     }
-    let profile = profiles()?
-        .load()?
-        .into_iter()
-        .find(|p| p.exe.eq_ignore_ascii_case(&exe))
+    let profile = crate::profiles::find(&state.link, &exe)?
         .ok_or_else(|| CmdError::NotFound(format!("немає профілю для {exe}")))?;
     let game = running_game(&profile.exe)?;
     let session_plan = session_plan(&PROCESSES, &profile, &game)?;
@@ -369,7 +362,7 @@ pub fn ab_finish(state: State<'_, AppState>, keep: bool) -> CmdResult<AbFinal> {
                 low_1pct_pct: delta(cmp.and_then(|c| c.low_1pct.as_ref())),
                 effect,
             });
-            profiles()?.upsert(&updated)?;
+            crate::profiles::upsert(&state.link, &updated)?;
             false
         }
     };

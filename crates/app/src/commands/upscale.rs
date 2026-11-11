@@ -7,7 +7,6 @@ use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
 use optimax_core::toast::{Toaster, Tone, DEFAULT_DURATION};
 use optimax_core::{Catalog, Text};
-use optimax_gamemode::ProfileStore;
 use optimax_upscale::{
     EndReason, HotkeyToggle, ToggleEvent, UpscaleSettings, UpscaleStats, WindowInfo,
 };
@@ -16,7 +15,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Найдовший відлік перед запуском з інтерфейсу.
 const MAX_DELAY_S: u32 = 30;
@@ -125,16 +124,12 @@ impl Controller {
 }
 
 /// Налаштування з профілю гри (за ім'ям exe), якщо задані.
-fn profile_settings(window: &WindowInfo) -> Option<UpscaleSettings> {
+fn profile_settings(app: &AppHandle, window: &WindowInfo) -> Option<UpscaleSettings> {
     if window.exe.is_empty() {
         return None;
     }
-    ProfileStore::default_location()
-        .ok()?
-        .load()
-        .ok()?
-        .into_iter()
-        .find(|p| p.exe.eq_ignore_ascii_case(&window.exe))?
+    crate::profiles::find(&app.state::<AppState>().link, &window.exe)
+        .ok()??
         .upscale
 }
 
@@ -255,7 +250,8 @@ fn run(
     hotkey: bool,
 ) {
     let mut toggle = HotkeyToggle::without_hotkey(settings);
-    toggle.set_resolver(Box::new(profile_settings));
+    let handle = app.clone();
+    toggle.set_resolver(Box::new(move |w| profile_settings(&handle, w)));
     let mut ctl = Ctl {
         app,
         view,

@@ -3,20 +3,21 @@
 use crate::changes::ChangeHub;
 use crate::dto::{GameModeEvent, ProfilePreview, RollbackResult};
 use crate::error::{CmdError, CmdResult};
+use crate::link::Link;
+use crate::profiles;
 use crate::state::{lock, AppState, FlagConfirm, MEMORY, PROCESSES};
 use optimax_core::process::ProcessInfo;
 use optimax_core::Text;
 use optimax_gamemode::watcher::POLL_INTERVAL;
 use optimax_gamemode::{
-    end_session, scan, start_session, step, GameProfile, ProfileStore, SessionReport, WatchEvent,
-    WatchState,
+    end_session, scan, start_session, step, GameProfile, SessionReport, WatchEvent, WatchState,
 };
 use optimax_tweaks::{Changes, Confirm, Desired, TweakError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Запущений стежник.
 pub struct Watcher {
@@ -34,14 +35,10 @@ impl Watcher {
     }
 }
 
-fn store() -> CmdResult<ProfileStore> {
-    ProfileStore::default_location().map_err(|e| CmdError::Failed(e.to_string()))
-}
-
 /// Профілі ігор.
 #[tauri::command]
-pub fn profiles_list() -> CmdResult<Vec<GameProfile>> {
-    Ok(store()?.load()?)
+pub fn profiles_list(state: State<'_, AppState>) -> CmdResult<Vec<GameProfile>> {
+    profiles::load(&state.link)
 }
 
 /// Безпечна версія профілю й попередження — для показу перед збереженням.
@@ -53,14 +50,14 @@ pub fn profile_preview(profile: GameProfile) -> CmdResult<ProfilePreview> {
 
 /// Зберігає профіль (безпечну версію). Повертає попередження.
 #[tauri::command]
-pub fn profile_save(profile: GameProfile) -> CmdResult<Vec<Text>> {
-    Ok(store()?.upsert(&profile)?)
+pub fn profile_save(state: State<'_, AppState>, profile: GameProfile) -> CmdResult<Vec<Text>> {
+    profiles::upsert(&state.link, &profile)
 }
 
 /// Видаляє профіль.
 #[tauri::command]
-pub fn profile_remove(exe: String) -> CmdResult<bool> {
-    Ok(store()?.remove(&exe)?)
+pub fn profile_remove(state: State<'_, AppState>, exe: String) -> CmdResult<bool> {
+    profiles::remove(&state.link, &exe)
 }
 
 /// Чи працює стежник.
@@ -82,7 +79,7 @@ pub fn gamemode_start(app: AppHandle, state: State<'_, AppState>) -> CmdResult<(
     if slot.is_some() {
         return Ok(());
     }
-    let profiles = store()?.load()?;
+    let profiles = profiles::load(&state.link)?;
     if profiles.is_empty() {
         return Err(CmdError::Failed(
             "немає профілів ігор — спершу створи профіль".into(),
@@ -132,6 +129,7 @@ fn exe_path_of(pid: u32) -> Option<String> {
 /// відеокарти під час запуску гри, тож він постійний (не відкочується після сесії) і діє з
 /// наступного запуску; запис — у журналі змін («Резервні копії»).
 fn remember_path_and_gpu(
+    link: &Link,
     engine: &mut dyn Changes,
     profile: &GameProfile,
     game: &ProcessInfo,
@@ -141,7 +139,7 @@ fn remember_path_and_gpu(
     if profile.exe_path.as_deref() != Some(path.as_str()) {
         let mut updated = profile.clone();
         updated.exe_path = Some(path.clone());
-        if let Err(e) = store().and_then(|s| s.upsert(&updated).map_err(CmdError::from)) {
+        if let Err(e) = profiles::upsert(link, &updated) {
             tracing::warn!(
                 "не вдалося запам'ятати шлях до {}: {}",
                 profile.exe,
@@ -227,9 +225,14 @@ fn watch_loop(
                     Ok(mut report) => {
                         waiting_confirm = None;
                         // Окремо від сесії: вибір відеокарти не відкочується після гри.
-                        if let Some(t) =
-                            remember_path_and_gpu(&mut *lock(engine), profile, &game, &confirm)
-                        {
+                        let link = &app.state::<AppState>().link;
+                        if let Some(t) = remember_path_and_gpu(
+                            link,
+                            &mut *lock(engine),
+                            profile,
+                            &game,
+                            &confirm,
+                        ) {
                             report.applied.push(t);
                         }
                         let _ = app.emit(

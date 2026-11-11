@@ -2,12 +2,14 @@
 //! тому виконується в службі, а без служби — у самій програмі.
 //!
 //! Датчики CPU через PawnIO ([`sensors`]), запис гри ([`record`]), стеження й оверлей ([`watch`]),
-//! зміни системи з журналом і відкатом ([`changes`]), очищення диска ([`cleanup`]).
+//! зміни системи з журналом і відкатом ([`changes`]), очищення диска ([`cleanup`]), профілі ігор
+//! ([`profiles`]).
 
 #![forbid(unsafe_code)]
 
 pub mod changes;
 pub mod cleanup;
+pub mod profiles;
 pub mod record;
 pub mod sensors;
 pub mod watch;
@@ -19,6 +21,7 @@ pub use self::service::handler;
 mod service {
     use crate::changes::ChangesHost;
     use crate::cleanup::{Cleaner, CleanupHost, WinPlatform};
+    use crate::profiles::ProfilesHost;
     use crate::record::{RecordSpec, Recorder};
     use crate::sensors::SensorCache;
     use crate::watch::{LiveHost, WatchHost, WatchSpec};
@@ -42,6 +45,7 @@ mod service {
         live: LiveHost,
         changes: ChangesHost,
         cleanup: CleanupHost,
+        profiles: ProfilesHost,
         presentmon: Arc<OnceLock<BundledPresentMon>>,
     }
 
@@ -151,6 +155,9 @@ mod service {
             cleanup: CleanupHost::new(Box::new(|sid: &str| {
                 WinPlatform::for_user(sid).map(|p| Cleaner::new(Box::new(p)))
             })),
+            profiles: ProfilesHost::new(Box::new(|sid: &str| {
+                optimax_core::datadir::data_dir_for(sid).map_err(|e| e.to_string())
+            })),
             presentmon: Arc::new(OnceLock::new()),
         };
         Arc::new(move |peer: &Peer, cmd: &Command| {
@@ -160,6 +167,10 @@ mod service {
             }
             // Очищення — теж від його імені: його теки правил, журнал і карантин.
             if let Some(r) = b.cleanup.handle(peer.pid, &peer.sid, cmd) {
+                return r;
+            }
+            // Профілі ігор — у його захищеній теці.
+            if let Some(r) = b.profiles.handle(&peer.sid, cmd) {
                 return r;
             }
             other(&b, cmd)
@@ -229,6 +240,10 @@ mod service {
             | Command::CleanupAutoPurge { .. }
             | Command::CleanupDism { .. }
             | Command::CleanupHibernate { .. } => Reply::Error("очищення недоступне".into()),
+            // Профілі обробляє `ProfilesHost` вище.
+            Command::ProfilesList | Command::ProfileSave { .. } | Command::ProfileRemove { .. } => {
+                Reply::Error("профілі недоступні".into())
+            }
         }
     }
 }

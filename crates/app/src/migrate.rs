@@ -290,11 +290,15 @@ pub fn sync_ui_data() {
 mod sync_tests {
     use super::*;
 
+    /// Тимчасова тека з повним (довгим) шляхом: на GitHub Actions `TEMP` — з коротким іменем 8.3
+    /// (`C:\Users\RUNNER~1\…`), а `safefs` такий шлях свідомо відхиляє як «перенаправлений».
     fn tmp(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("optimax-sync-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).expect("тека");
-        d
+        let full = std::fs::canonicalize(&d).expect("справжній шлях");
+        let full = full.to_str().expect("UTF-8");
+        std::path::PathBuf::from(full.strip_prefix(r"\\?\").unwrap_or(full))
     }
 
     #[test]

@@ -19,8 +19,8 @@ use windows_service::service::{
 use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
 use windows_service::{define_windows_service, service_dispatcher};
 
-/// Журнал служби більший за це обрізається на старті.
-const LOG_MAX: u64 = 1024 * 1024;
+/// Межа файлу журналу служби; на диску — щонайбільше два такі файли (`crate::logfile`).
+const LOG_MAX: u64 = 2 * 1024 * 1024;
 
 define_windows_service!(ffi_service_main, service_main);
 
@@ -54,15 +54,7 @@ fn init_log() {
     let Ok(dir) = optimax_core::datadir::shared_dir("service") else {
         return;
     };
-    let path = dir.join("service.log");
-    if std::fs::metadata(&path).is_ok_and(|m| m.len() > LOG_MAX) {
-        let _ = std::fs::remove_file(&path);
-    }
-    let Ok(file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    else {
+    let Ok(file) = crate::logfile::CappedLog::open(&dir.join("service.log"), LOG_MAX) else {
         return;
     };
     let _ = tracing_subscriber::fmt()

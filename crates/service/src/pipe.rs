@@ -9,9 +9,13 @@ use windows::Win32::Foundation::{
     INVALID_HANDLE_VALUE,
 };
 use windows::Win32::Security::Authorization::{
-    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
+    SE_KERNEL_OBJECT,
 };
-use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+use windows::Win32::Security::{
+    IsWellKnownSid, WinBuiltinAdministratorsSid, WinLocalSystemSid, OWNER_SECURITY_INFORMATION,
+    PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
+};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES,
     FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_SHARE_NONE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
@@ -162,6 +166,39 @@ impl PipeStream {
         // SAFETY: дескриптор з'єднаного каналу; `pid` — вихідний параметр.
         unsafe { GetNamedPipeServerProcessId(self.handle, &mut pid) }.map_err(|e| io_err(&e))?;
         Ok(pid)
+    }
+
+    /// Власник каналу — SYSTEM або Адміністратори, тобто канал створив процес з правами. Процес
+    /// звичайного користувача не може зробити власником ні того, ні іншого (у його токені група
+    /// Адміністраторів лише «для заборони»). Потрібно клієнту без прав: шлях exe процесу SYSTEM
+    /// він прочитати не може.
+    pub fn owner_is_privileged(&self) -> io::Result<bool> {
+        let mut owner = PSID::default();
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        // SAFETY: дескриптор каналу відкрито з READ_CONTROL (`CLIENT_ACCESS`); `owner` вказує
+        // всередину `sd`, який звільняється через `Local` після перевірки.
+        let r = unsafe {
+            GetSecurityInfo(
+                self.handle,
+                SE_KERNEL_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                Some(&mut owner),
+                None,
+                None,
+                None,
+                Some(&mut sd),
+            )
+        };
+        let _free = Local(sd);
+        if r.is_err() {
+            return Err(io::Error::from_raw_os_error(r.0 as i32));
+        }
+        // SAFETY: `owner` — дійсний SID із живого `sd`.
+        let ok = unsafe {
+            IsWellKnownSid(owner, WinLocalSystemSid).as_bool()
+                || IsWellKnownSid(owner, WinBuiltinAdministratorsSid).as_bool()
+        };
+        Ok(ok)
     }
 }
 

@@ -142,6 +142,12 @@ fn listen(
     while !stop.load(Ordering::SeqCst) {
         if let Err(e) = next.accept() {
             tracing::warn!("канал: {e}");
+            // Клієнт міг під'єднатися й одразу закритися (ERROR_NO_DATA): такий екземпляр більше
+            // нікого не прийме, а нові клієнти отримували б ERROR_PIPE_BUSY. Замінюємо його новим —
+            // спершу новий, щоб ім'я каналу ні на мить не звільнялося для чужого процесу.
+            let fresh = PipeStream::listen(name, sddl, false).map_err(|e| e.to_string())?;
+            drop(std::mem::replace(&mut next, fresh));
+            std::thread::sleep(Duration::from_millis(50));
             continue;
         }
         if stop.load(Ordering::SeqCst) {
@@ -292,6 +298,30 @@ mod tests {
         .expect("journal");
         let r: Response = read_frame(&mut c).expect("відповідь");
         assert_eq!(r.reply, Reply::Json(serde_json::json!(sid)));
+        // Канал створив цей процес: власник — SYSTEM/Адміністратори лише з правами адміністратора.
+        assert_eq!(
+            c.owner_is_privileged().expect("власник"),
+            optimax_core::process::is_elevated()
+        );
+        drop(c);
+
+        // Клієнти, що під'єднуються й одразу закриваються, не ламають прийом наступних.
+        for _ in 0..20 {
+            let _ = PipeStream::connect(&name);
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut c = loop {
+            match PipeStream::connect(&name) {
+                Ok(c) => break c,
+                Err(_) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => panic!("канал більше не приймає з'єднань: {e}"),
+            }
+        };
+        write_frame(&mut c, &Hello::ours()).expect("hello");
+        let theirs: Hello = read_frame(&mut c).expect("hello служби");
+        assert!(compatible(&theirs));
         drop(c);
 
         // Другий сервер з тим самим іменем як «перший екземпляр» не створиться.

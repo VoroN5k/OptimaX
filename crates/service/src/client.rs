@@ -16,14 +16,27 @@ pub struct Client {
 }
 
 impl Client {
-    /// З'єднується зі службою. Відмовляє, якщо канал тримає не `%ProgramFiles%\OptimaX\OptimaX.exe`
-    /// (хтось підставив свій канал) або версія протоколу інша.
+    /// З'єднується зі службою. Відмовляє, якщо канал створив процес без прав або не
+    /// `%ProgramFiles%\OptimaX\OptimaX.exe` (хтось підставив свій канал), чи версія протоколу інша.
     pub fn connect() -> Result<Self, ServiceError> {
         let mut pipe = PipeStream::connect(PIPE_NAME)?;
-        let server_exe = process_image(pipe.server_pid()?)?;
-        let trusted = service_exe().is_some_and(|ours| same_file(&server_exe, &ours));
-        if !trusted {
-            return Err(ServiceError::Untrusted(server_exe.display().to_string()));
+        let server_pid = pipe.server_pid()?;
+        if !pipe.owner_is_privileged()? {
+            return Err(ServiceError::Untrusted(format!(
+                "канал створив процес без прав адміністратора (PID {server_pid})"
+            )));
+        }
+        // З правами — ще й шлях exe. Без прав процес SYSTEM не відкрити (доступ заборонено):
+        // тоді достатньо власника каналу — підставити канал від SYSTEM може лише адміністратор.
+        match process_image(server_pid) {
+            Ok(server_exe) => {
+                let trusted = service_exe().is_some_and(|ours| same_file(&server_exe, &ours));
+                if !trusted {
+                    return Err(ServiceError::Untrusted(server_exe.display().to_string()));
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(e) => return Err(e.into()),
         }
         write_frame(&mut pipe, &Hello::ours())?;
         let server: Hello = read_frame(&mut pipe)?;

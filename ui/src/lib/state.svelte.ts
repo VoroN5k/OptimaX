@@ -45,6 +45,8 @@ export const ui = $state({
   pendingCompare: null as [string, string] | null,
   /** Підсумок цієї сесії чорної скриньки сховано (до перезапуску програми). */
   blackboxHidden: null as string | null,
+  /** З «Головної» натиснули «Встановити службу»: картка служби одразу покаже згоду. */
+  serviceInstall: false,
 });
 
 export const log = $state({ lines: [] as LogLine[] });

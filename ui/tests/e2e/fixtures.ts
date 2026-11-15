@@ -102,6 +102,7 @@ export const settings: Settings = {
   overlay: false,
   onboarded: true,
   pawnio_sensors: false,
+  service_hint_dismissed: false,
 };
 
 export const config: ConfigSummary = {

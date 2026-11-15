@@ -4,6 +4,8 @@
 //! Бінарник (`main.rs`) лише викликає [`run`]; маніфест адміністратора вбудовується лише в нього.
 
 #[cfg(windows)]
+mod applog;
+#[cfg(windows)]
 mod changes;
 #[cfg(windows)]
 mod commands;
@@ -161,11 +163,19 @@ mod app {
             return Ok(());
         }
         let (log_tx, log_rx) = std::sync::mpsc::channel();
+        // Файл журналу (обмежений за розміром); тека недоступна — лише інтерфейс і stderr.
+        let file_log = crate::applog::open().map(|f| {
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(std::sync::Mutex::new(f))
+        });
         let _ = tracing_subscriber::registry()
             .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(file_log)
             .with(UiLogLayer::new(log_tx))
             .try_init();
+        tracing::info!("OptimaX {} запущено", env!("CARGO_PKG_VERSION"));
 
         // Служба є — працюємо без прав; немає — перезапуск з правами (UAC).
         match crate::elevation::decide() {

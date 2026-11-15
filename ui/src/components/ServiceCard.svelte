@@ -29,7 +29,17 @@
     }
   }
 
-  onMount(() => void run(api.serviceStatus));
+  let cardEl = $state<HTMLElement | null>(null);
+
+  onMount(async () => {
+    await run(api.serviceStatus);
+    // Прийшли з підказки на «Головній» — одразу показуємо згоду (встановлення лише після неї).
+    if (ui.serviceInstall) {
+      ui.serviceInstall = false;
+      cardEl?.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      if (view?.state === "not_installed") consent = true;
+    }
+  });
 
   async function install() {
     consent = false;
@@ -58,7 +68,7 @@
 </script>
 
 <Card title={tk("ui.service.title")} subtitle={tk("ui.service.subtitle")}>
-  <div class="rows">
+  <div class="rows" bind:this={cardEl}>
     {#if view === null && busy}
       <StateView kind="loading" title={tk("ui.service.loading")} />
     {:else if view}

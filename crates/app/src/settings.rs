@@ -62,6 +62,9 @@ pub struct Settings {
     /// його встановив). За замовчуванням вимкнено: вмикається лише явною згодою.
     #[serde(default)]
     pub pawnio_sensors: bool,
+    /// Підказку «встанови службу, щоб не було UAC» на «Головній» закрито назавжди.
+    #[serde(default)]
+    pub service_hint_dismissed: bool,
 }
 
 /// Налаштування очищення.
@@ -113,6 +116,7 @@ impl Default for Settings {
             overlay: false,
             onboarded: false,
             pawnio_sensors: false,
+            service_hint_dismissed: false,
         }
     }
 }

@@ -17,6 +17,7 @@
   import FindingCard from "../components/FindingCard.svelte";
   import Page from "../components/Page.svelte";
   import Ring from "../components/Ring.svelte";
+  import ServiceHint from "../components/ServiceHint.svelte";
   import StateView from "../components/StateView.svelte";
   import TweakApplyModal from "../components/TweakApplyModal.svelte";
 
@@ -118,6 +119,8 @@
 {/snippet}
 
 <Page title={tk("ui.home.title")} subtitle={tk("ui.home.subtitle")}>
+  <ServiceHint />
+
   {#each drops.slice(0, 2) as d (d.comparison.newer.id)}
     {@const c = d.comparison}
     <div class="drop" role="status">

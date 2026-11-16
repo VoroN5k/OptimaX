@@ -61,7 +61,7 @@
   .page {
     position: relative;
     z-index: 1;
-    height: 100%;
+    flex: 1;
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -72,9 +72,10 @@
     overflow-y: auto;
     padding: calc(var(--space) * 7) calc(var(--space) * 8) calc(var(--space) * 8);
   }
+  /* Підрозділи завжди праворуч (не переносяться під заголовок залежно від довжини підзаголовка):
+     заголовок стискається, перемикач — ні. */
   header {
     display: flex;
-    flex-wrap: wrap;
     align-items: flex-end;
     justify-content: space-between;
     gap: calc(var(--space) * 3.5) calc(var(--space) * 6);
@@ -83,6 +84,11 @@
   .titles {
     display: grid;
     gap: var(--space);
+    flex: 1 1 0;
+    min-width: 240px;
+  }
+  header > :global(:not(.titles)) {
+    flex-shrink: 0;
   }
   /* Шапка, вміст і панель дій — одна колонка, по центру на широких екранах. */
   header,

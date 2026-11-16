@@ -2,11 +2,11 @@
   import { onMount } from "svelte";
   import { api, asCmdError, on } from "./lib/api";
   import { tk } from "./lib/i18n";
-  import type { DotsStats } from "./lib/dots";
+  import { buildBackdropData } from "./lib/backdrop";
   import { rememberSplash } from "./lib/splash";
   import { effectiveEffects, measuringNow, trackEffects } from "./lib/effects.svelte";
   import { cl, flashBg, gm, logLocal, pushLog, ui, up } from "./lib/state.svelte";
-  import BackgroundDots from "./components/BackgroundDots.svelte";
+  import Backdrop from "./components/Backdrop.svelte";
   import LogPanel from "./components/LogPanel.svelte";
   import TopBar from "./components/TopBar.svelte";
   import { remember } from "./lib/nav";
@@ -28,7 +28,7 @@
   import Upscale from "./screens/Upscale.svelte";
   import Stability from "./screens/Stability.svelte";
 
-  let dotsStats = $state<DotsStats | null>(null);
+  let bgStats = $state<{ fps: number; ms: number } | null>(null);
 
   onMount(() => {
     const stopEffects = trackEffects();
@@ -52,11 +52,19 @@
         })
         .catch((e) => logLocal("warn", tk("ui.driver_online.failed", { message: asCmdError(e).message })));
     }
+    // Останній запис — джерело фону з реальних даних.
+    void api
+      .diagState()
+      .then((s) => {
+        if (s.last && !ui.lastRecord) ui.lastRecord = s.last;
+      })
+      .catch(() => undefined);
     void api.upscaleState().then((v) => {
       up.view = v;
     });
     const subs = [
       on("log", pushLog),
+      on("diag-done", (r) => (ui.lastRecord = r)),
       on("upscale", (v) => {
         up.view = v;
       }),
@@ -126,28 +134,30 @@
     };
   });
 
-  // Фон — лише на «Аналізі» й «Діагностиці» й лише з «Ефектами: Повні»; вимикається в режимі
-  // гри й під час вимірювань (контракт, CLAUDE.md 10.5).
-  const showBg = $derived(ui.screen === "analysis" || ui.screen === "diagnosis");
   // Заставка запуску вирішується до читання налаштувань — запам'ятовуємо їх локально.
   $effect(() => rememberSplash(effectiveEffects() === "full"));
+
+  // Фоновий шар (CLAUDE.md 10.4): лише з «Ефектами: Повні», не під час вимірювань і режиму гри.
+  const bgActive = $derived(
+    effectiveEffects() === "full" && !measuringNow() && ui.settings.background !== "off",
+  );
+  const bgData = $derived(
+    ui.settings.background === "real" ? buildBackdropData(ui.lastRecord?.diagnosis.view) : null,
+  );
 
   // Повернення на вкладку відкриває той розділ, де користувач був.
   $effect(() => remember(ui.screen));
 
-  const animate = $derived(showBg && effectiveEffects() === "full" && !measuringNow());
 </script>
 
 <div class="shell">
-  {#if showBg}
-    <BackgroundDots
-      enabled={animate}
-      quality="high"
-      mode={ui.bgMode}
-      leftInset={0}
-      onstats={(s) => (dotsStats = s)}
-    />
-  {/if}
+  <Backdrop
+    active={bgActive}
+    data={bgData}
+    game={bgData ? (ui.lastRecord?.diagnosis.game ?? null) : null}
+    grain={effectiveEffects() !== "off"}
+    onstats={(s) => (bgStats = s)}
+  />
   <TopBar />
   <main class="main">
     <UpdateBanner />
@@ -178,7 +188,7 @@
         {:else if ui.screen === "backups"}
           <Backups />
         {:else if ui.screen === "settings"}
-          <Settings {dotsStats} />
+          <Settings {bgStats} />
         {:else}
           <Placeholder />
         {/if}
@@ -202,6 +212,8 @@
     z-index: 1;
     flex: 1;
     min-width: 0;
+    /* Без цього колонка росте до висоти вмісту, і прокрутка сторінки (.scroll у Page) зникає. */
+    min-height: 0;
     display: flex;
     flex-direction: column;
     transition:
@@ -216,5 +228,7 @@
   .screen {
     flex: 1;
     min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
 </style>

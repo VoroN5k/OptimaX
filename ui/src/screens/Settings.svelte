@@ -3,7 +3,7 @@
   import { api, asCmdError } from "../lib/api";
   import type { Palette } from "../lib/bindings/Palette";
   import { systemReduced } from "../lib/effects.svelte";
-  import type { DotsStats } from "../lib/dots";
+  import type { Background } from "../lib/bindings/Background";
   import { tk } from "../lib/i18n";
   import { logLocal, ui } from "../lib/state.svelte";
   import { on } from "../lib/api";
@@ -19,7 +19,7 @@
   import Segmented from "../components/Segmented.svelte";
   import Toggle from "../components/Toggle.svelte";
 
-  let { dotsStats }: { dotsStats: DotsStats | null } = $props();
+  let { bgStats }: { bgStats: { fps: number; ms: number } | null } = $props();
 
   async function save() {
     await api.setSettings($state.snapshot(ui.settings));
@@ -143,6 +143,22 @@
       </div>
       <div class="row">
         <div>
+          <strong>{tk("ui.settings.background")}</strong>
+          <p class="small muted">{tk("ui.settings.background_hint")}</p>
+        </div>
+        <Segmented
+          label={tk("ui.settings.background")}
+          bind:value={ui.settings.background}
+          onchange={(_v: Background) => save()}
+          options={[
+            { value: "real", label: tk("ui.settings.background.real") },
+            { value: "decorative", label: tk("ui.settings.background.decorative") },
+            { value: "off", label: tk("ui.settings.background.off") },
+          ]}
+        />
+      </div>
+      <div class="row">
+        <div>
           <strong>{tk("ui.settings.palette")}</strong>
           <p class="small muted">{tk("ui.settings.palette_hint")}</p>
         </div>
@@ -178,9 +194,9 @@
         </div>
         <Toggle label={tk("ui.settings.overlay")} bind:checked={ui.settings.overlay} onchange={() => save()} />
       </div>
-      {#if dotsStats}
+      {#if bgStats}
         <p class="small dim mono">
-          {tk("ui.settings.anim_stats", { dots: dotsStats.dots, ms: dotsStats.avgFrameMs.toFixed(2), fps: dotsStats.fps.toFixed(0) })}
+          {tk("ui.settings.anim_stats", { ms: bgStats.ms.toFixed(2), fps: bgStats.fps.toFixed(0) })}
         </p>
       {/if}
     </div>

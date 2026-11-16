@@ -1,6 +1,7 @@
 // Глобальний стан інтерфейсу (руни Svelte 5).
 import type { UpdateStatus } from "./bindings/UpdateStatus";
 import type { DriverCheck } from "./bindings/DriverCheck";
+import type { DiagnosisResult } from "./bindings/DiagnosisResult";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { ExecProgress } from "./bindings/ExecProgress";
 import type { ExecView } from "./bindings/ExecView";
@@ -27,7 +28,7 @@ export const LOG_LIMIT = 500;
 export const ui = $state({
   screen: "analysis" as ScreenId,
   info: null as AppInfo | null,
-  settings: { effects: null, palette: "champagne" } as Settings,
+  settings: { effects: null, palette: "champagne", background: "real" } as Settings,
   bgMode: "idle" as BgMode,
   /** Режим гри активний (гра запущена) — анімація повністю вимикається. */
   gameActive: false,
@@ -47,6 +48,8 @@ export const ui = $state({
   blackboxHidden: null as string | null,
   /** З «Головної» натиснули «Встановити службу»: картка служби одразу покаже згоду. */
   serviceInstall: false,
+  /** Останній запис гри (для фонового шару з реальних даних). */
+  lastRecord: null as DiagnosisResult | null,
   /** Відкрита висувна панель журналу дій (кнопка «Журнал» у верхній панелі). */
   logOpen: false,
 });

@@ -57,3 +57,34 @@ test.describe("Навігація: верхня панель", () => {
     await expect(page.getByText(tk("ui.status.service"))).toBeVisible();
   });
 });
+
+test.describe("Каркас сторінки", () => {
+  test.use({ viewport: { width: 960, height: 640 } });
+
+  test("довга сторінка прокручується", async ({ page }) => {
+    await mockBackend(page);
+    await page.goto("/");
+    await go(page, "settings");
+    const scroll = page.locator(".page .scroll");
+    const m = await scroll.evaluate((el) => ({ sh: el.scrollHeight, ch: el.clientHeight }));
+    expect(m.sh).toBeGreaterThan(m.ch);
+    await scroll.evaluate((el) => el.scrollTo(0, 400));
+    expect(await scroll.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  });
+
+  test("підрозділи завжди праворуч у рядку заголовка", async ({ page }) => {
+    await mockBackend(page);
+    await page.goto("/");
+    for (const screen of ["analysis", "diagnosis", "cleanup", "settings"]) {
+      await go(page, screen);
+      const header = page.locator(".page > .scroll > header");
+      const h = await header.boundingBox();
+      const t = await header.getByRole("tablist").boundingBox();
+      const title = await header.getByRole("heading", { level: 1 }).boundingBox();
+      if (!h || !t || !title) throw new Error(`немає шапки на ${screen}`);
+      expect(Math.abs(h.x + h.width - (t.x + t.width)), screen).toBeLessThan(2);
+      expect(t.y, screen).toBeLessThan(title.y + title.height + 60);
+      expect(t.x, screen).toBeGreaterThan(title.x + 200);
+    }
+  });
+});

@@ -1,44 +1,25 @@
-// Заставка запуску: хаос із точок і штрихів → знак «OX» у кільці → хвиля-кільце →
-// знак зменшується й летить на своє місце в сайдбарі, кільце розходиться в кільця
-// фонового кола, контент з'являється (fade + 8px).
+// Заставка запуску «Pro Premium» (CLAUDE.md 10.5, docs/DESIGN.md розд. 8–9): доріжки потоків
+// проявляються зліва направо, курсор шампань проходить ними, з'являється знак і назва; далі знак
+// летить на своє місце у верхній панелі, заставка розчиняється, контент з'являється.
 //
-// CLAUDE.md 10.5 обмежує анімації 120–400 мс; для заставки запуску користувач дозволив виняток.
-// Кадри — синхронно з vsync (rAF): таймер + rAF, як у фону, дає нерівний крок кадрів, а на 30 FPS
-// рух точок помітно смикається; заставка триває ≈2 с, тож це не постійне навантаження.
-// Решта обмежень — як у фону (lib/dots.ts): без алокацій у кадрі (Float32Array, заздалегідь намальовані спрайти), DPR ≤ 1.5.
-//
-// Запуск не затримується штучно: заставка стартує одночасно із завантаженням даних бекенду.
-// Відповів пізніше, ніж зібрався знак, — знак чекає; раніше — анімація догравається (≈2 с).
-// Клік або будь-яка клавіша пропускають її.
+// ≈2 с, лише transform/opacity (Web Animations API, без canvas і без кадрового циклу в JS).
+// Запуск не затримується: заставка грає паралельно із завантаженням даних бекенду. Відповів пізніше —
+// знак чекає (до 10 с); раніше — заставка догравається. Клік або клавіша пропускають її.
 // Не показується: prefers-reduced-motion, приховане вікно, «Ефекти» не «Повні» (з localStorage,
 // бо налаштування ще не прочитані).
 
-import { hexToRgb, makeSprite } from "./dots";
-
 const KEY = "optimax.splash";
-const DPR_MAX = 1.5;
-const BUCKETS = 12; // відтінки градієнта зліва направо
-const SPRITE_PX = 48;
-const FONT_WAIT_MS = 250; // Inter вбудований локально; довше не чекаємо
-const GATHER_FROM_MS = 180; // найраніший старт збирання
-const GATHER_SPREAD_MS = 260; // розкид старту між точками
-const GATHER_MS = 620;
-const GATHERED_MS = GATHER_FROM_MS + GATHER_SPREAD_MS + GATHER_MS;
-const HOLD_MS = 360; // пауза з хвилею після збирання
-const WAVE_MS = 700;
-const OUT_MS = 560;
+const LANES = 7;
+const EASE = "cubic-bezier(.2,.8,.2,1)";
+const HOLD_UNTIL_MS = 1700; // мінімальна тривалість до виходу
+const OUT_MS = 520;
 const SKIP_MS = 200;
-const MAX_WAIT_MS = 10_000; // бекенд мовчить — заставку прибрати все одно
-const LEFT_INSET = 225; // ширина сайдбара: центр фонового кола — посередині контенту
-const BG_RINGS = 16;
-
-const KIND_RING = 0;
-const KIND_LETTER = 1;
-const KIND_DUST = 2;
+const MAX_WAIT_MS = 10_000;
+const MARK_PX = 56;
 
 /** Керування заставкою з `main.ts`. */
 export interface Splash {
-  /** Інтерфейс змонтовано: можна летіти до знака в сайдбарі. */
+  /** Інтерфейс змонтовано: можна летіти до знака у верхній панелі. */
   ready(): void;
   /** Запуск не вдався: швидко прибрати заставку. */
   cancel(): void;
@@ -63,10 +44,6 @@ function allowed(): boolean {
   }
 }
 
-const easeOut = (u: number) => 1 - (1 - u) * (1 - u);
-const easeInOut = (u: number) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
-const clamp01 = (u: number) => (u < 0 ? 0 : u > 1 ? 1 : u);
-
 /** Стартує заставку або повертає `null`, якщо її не треба показувати. */
 export function startSplash(): Splash | null {
   if (!allowed()) return null;
@@ -74,341 +51,171 @@ export function startSplash(): Splash | null {
   return { ready: () => run.ready(), cancel: () => run.cancel() };
 }
 
+function el(tag: string, css: string, parent: HTMLElement): HTMLElement {
+  const e = document.createElement(tag);
+  e.style.cssText = css;
+  parent.append(e);
+  return e;
+}
+
 class SplashRun {
-  private bg = document.createElement("div");
-  private canvas = document.createElement("canvas");
-  private ctx: CanvasRenderingContext2D | null;
-  private w = window.innerWidth;
-  private h = window.innerHeight;
-  private dpr = Math.min(DPR_MAX, window.devicePixelRatio || 1);
-  private logoX = this.w / 2;
-  private logoY = this.h / 2;
-  private logoR = Math.round(Math.min(this.w, this.h) * 0.15);
-  private sprites: HTMLCanvasElement[] = [];
-  private colors: string[] = [];
-  private waveColor = "";
-  // Дані точок (довжина = n): старт, кінець підйому, ціль у знаку, ціль виходу, затримка, розмір.
-  private n = 0;
-  private kind = new Uint8Array(0);
-  private bucket = new Uint8Array(0);
-  private streak = new Uint8Array(0);
-  private sx = new Float32Array(0);
-  private sy = new Float32Array(0);
-  private mx = new Float32Array(0);
-  private my = new Float32Array(0);
-  private tx = new Float32Array(0);
-  private ty = new Float32Array(0);
-  private ex = new Float32Array(0);
-  private ey = new Float32Array(0);
-  private delay = new Float32Array(0);
-  private size = new Float32Array(0);
-  private markScale = 1;
-  private t0 = -1;
+  private root = document.createElement("div");
+  private mark: HTMLElement;
+  private name: HTMLElement;
+  private t0 = performance.now();
   private isReady = false;
   private skipped = false;
-  private outAt = -1;
-  private outMs = OUT_MS;
-  private bgOpacity = 1;
-  private finished = false;
-  private raf = 0;
-  private frames = 0;
-  private spentMs = 0;
+  private out = false;
+  private done = false;
+  private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
-    const root = document.documentElement;
-    root.classList.add("splashing", "splash-mark");
-    // Легка сітка з крапок на фоні — статична, лише CSS. Фон перехоплює кліки, щоб вони
-    // не влучили в ще невидимий інтерфейс під ним.
-    this.bg.setAttribute("aria-hidden", "true");
-    this.bg.style.cssText =
-      "position:fixed;inset:0;z-index:1000;cursor:default;" +
-      "background:radial-gradient(circle, color-mix(in srgb, var(--text-dim) 30%, transparent) 1px, transparent 1.6px) 0 0 / 22px 22px, var(--bg-app);";
-    this.canvas.setAttribute("aria-hidden", "true");
-    this.canvas.style.cssText = `position:fixed;inset:0;z-index:1001;pointer-events:none;width:${this.w}px;height:${this.h}px;`;
-    this.canvas.width = Math.round(this.w * this.dpr);
-    this.canvas.height = Math.round(this.h * this.dpr);
-    this.ctx = this.canvas.getContext("2d", { alpha: true });
-    document.body.append(this.bg, this.canvas);
+    document.documentElement.classList.add("splashing");
+    // Фон перехоплює кліки, щоб вони не влучили в ще невидимий інтерфейс під ним.
+    this.root.setAttribute("aria-hidden", "true");
+    this.root.style.cssText =
+      "position:fixed;inset:0;z-index:1000;overflow:hidden;cursor:default;background:var(--bg);";
+    const field = el(
+      "div",
+      "position:absolute;left:12%;right:12%;top:50%;height:" +
+        `${LANES * 26}px;transform:translateY(-50%);` +
+        "-webkit-mask-image:radial-gradient(ellipse 60% 80% at 50% 50%,#000 40%,transparent);" +
+        "mask-image:radial-gradient(ellipse 60% 80% at 50% 50%,#000 40%,transparent);",
+      this.root,
+    );
+    for (let i = 0; i < LANES; i++) {
+      const lane = el(
+        "div",
+        `position:absolute;left:0;right:0;top:${i * 26}px;height:6px;border-radius:2px;transform-origin:left center;` +
+          // Сегменти «працював / спав» — декоративний ритм, без даних і без підписів.
+          "background:repeating-linear-gradient(90deg," +
+          `color-mix(in srgb,var(--thread-work) 32%,transparent) 0 ${60 + ((i * 37) % 90)}px,transparent 0 ${78 + ((i * 37) % 90)}px,` +
+          `color-mix(in srgb,var(--thread-idle) 14%,transparent) 0 ${120 + ((i * 53) % 70)}px,transparent 0 ${128 + ((i * 53) % 70)}px);` +
+          `background-position:${-(i * 71) % 160}px 0;`,
+        field,
+      );
+      lane.animate(
+        [
+          { transform: "scaleX(0)", opacity: 0 },
+          { transform: "scaleX(1)", opacity: 1 },
+        ],
+        { duration: 520, delay: 40 * i, easing: EASE, fill: "backwards" },
+      );
+    }
+    const cursor = el(
+      "div",
+      "position:absolute;top:-24px;bottom:-24px;left:0;width:100px;" +
+        "background:linear-gradient(90deg,rgba(var(--glow),0),rgba(var(--glow),.12));" +
+        "box-shadow:1px 0 0 rgba(var(--glow),.5);opacity:0;",
+      field,
+    );
+    cursor.animate(
+      [
+        { transform: "translateX(-120px)", opacity: 0 },
+        { opacity: 1, offset: 0.15 },
+        { opacity: 1, offset: 0.85 },
+        { transform: `translateX(${Math.round(window.innerWidth * 0.76) + 20}px)`, opacity: 0 },
+      ],
+      { duration: 1100, delay: 250, easing: "cubic-bezier(.45,0,.55,1)", fill: "both" },
+    );
+    const center =
+      "position:absolute;left:50%;top:50%;display:flex;flex-direction:column;align-items:center;gap:16px;transform:translate(-50%,-50%);";
+    const box = el("div", center, this.root);
+    this.mark = el(
+      "span",
+      `display:block;width:${MARK_PX}px;height:${MARK_PX}px;border-radius:16px;` +
+        "background:var(--accent-gradient);box-shadow:0 0 40px rgba(var(--glow),.55),0 0 0 1px rgba(255,255,255,.12) inset;",
+      box,
+    );
+    this.mark.animate(
+      [
+        { transform: "scale(.6)", opacity: 0 },
+        { transform: "scale(1)", opacity: 1 },
+      ],
+      { duration: 480, delay: 650, easing: EASE, fill: "backwards" },
+    );
+    this.name = el(
+      "span",
+      "font:300 28px/1 var(--font-ui, 'Inter Tight', sans-serif);letter-spacing:.04em;color:var(--text);",
+      box,
+    );
+    this.name.textContent = "OptimaX";
+    this.name.animate(
+      [
+        { transform: "translateY(8px)", opacity: 0 },
+        { transform: "none", opacity: 1 },
+      ],
+      { duration: 480, delay: 820, easing: EASE, fill: "backwards" },
+    );
+    document.body.append(this.root);
     window.addEventListener("pointerdown", this.skip, true);
     window.addEventListener("keydown", this.skip, true);
-    void this.init();
+    this.timer = setTimeout(this.tick, HOLD_UNTIL_MS);
   }
 
   ready(): void {
     this.isReady = true;
+    this.tick();
   }
 
   cancel(): void {
-    this.markScale = 0;
     this.isReady = true;
     this.skipped = true;
-    if (this.t0 < 0) this.finish();
+    this.finish();
   }
 
   private skip = (): void => {
     this.skipped = true;
+    this.tick();
   };
 
-  private async init(): Promise<void> {
-    const css = getComputedStyle(document.documentElement);
-    const from = hexToRgb(css.getPropertyValue("--a1") || "#F3E5C3");
-    const to = hexToRgb(css.getPropertyValue("--a2") || "#C9A45E");
-    for (let i = 0; i < BUCKETS; i++) {
-      const k = i / (BUCKETS - 1);
-      const rgb: [number, number, number] = [
-        Math.round(from[0] + (to[0] - from[0]) * k),
-        Math.round(from[1] + (to[1] - from[1]) * k),
-        Math.round(from[2] + (to[2] - from[2]) * k),
-      ];
-      this.sprites.push(makeSprite(rgb, SPRITE_PX));
-      this.colors.push(`rgb(${rgb[0]},${rgb[1]},${rgb[2]})`);
+  private tick = (): void => {
+    if (this.out || this.done) return;
+    const t = performance.now() - this.t0;
+    if (this.isReady && (this.skipped || t >= HOLD_UNTIL_MS)) this.leave();
+    else if (t >= MAX_WAIT_MS) this.finish();
+    else {
+      clearTimeout(this.timer);
+      this.timer = setTimeout(this.tick, Math.max(50, HOLD_UNTIL_MS - t));
     }
-    this.waveColor = `rgb(${from[0]},${from[1]},${from[2]})`;
-    const font = `600 ${Math.round(this.logoR * 0.95)}px Inter, sans-serif`;
-    try {
-      await Promise.race([document.fonts.load(font), new Promise((r) => setTimeout(r, FONT_WAIT_MS))]);
-    } catch {
-      // Шрифт не підвантажився — малюємо системним, форма знака та сама.
-    }
-    if (this.finished) return;
-    this.layout(font);
-    this.raf = requestAnimationFrame(this.frame);
-  }
+  };
 
-  /** Цілі точок: кільце, растр літер «OX», пил навколо. Алокації — лише тут. */
-  private layout(font: string): void {
-    const R = this.logoR;
-    const pts: number[] = []; // x, y, kind
-    const ringStep = 6;
-    const ringN = Math.max(24, Math.round((Math.PI * 2 * R) / ringStep));
-    for (let i = 0; i < ringN; i++) {
-      const a = (i / ringN) * Math.PI * 2;
-      pts.push(this.logoX + Math.cos(a) * R, this.logoY + Math.sin(a) * R, KIND_RING);
+  /** Вихід: знак летить до знака у верхній панелі, фон розчиняється, контент з'являється. */
+  private leave(): void {
+    this.out = true;
+    clearTimeout(this.timer);
+    const ms = this.skipped ? SKIP_MS : OUT_MS;
+    this.root.style.pointerEvents = "none";
+    const target = document.querySelector<HTMLElement>("[data-splash-mark]")?.getBoundingClientRect();
+    const from = this.mark.getBoundingClientRect();
+    if (target && target.width > 0 && from.width > 0) {
+      const dx = target.left + target.width / 2 - (from.left + from.width / 2);
+      const dy = target.top + target.height / 2 - (from.top + from.height / 2);
+      this.mark.animate([{ transform: "none" }, { transform: `translate(${dx}px,${dy}px) scale(${target.width / from.width})` }], {
+        duration: ms,
+        easing: EASE,
+        fill: "forwards",
+      });
     }
-    const side = R * 2;
-    const off = document.createElement("canvas");
-    off.width = off.height = side;
-    const g = off.getContext("2d", { willReadFrequently: true });
-    if (g) {
-      g.font = font;
-      g.textAlign = "center";
-      g.textBaseline = "middle";
-      g.fillStyle = "#fff";
-      g.fillText("OX", R, R * 1.04);
-      const data = g.getImageData(0, 0, side, side).data;
-      const step = Math.max(4, Math.round(R / 21));
-      let row = 0;
-      for (let y = 0; y < side; y += step, row++) {
-        // Зсув кожного другого рядка — растр «стільниками», а не квадратна сітка.
-        for (let x = row % 2 ? step / 2 : 0; x < side; x += step) {
-          if ((data[(Math.floor(y) * side + Math.floor(x)) * 4 + 3] ?? 0) > 140) {
-            pts.push(this.logoX - R + x, this.logoY - R + y, KIND_LETTER);
-          }
-        }
-      }
-    }
-    const logoN = pts.length / 3;
-    const dustN = Math.round(logoN * 0.7);
-    for (let i = 0; i < dustN; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const r = R * (1.15 + Math.random() * 0.7);
-      pts.push(this.logoX + Math.cos(a) * r, this.logoY + Math.sin(a) * r, KIND_DUST);
-    }
-
-    const n = pts.length / 3;
-    this.n = n;
-    this.kind = new Uint8Array(n);
-    this.bucket = new Uint8Array(n);
-    this.streak = new Uint8Array(n);
-    this.sx = new Float32Array(n);
-    this.sy = new Float32Array(n);
-    this.mx = new Float32Array(n);
-    this.my = new Float32Array(n);
-    this.tx = new Float32Array(n);
-    this.ty = new Float32Array(n);
-    this.ex = new Float32Array(n);
-    this.ey = new Float32Array(n);
-    this.delay = new Float32Array(n);
-    this.size = new Float32Array(n);
-    // Фонове коло (як у DotField): центр контентної області, радіус 40 % меншої сторони.
-    const contentW = Math.max(1, this.w - LEFT_INSET);
-    const bgX = LEFT_INSET + contentW / 2;
-    const bgR = Math.min(contentW, this.h) * 0.4;
-    for (let i = 0; i < n; i++) {
-      const x = pts[i * 3] ?? 0;
-      const y = pts[i * 3 + 1] ?? 0;
-      const kind = pts[i * 3 + 2] ?? KIND_DUST;
-      this.kind[i] = kind;
-      this.tx[i] = x;
-      this.ty[i] = y;
-      const u = clamp01((x - (this.logoX - R)) / (2 * R));
-      this.bucket[i] = kind === KIND_DUST ? Math.floor(Math.random() * BUCKETS) : Math.round(u * (BUCKETS - 1));
-      this.streak[i] = Math.random() < 0.35 ? 1 : 0;
-      // Хмара піднімається знизу.
-      const sx = Math.random() * this.w;
-      const sy = this.h + 10 + Math.random() * this.h * 0.35;
-      this.sx[i] = sx;
-      this.sy[i] = sy;
-      this.mx[i] = sx + (Math.random() - 0.5) * this.w * 0.15;
-      this.my[i] = this.h * (0.3 + Math.random() * 0.55);
-      this.delay[i] = Math.random() * GATHER_SPREAD_MS;
-      this.size[i] = kind === KIND_LETTER ? 3.4 : kind === KIND_RING ? 3 : 2.2 + Math.random() * 1.6;
-      // Кільце розходиться в кільця фонового кола (той самий кут).
-      const a = Math.atan2(y - this.logoY, x - this.logoX);
-      const ring = 4 + Math.floor(Math.random() * (BG_RINGS - 3));
-      this.ex[i] = bgX + Math.cos(a) * bgR * (ring / BG_RINGS);
-      this.ey[i] = this.h / 2 + Math.sin(a) * bgR * (ring / BG_RINGS);
-    }
-  }
-
-  /** Початок виходу: літери — до знака в сайдбарі (або на місці, якщо його немає). */
-  private beginOut(t: number): void {
-    this.outAt = t;
-    this.outMs = this.skipped ? SKIP_MS : OUT_MS;
-    this.bg.style.pointerEvents = "none";
-    const el = this.markScale > 0 ? document.querySelector<HTMLElement>("[data-splash-mark]") : null;
-    const rect = el?.getBoundingClientRect();
-    if (rect && rect.width > 0) {
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top + rect.height / 2;
-      this.markScale = rect.width / (2 * this.logoR);
-      for (let i = 0; i < this.n; i++) {
-        if (this.kind[i] !== KIND_LETTER) continue;
-        this.ex[i] = cx + ((this.tx[i] ?? 0) - this.logoX) * this.markScale;
-        this.ey[i] = cy + ((this.ty[i] ?? 0) - this.logoY) * this.markScale;
-      }
-    } else {
-      this.markScale = 1;
-      this.ex.set(this.tx);
-      this.ey.set(this.ty);
-    }
-    // Контент з'являється разом із розчиненням фону (transition у App.svelte).
+    this.name.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms * 0.5, fill: "forwards" });
+    // Контент з'являється разом із розчиненням (transition у App.svelte).
     document.documentElement.classList.remove("splashing");
-  }
-
-  private frame = (now: number): void => {
-    if (this.finished) return;
-    if (this.t0 < 0) this.t0 = now;
-    let t = now - this.t0;
-    if (this.outAt < 0) {
-      const holdDone = t >= GATHERED_MS + HOLD_MS;
-      if (this.isReady && (this.skipped || holdDone)) this.beginOut(t);
-      else if (t >= MAX_WAIT_MS) {
-        this.markScale = 0;
-        this.skipped = true;
-        this.beginOut(t);
-      }
-    }
-    // Пропуск — одразу зібраний знак, щоб вихід не стрибав із хаосу.
-    if (this.skipped && this.outAt >= 0 && this.outAt < GATHERED_MS) {
-      this.t0 -= GATHERED_MS - this.outAt;
-      this.outAt = GATHERED_MS;
-      t = now - this.t0;
-    }
-    const start = performance.now();
-    const v = this.outAt >= 0 ? clamp01((t - this.outAt) / this.outMs) : 0;
-    this.draw(t, v);
-    this.spentMs += performance.now() - start;
-    this.frames++;
-    if (this.outAt >= 0 && v >= 1) {
-      this.finish();
-      return;
-    }
-    this.raf = requestAnimationFrame(this.frame);
-  };
-
-  private draw(t: number, v: number): void {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    ctx.clearRect(0, 0, this.w, this.h);
-    const out = this.outAt >= 0;
-    const eOut = easeInOut(v);
-    // Поки чекаємо бекенд — легке «дихання» знака; на виході воно завмирає там, де було
-    // (інакше на старті польоту знак стрибне на 1–2 %).
-    const bt = out ? this.outAt : t;
-    const breath = bt > GATHERED_MS ? 1 + 0.015 * Math.sin(((bt - GATHERED_MS) / 1000) * Math.PI) : 1;
-    for (let i = 0; i < this.n; i++) {
-      const kind = this.kind[i] ?? KIND_DUST;
-      const g0 = GATHER_FROM_MS + (this.delay[i] ?? 0);
-      const tx = this.logoX + ((this.tx[i] ?? 0) - this.logoX) * breath;
-      const ty = this.logoY + ((this.ty[i] ?? 0) - this.logoY) * breath;
-      let x: number;
-      let y: number;
-      let alpha: number;
-      let size = this.size[i] ?? 3;
-      let streakLen = 0;
-      if (t < g0) {
-        const e = easeOut(t / g0);
-        x = (this.sx[i] ?? 0) + ((this.mx[i] ?? 0) - (this.sx[i] ?? 0)) * e;
-        y = (this.sy[i] ?? 0) + ((this.my[i] ?? 0) - (this.sy[i] ?? 0)) * e;
-        alpha = 0.2 + 0.4 * e;
-        if (this.streak[i]) streakLen = 18 * (1 - e);
-      } else if (t < g0 + GATHER_MS) {
-        const e = easeInOut((t - g0) / GATHER_MS);
-        x = (this.mx[i] ?? 0) + (tx - (this.mx[i] ?? 0)) * e;
-        y = (this.my[i] ?? 0) + (ty - (this.my[i] ?? 0)) * e;
-        alpha = kind === KIND_DUST ? 0.6 * (1 - e) : 0.6 + 0.3 * e;
-      } else {
-        x = tx;
-        y = ty;
-        alpha = kind === KIND_DUST ? 0 : 0.9;
-      }
-      if (out && kind !== KIND_DUST) {
-        x += ((this.ex[i] ?? 0) - x) * eOut;
-        y += ((this.ey[i] ?? 0) - y) * eOut;
-        if (kind === KIND_LETTER) {
-          size *= 1 + (Math.max(0.35, this.markScale) - 1) * eOut;
-          alpha *= 1 - clamp01((v - 0.75) / 0.25);
-        } else {
-          alpha *= 1 - eOut;
-        }
-      }
-      if (alpha <= 0.01) continue;
-      const b = this.bucket[i] ?? 0;
-      ctx.globalAlpha = alpha;
-      if (streakLen > 1) {
-        ctx.fillStyle = this.colors[b] ?? "#fff";
-        ctx.fillRect(x - 0.5, y, 1, streakLen);
-      }
-      const sprite = this.sprites[b];
-      if (!sprite) continue;
-      const s = size * 2.2;
-      ctx.drawImage(sprite, x - s / 2, y - s / 2, s, s);
-    }
-    // Пауза з акцентом: тонка хвиля-кільце розходиться від знака.
-    const w = (t - GATHERED_MS) / WAVE_MS;
-    if (w > 0 && w < 1 && !out) {
-      const e = easeOut(w);
-      ctx.globalAlpha = 0.45 * (1 - w);
-      ctx.strokeStyle = this.waveColor;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(this.logoX, this.logoY, this.logoR * (1 + 1.3 * e), 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-    // Фон розчиняється — під ним уже інтерфейс і фонове коло.
-    const op = out ? 1 - eOut : 1;
-    if (op !== this.bgOpacity) {
-      this.bgOpacity = op;
-      this.bg.style.opacity = String(op);
-    }
+    const fade = this.root.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: ms,
+      delay: ms * 0.35,
+      easing: EASE,
+      fill: "forwards",
+    });
+    fade.onfinish = () => this.finish();
   }
 
   private finish(): void {
-    if (this.finished) return;
-    this.finished = true;
-    cancelAnimationFrame(this.raf);
+    if (this.done) return;
+    this.done = true;
+    clearTimeout(this.timer);
     window.removeEventListener("pointerdown", this.skip, true);
     window.removeEventListener("keydown", this.skip, true);
-    this.bg.remove();
-    this.canvas.remove();
-    document.documentElement.classList.remove("splashing", "splash-mark");
-    if (this.frames > 0) {
-      console.info(
-        `[splash] ${this.n} точок, ${this.frames} кадрів, ${(this.spentMs / this.frames).toFixed(2)} мс/кадр`,
-      );
-    }
+    this.root.remove();
+    document.documentElement.classList.remove("splashing");
   }
 }

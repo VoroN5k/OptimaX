@@ -17,6 +17,20 @@ pub enum Effects {
     Off,
 }
 
+/// Фоновий шар (`docs/DESIGN.md` розд. 9, 11). Працює лише з «Ефектами: Повні» і поза вимірюваннями.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum Background {
+    /// Реальні дані останнього запису (стани потоків гри, кадри); без запису — декоративний.
+    #[default]
+    Real,
+    /// Завжди декоративний, без підписів і цифр.
+    Decorative,
+    /// Без фону.
+    Off,
+}
+
 /// Палітра акценту: змінює лише акцентні кольори, семантичні (увага, GPU, помилка) — ні.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -41,6 +55,9 @@ pub struct Settings {
     /// Палітра акценту.
     #[serde(default)]
     pub palette: Palette,
+    /// Фоновий шар.
+    #[serde(default)]
+    pub background: Background,
     /// Як починати запис гри (діагностика й A/B).
     #[serde(default)]
     pub record_start: optimax_frametime::StartMode,
@@ -133,6 +150,7 @@ impl Default for Settings {
         Self {
             effects: None,
             palette: Palette::default(),
+            background: Background::default(),
             record_start: optimax_frametime::StartMode::Auto,
             record_sound: true,
             upscale: optimax_upscale::UpscaleSettings::default(),

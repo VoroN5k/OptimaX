@@ -104,6 +104,7 @@ export function finding(f: Partial<Finding> & Pick<Finding, "id" | "title" | "de
 export const settings: Settings = {
   effects: "off",
   palette: "champagne",
+  background: "real",
   record_start: "auto",
   record_sound: true,
   upscale: { filter: "fsr", fit: "aspect", sharpness: 0.2, capture_cursor: false },

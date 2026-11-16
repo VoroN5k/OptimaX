@@ -1,4 +1,5 @@
-// Фоновий шар «Шовк» (docs/DESIGN.md розд. 9, CLAUDE.md 10.4). Без залежностей.
+// Фоновий шар «Шовк» (docs/DESIGN.md розд. 9, CLAUDE.md 10.4) і заставка запуску, що складає ту
+// саму поверхню з точок (`assemble`). Без залежностей.
 //
 // Суто декоративний: тонкі лінії поверхні, що повільно «дихає», у перспективі. Ліній однаково
 // багато, а яскравість дає сама геометрія: де поверхня нахиляється до глядача, лінії сходяться
@@ -40,7 +41,13 @@ const X_STEP = WIDTH / (COLS - 1);
 const SHADE_MIN = 0.3;
 const SHADE_GAIN = 3.2;
 
+/** Момент поверхні, з якого починається фон і яким закінчується заставка, с. */
+const SURFACE_T0 = 30;
+/** Заставка малює кожну другу точку рядка — образ той самий, точок удвічі менше. */
+const DOT_STEP = 2;
+
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
+const easeOut = (k: number) => 1 - Math.pow(1 - clamp(k, 0, 1), 3);
 const smooth = (a: number, b: number, v: number) => {
   const k = clamp((v - a) / (b - a), 0, 1);
   return k * k * (3 - 2 * k);
@@ -71,6 +78,14 @@ export class BackdropScene {
   private ok = new Uint8Array(ROWS * COLS);
   private hs = new Float32Array(ROWS * COLS);
   private t0 = -1;
+  private skipReveal = false;
+  private dot: string[] = [];
+  // Заставка: звідки летить кожна точка і з якою затримкою (частка шляху 0–0.2).
+  private fromX = new Float32Array(ROWS * COLS);
+  private fromY = new Float32Array(ROWS * COLS);
+  private delay = new Float32Array(ROWS * COLS);
+  private fromW = -1;
+  private fromH = -1;
 
   constructor(ctx: CanvasRenderingContext2D, colors: BackdropColors) {
     this.ctx = ctx;
@@ -90,37 +105,33 @@ export class BackdropScene {
     this.h = h;
   }
 
-  /** Рядок `v` (0 — ближній, 1 — дальній): колір від акценту до холодного й прозорість. */
+  /** Рядок `v` (0 — ближній, 1 — дальній): колір від акценту до холодного й прозорість. Точки
+   *  заставки — того самого кольору, але яскравіші (на порожньому екрані вони — головний образ). */
   private makeStrokes(): void {
     const parse = (s: string) => s.split(",").map((n) => Number(n) || 0);
     const a = parse(this.colors.near);
     const b = parse(this.colors.far);
-    this.stroke = Array.from({ length: ROWS }, (_, r) => {
+    const rows = Array.from({ length: ROWS }, (_, r) => {
       const v = r / (ROWS - 1);
       const m = smooth(0.15, 0.85, v);
       const ch = (i: number) => Math.round((a[i] ?? 0) + ((b[i] ?? 0) - (a[i] ?? 0)) * m);
       // Дальній край згасає до нуля — без різкої лінії горизонту.
       const alpha = (ALPHA_NEAR + (ALPHA_FAR - ALPHA_NEAR) * Math.pow(v, 0.7)) * (1 - smooth(0.72, 1, v));
-      return `rgba(${ch(0)},${ch(1)},${ch(2)},${alpha.toFixed(4)})`;
+      return { rgb: `${ch(0)},${ch(1)},${ch(2)}`, alpha };
     });
+    this.stroke = rows.map((r) => `rgba(${r.rgb},${r.alpha.toFixed(4)})`);
+    this.dot = rows.map((r) => `rgba(${r.rgb},${Math.min(0.9, r.alpha * 4).toFixed(4)})`);
   }
 
-  /** Один кадр. `animated = false` — статичний кадр (зменшений рух). */
-  frame(now: number, animated: boolean): void {
-    if (this.t0 < 0) this.t0 = now;
-    const t = animated ? (now - this.t0) / 1000 : 0;
-    const { ctx, w, h } = this;
-    ctx.clearRect(0, 0, w, h);
-    if (w <= 0 || h <= 0) return;
-    // Час поверхні зсунутий: перший кадр — уже «розвинена» складка, а не початкова фаза.
-    const ts = t + 30;
+  /** Проєкція сітки поверхні на екран у момент `ts` (с) — у типізовані масиви, без алокацій. */
+  private project(ts: number): void {
+    const { w, h, px, py, ok, hs } = this;
     const yaw = YAW + YAW_SWAY * Math.sin(ts * 0.021);
     const cy = Math.cos(yaw);
     const sy = Math.sin(yaw);
     const focal = h * 0.95;
     const horizon = h * 0.08;
     const cx = w * 0.5;
-    const { px, py, ok, hs } = this;
     for (let r = 0; r < ROWS; r++) {
       const zl = (r / (ROWS - 1) - 0.5) * DEPTH;
       for (let c = 0; c < COLS; c++) {
@@ -139,8 +150,11 @@ export class BackdropScene {
         ok[k] = 1;
       }
     }
-    // Поява за 1.2 с.
-    const reveal = animated ? smooth(0, 1.2, t) : 1;
+  }
+
+  /** Лінії рядків з полиском; `alpha` — загальна прозорість (поява). */
+  private drawLines(alpha: number): void {
+    const { ctx, px, py, ok, hs } = this;
     ctx.lineWidth = 1;
     // Від дальніх до ближніх: ближчі лягають зверху. Рядок малюється шматками: у кожного своя
     // яскравість від нахилу поверхні — м'який полиск там, де складка повернута до світла.
@@ -155,7 +169,7 @@ export class BackdropScene {
         const slope = (((hs[km + next] ?? 0) - (hs[km] ?? 0)) * sign) / Z_STEP;
         const side = ((hs[km + 1] ?? 0) - (hs[km - 1] ?? 0)) / (2 * X_STEP);
         const lit = clamp(0.5 + 0.55 * slope - 0.35 * side, 0, 1);
-        ctx.globalAlpha = reveal * (SHADE_MIN + SHADE_GAIN * lit * lit * lit);
+        ctx.globalAlpha = alpha * (SHADE_MIN + SHADE_GAIN * lit * lit * lit);
         ctx.beginPath();
         ctx.moveTo(px[r * COLS + c0] ?? 0, py[r * COLS + c0] ?? 0);
         for (let c = c0 + 1; c <= c1; c++) ctx.lineTo(px[r * COLS + c] ?? 0, py[r * COLS + c] ?? 0);
@@ -164,6 +178,86 @@ export class BackdropScene {
     }
     ctx.globalAlpha = 1;
   }
+
+  /** Один кадр. `animated = false` — статичний кадр (зменшений рух). */
+  frame(now: number, animated: boolean): void {
+    if (this.t0 < 0) this.t0 = now;
+    const t = animated ? (now - this.t0) / 1000 : 0;
+    const { ctx, w, h } = this;
+    ctx.clearRect(0, 0, w, h);
+    if (w <= 0 || h <= 0) return;
+    // Час поверхні зсунутий: перший кадр — уже «розвинена» складка, та сама, якою закінчується
+    // заставка (`assemble`), тож перехід від заставки до фону безшовний.
+    this.project(t + SURFACE_T0);
+    // Поява за 1.2 с (після заставки — одразу: поверхня вже на екрані).
+    this.drawLines(animated && !this.skipReveal ? smooth(0, 1.2, t) : 1);
+  }
+
+  /** Заставка щойно показала ту саму поверхню: фон стартує з її кадру, одразу, без проявлення. */
+  continueSplash(): void {
+    this.skipReveal = true;
+    this.t0 = -1;
+  }
+
+  /**
+   * Кадр заставки: точки сітки злітаються з розсипу у поверхню (`k` 0→1), наприкінці між ними
+   * проступають лінії. Поверхня — та сама, що в першому кадрі фону.
+   */
+  assemble(k: number): void {
+    const { ctx, w, h, px, py, ok } = this;
+    ctx.clearRect(0, 0, w, h);
+    if (w <= 0 || h <= 0) return;
+    if (this.fromW !== w || this.fromH !== h) this.scatter();
+    this.project(SURFACE_T0);
+    const lines = smooth(0.62, 1, k);
+    if (lines > 0) this.drawLines(lines);
+    const dotFade = 1 - 0.75 * lines;
+    for (let r = ROWS - 1; r >= 0; r--) {
+      ctx.fillStyle = this.dot[r] ?? "transparent";
+      for (let c = 0; c < COLS; c += DOT_STEP) {
+        const i = r * COLS + c;
+        if (!ok[i]) continue;
+        // Кожна точка вилітає зі своєю затримкою; дорога — з плавним гальмуванням.
+        const d = this.delay[i] ?? 0;
+        const p = easeOut((k - d) / (0.7 - 0.2));
+        if (p <= 0) continue;
+        const fx = this.fromX[i] ?? 0;
+        const fy = this.fromY[i] ?? 0;
+        const x = fx + ((px[i] ?? 0) - fx) * p;
+        const y = fy + ((py[i] ?? 0) - fy) * p;
+        ctx.globalAlpha = dotFade * Math.min(1, p * 1.6);
+        ctx.fillRect(x - 0.8, y - 0.8, 1.6, 1.6);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** Початкові положення точок заставки: детермінований розсип по всьому вікну. */
+  private scatter(): void {
+    this.fromW = this.w;
+    this.fromH = this.h;
+    let s = 0x2f6b9d;
+    const rnd = () => {
+      s = (s + 0x6d2b79f5) | 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    for (let i = 0; i < ROWS * COLS; i++) {
+      this.fromX[i] = (rnd() * 1.4 - 0.2) * this.w;
+      this.fromY[i] = (rnd() * 1.4 - 0.2) * this.h;
+      this.delay[i] = rnd() * 0.2;
+    }
+  }
+}
+
+/** Кольори поверхні з токенів (`--glow` — ближні рядки, `--thread-idle` — дальні). */
+export function backdropColors(): BackdropColors {
+  const css = getComputedStyle(document.documentElement);
+  return {
+    near: css.getPropertyValue("--glow").replace(/\s/g, "") || "233,205,140",
+    far: hexToTriplet(css.getPropertyValue("--thread-idle"), "143,148,170"),
+  };
 }
 
 /** `#RRGGBB` → `r,g,b` (для кольорів з токенів). */

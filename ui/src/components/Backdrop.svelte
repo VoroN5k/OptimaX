@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { BackdropScene, hexToTriplet, type BackdropColors } from "../lib/backdrop";
+  import { BackdropScene, backdropColors } from "../lib/backdrop";
 
   // Фоновий шар «Шовк» (docs/DESIGN.md розд. 9): зерно й canvas з поверхнею. Суто декоративний,
   // без підписів і цифр. `active = false` — нічого не малюється (ефекти не «Повні», вимірювання,
@@ -35,14 +35,6 @@
   let h = 0;
   let frames = 0;
   let spent = 0;
-
-  function colors(): BackdropColors {
-    const css = getComputedStyle(document.documentElement);
-    return {
-      near: css.getPropertyValue("--glow").replace(/\s/g, "") || "233,205,140",
-      far: hexToTriplet(css.getPropertyValue("--thread-idle"), "143,148,170"),
-    };
-  }
 
   function resize(): void {
     if (!anim || !scene) return;
@@ -92,7 +84,8 @@
   onMount(() => {
     const ctx = anim?.getContext("2d", { alpha: true });
     if (!ctx || !anim) return;
-    scene = new BackdropScene(ctx, colors());
+    scene = new BackdropScene(ctx, backdropColors());
+    let splashing = document.documentElement.classList.contains("splashing");
     resize();
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
     const onMq = () => (reduced = mq.matches);
@@ -106,12 +99,16 @@
     window.addEventListener("resize", onResize);
     const io = new IntersectionObserver((e) => (onScreen = e[e.length - 1]?.isIntersecting ?? true));
     io.observe(anim);
-    // Палітра змінює кольори акценту — перечитати токени.
-    const mo = new MutationObserver(() => {
-      scene?.setColors(colors());
+    // Палітра змінює кольори акценту — перечитати токени. Кінець заставки (клас `splashing`
+    // знято) — фон продовжує її поверхню з того самого кадру.
+    const mo = new MutationObserver((records) => {
+      const now = document.documentElement.classList.contains("splashing");
+      if (splashing && !now) scene?.continueSplash();
+      splashing = now;
+      if (records.some((r) => r.attributeName === "data-palette")) scene?.setColors(backdropColors());
       if (active && !raf) scene?.frame(performance.now(), !reduced);
     });
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-palette"] });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-palette", "class"] });
     const statsTimer = onstats
       ? setInterval(() => {
           if (frames > 0) onstats({ fps: frames, ms: spent / frames });

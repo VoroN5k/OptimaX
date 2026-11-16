@@ -1,15 +1,19 @@
-// Заставка запуску «Pro Premium» (CLAUDE.md 10.5, docs/DESIGN.md розд. 8–9): доріжки потоків
-// проявляються зліва направо, курсор шампань проходить ними, з'являється знак і назва; далі знак
-// летить на своє місце у верхній панелі, заставка розчиняється, контент з'являється.
+// Заставка запуску «Pro Premium» (CLAUDE.md 10.5, docs/DESIGN.md розд. 8–9): точки злітаються
+// з розсипу й складаються в поверхню фону «Шовк», між ними проступають лінії; з'являється знак і
+// назва; далі знак летить на своє місце у верхній панелі, заставка розчиняється, а фон продовжує
+// ту саму поверхню.
 //
-// ≈2 с, лише transform/opacity (Web Animations API, без canvas і без кадрового циклу в JS).
+// ≈2 с: canvas 2D (кадровий цикл лише на час складання, DPR ≤ 2) + Web Animations для знака.
 // Запуск не затримується: заставка грає паралельно із завантаженням даних бекенду. Відповів пізніше —
 // знак чекає (до 10 с); раніше — заставка догравається. Клік або клавіша пропускають її.
 // Не показується: prefers-reduced-motion, приховане вікно, «Ефекти» не «Повні» (з localStorage,
 // бо налаштування ще не прочитані).
 
+import { BackdropScene, backdropColors } from "./backdrop";
+
 const KEY = "optimax.splash";
-const LANES = 7;
+/** Скільки триває складання поверхні з точок. */
+const ASSEMBLE_MS = 1400;
 const EASE = "cubic-bezier(.2,.8,.2,1)";
 const HOLD_UNTIL_MS = 1700; // мінімальна тривалість до виходу
 const OUT_MS = 520;
@@ -68,6 +72,8 @@ class SplashRun {
   private out = false;
   private done = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private scene: BackdropScene | null = null;
+  private raf = 0;
 
   constructor() {
     document.documentElement.classList.add("splashing");
@@ -75,49 +81,24 @@ class SplashRun {
     this.root.setAttribute("aria-hidden", "true");
     this.root.style.cssText =
       "position:fixed;inset:0;z-index:1000;overflow:hidden;cursor:default;background:var(--bg);";
-    const field = el(
-      "div",
-      "position:absolute;left:12%;right:12%;top:50%;height:" +
-        `${LANES * 26}px;transform:translateY(-50%);` +
-        "-webkit-mask-image:radial-gradient(ellipse 60% 80% at 50% 50%,#000 40%,transparent);" +
-        "mask-image:radial-gradient(ellipse 60% 80% at 50% 50%,#000 40%,transparent);",
-      this.root,
-    );
-    for (let i = 0; i < LANES; i++) {
-      const lane = el(
-        "div",
-        `position:absolute;left:0;right:0;top:${i * 26}px;height:6px;border-radius:2px;transform-origin:left center;` +
-          // Сегменти «працював / спав» — декоративний ритм, без даних і без підписів.
-          "background:repeating-linear-gradient(90deg," +
-          `color-mix(in srgb,var(--thread-work) 32%,transparent) 0 ${60 + ((i * 37) % 90)}px,transparent 0 ${78 + ((i * 37) % 90)}px,` +
-          `color-mix(in srgb,var(--thread-idle) 14%,transparent) 0 ${120 + ((i * 53) % 70)}px,transparent 0 ${128 + ((i * 53) % 70)}px);` +
-          `background-position:${-(i * 71) % 160}px 0;`,
-        field,
-      );
-      lane.animate(
-        [
-          { transform: "scaleX(0)", opacity: 0 },
-          { transform: "scaleX(1)", opacity: 1 },
-        ],
-        { duration: 520, delay: 40 * i, easing: EASE, fill: "backwards" },
-      );
+    // Поверхня «Шовк» складається з точок, що злітаються з розсипу; наприкінці проступають лінії.
+    // Це той самий перший кадр, з якого стартує фон, тож після заставки фон продовжує її без стрибка.
+    const canvas = el("canvas", "position:absolute;inset:0;width:100%;height:100%;display:block;" +
+        // Та сама маска бічних країв, що й у фону (Backdrop.svelte), — перехід без різниці.
+        "-webkit-mask-image:linear-gradient(90deg,transparent,#000 18%,#000 82%,transparent);" +
+        "mask-image:linear-gradient(90deg,transparent,#000 18%,#000 82%,transparent);", this.root) as HTMLCanvasElement;
+    const ctx = canvas.getContext("2d", { alpha: true });
+    if (ctx) {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.scene = new BackdropScene(ctx, backdropColors());
+      this.scene.layout(w, h);
+      this.raf = requestAnimationFrame(this.draw);
     }
-    const cursor = el(
-      "div",
-      "position:absolute;top:-24px;bottom:-24px;left:0;width:100px;" +
-        "background:linear-gradient(90deg,rgba(var(--glow),0),rgba(var(--glow),.12));" +
-        "box-shadow:1px 0 0 rgba(var(--glow),.5);opacity:0;",
-      field,
-    );
-    cursor.animate(
-      [
-        { transform: "translateX(-120px)", opacity: 0 },
-        { opacity: 1, offset: 0.15 },
-        { opacity: 1, offset: 0.85 },
-        { transform: `translateX(${Math.round(window.innerWidth * 0.76) + 20}px)`, opacity: 0 },
-      ],
-      { duration: 1100, delay: 250, easing: "cubic-bezier(.45,0,.55,1)", fill: "both" },
-    );
     const center =
       "position:absolute;left:50%;top:50%;display:flex;flex-direction:column;align-items:center;gap:16px;transform:translate(-50%,-50%);";
     const box = el("div", center, this.root);
@@ -152,6 +133,13 @@ class SplashRun {
     window.addEventListener("keydown", this.skip, true);
     this.timer = setTimeout(this.tick, HOLD_UNTIL_MS);
   }
+
+  /** Кадр складання: прогрес за часом; після кінця цикл зупиняється (останній кадр лишається). */
+  private draw = (now: number): void => {
+    const k = Math.min(1, (now - this.t0) / ASSEMBLE_MS);
+    this.scene?.assemble(k);
+    this.raf = k < 1 && !this.done ? requestAnimationFrame(this.draw) : 0;
+  };
 
   ready(): void {
     this.isReady = true;
@@ -213,6 +201,7 @@ class SplashRun {
     if (this.done) return;
     this.done = true;
     clearTimeout(this.timer);
+    cancelAnimationFrame(this.raf);
     window.removeEventListener("pointerdown", this.skip, true);
     window.removeEventListener("keydown", this.skip, true);
     this.root.remove();

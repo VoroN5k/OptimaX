@@ -219,7 +219,9 @@ Actions (`.github/workflows/release.yml`) збирає zip, інсталятор
   службу на «Головній» (`ServiceHint.svelte`).
 - **Етап 4 (агент у треї) почато 2026-11-16:** рішення й план — розділ 19 `docs/SERVICE.md`.
   4а зроблено (`optimax_core::tray`, `optimax_core::instance`, `app::agent`, `--agent`,
-  автозапуск за згодою, `AgentCard.svelte`). Далі 4б — режим гри й чорна скринька в агенті.
+  автозапуск за згодою, `AgentCard.svelte`). 4б зроблено: режим гри й чорна скринька без Tauri
+  (`app::session`, трейт `Host`), агент веде їх, вікно показує стан (`app::agent_link`, файли в
+  `agent\`). Далі 4в — заміри (CPU/RAM агента й PresentMon у фоні).
 
 ## 2u. Розширені датчики через PawnIO (2026-11-09)
 

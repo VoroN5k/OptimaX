@@ -26,11 +26,18 @@
   let busy = $state(false);
   let removing = $state<string | null>(null);
 
+  /** Режим гри веде агент у треї (працює навіть із закритим вікном). */
+  let byAgent = $state(false);
+
   async function load() {
     loading = true;
     try {
       profiles = await api.profiles();
       gm.watching = await api.gamemodeRunning();
+      byAgent = await api
+        .agentStatus()
+        .then((a) => a.running && !ui.info?.elevated)
+        .catch(() => false);
     } catch (e) {
       error = asCmdError(e).message;
     } finally {
@@ -176,6 +183,7 @@
             {tk("ui.games.watch_off")}
           {/if}
         </p>
+        {#if byAgent}<p class="small dim">{tk("ui.games.by_agent")}</p>{/if}
       </div>
       <Toggle label={tk("ui.games.watch_title")} checked={gm.watching} disabled={!profiles.length} onchange={toggleWatch} />
     </div>

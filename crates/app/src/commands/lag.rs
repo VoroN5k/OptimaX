@@ -97,7 +97,7 @@ pub fn lag_start(app: AppHandle, state: State<'_, AppState>, exe: String) -> Cmd
         });
     }
     let window_s = u32::try_from(options.window.as_secs()).unwrap_or(30);
-    let (watcher, events) = state.link.start_watch(&state, options)?;
+    let (watcher, events) = state.link.start_watch(Some(&state), options)?;
 
     let mut slot = lock(&state.lag);
     let id = slot.as_ref().map_or(1, |s| s.id + 1);

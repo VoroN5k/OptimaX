@@ -57,7 +57,7 @@ pub struct SessionEntry {
 }
 
 /// Скільки фризів з такою головною причиною.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct FreezeCauseCount {
     /// Код причини або [`UNKNOWN_CAUSE`].

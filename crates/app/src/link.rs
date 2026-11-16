@@ -270,11 +270,12 @@ impl Drop for RemoteWatch {
 }
 
 impl Link {
-    /// Починає стеження: через службу, якщо вона доступна, інакше в цьому процесі. Події — у
+    /// Починає стеження: через службу, якщо вона доступна, інакше в цьому процесі (`local` —
+    /// стан вікна програми; агент у треї передає `None`: без служби він не стежить). Події — у
     /// каналі, як у [`Watcher::start`].
     pub fn start_watch(
         &self,
-        state: &AppState,
+        local: Option<&AppState>,
         options: WatchOptions,
     ) -> CmdResult<(WatchHandle, Receiver<WatchEvent>)> {
         if self.service_usable() {
@@ -288,6 +289,9 @@ impl Link {
                 Err(e) => self.forget_service(&e),
             }
         }
+        let Some(state) = local else {
+            return Err(CmdError::Failed("служба OptimaX недоступна".into()));
+        };
         let gpu = NvmlGpu::open().map(|g| Box::new(g) as Box<dyn GpuApi>);
         let (w, rx) = Watcher::start(
             state.presentmon()?,

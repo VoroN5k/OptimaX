@@ -34,6 +34,25 @@ test.describe("Агент у треї", () => {
     expect(await unmocked(page)).toEqual([]);
   });
 
+  test("«Ігри»: видно, що режим гри веде агент (лише без прав адміністратора)", async ({ page }) => {
+    const agent = { ...agentReady, running: true, can_start: false };
+    await mockBackend(page, {
+      agent_status: agent,
+      app_info: { version: "0.0.0-test", elevated: false, service: true, presentmon_version: "2.6.0" },
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: tk("ui.nav.games") }).click();
+    await expect(page.getByText(tk("ui.games.by_agent"))).toBeVisible();
+  });
+
+  test("«Ігри» з правами адміністратора — агент режим гри не веде", async ({ page }) => {
+    await mockBackend(page, { agent_status: { ...agentReady, running: true, can_start: false } });
+    await page.goto("/");
+    await page.getByRole("button", { name: tk("ui.nav.games") }).click();
+    await expect(page.getByText(tk("ui.games.watch_title")).first()).toBeVisible();
+    await expect(page.getByText(tk("ui.games.by_agent"))).toHaveCount(0);
+  });
+
   test("портативна копія — пояснення замість перемикача", async ({ page }) => {
     await mockBackend(page);
     await open(page);

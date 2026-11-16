@@ -32,6 +32,7 @@ import type { ResView } from "../../src/lib/bindings/ResView";
 import type { ScanView } from "../../src/lib/bindings/ScanView";
 import type { Settings } from "../../src/lib/bindings/Settings";
 import type { AgentView } from "../../src/lib/bindings/AgentView";
+import type { GameProfile } from "../../src/lib/bindings/GameProfile";
 import type { StartupReport } from "../../src/lib/bindings/StartupReport";
 import type { UpscaleView } from "../../src/lib/bindings/UpscaleView";
 
@@ -68,6 +69,8 @@ export interface Responses {
   service_install: ServiceView;
   service_uninstall: ServiceView;
   agent_status: AgentView;
+  profiles_list: GameProfile[];
+  gamemode_running: boolean;
   agent_set_autostart: AgentView;
   agent_start: AgentView;
   blackbox_state: BlackBoxView;
@@ -645,6 +648,8 @@ export function defaults(): Responses {
     service_install: structuredClone(serviceRunning),
     service_uninstall: structuredClone(serviceNone),
     agent_status: structuredClone(agentPortable),
+    profiles_list: [],
+    gamemode_running: false,
     agent_set_autostart: { ...agentReady, autostart: true },
     agent_start: { ...agentReady, running: true, can_start: false },
     blackbox_state: { active: null, last: null },

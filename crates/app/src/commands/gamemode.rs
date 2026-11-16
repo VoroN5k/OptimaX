@@ -1,39 +1,16 @@
-//! Режим гри: профілі та фоновий стежник (подія `gamemode`).
+//! Режим гри: профілі та стежник (подія `gamemode`). Сама логіка — у `crate::session`. Якщо
+//! працює агент у треї, режим гри веде він (рішення користувача 2026-11-16): ці команди лише
+//! кажуть йому, що робити (`crate::agent_link`), а стан приходить тими самими подіями.
 
-use crate::changes::ChangeHub;
-use crate::dto::{GameModeEvent, ProfilePreview, RollbackResult};
+use crate::agent_link;
+use crate::dto::ProfilePreview;
 use crate::error::{CmdError, CmdResult};
-use crate::link::Link;
 use crate::profiles;
-use crate::state::{lock, AppState, FlagConfirm, MEMORY, PROCESSES};
-use optimax_core::process::ProcessInfo;
+use crate::session::gamemode::Watcher;
+use crate::state::{lock, AppState};
 use optimax_core::Text;
-use optimax_gamemode::watcher::POLL_INTERVAL;
-use optimax_gamemode::{
-    end_session, scan, start_session, step, GameProfile, SessionReport, WatchEvent, WatchState,
-};
-use optimax_tweaks::{Changes, Confirm, Desired, TweakError};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager, State};
-
-/// Запущений стежник.
-pub struct Watcher {
-    stop: Arc<AtomicBool>,
-    handle: Option<JoinHandle<()>>,
-}
-
-impl Watcher {
-    /// Зупиняє стежник (активну сесію буде повернуто) і чекає завершення.
-    pub fn shutdown(mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
-        }
-    }
-}
+use optimax_gamemode::GameProfile;
+use tauri::{AppHandle, State};
 
 /// Профілі ігор.
 #[tauri::command]
@@ -60,230 +37,60 @@ pub fn profile_remove(state: State<'_, AppState>, exe: String) -> CmdResult<bool
     profiles::remove(&state.link, &exe)
 }
 
-/// Чи працює стежник.
+fn agent_config(f: impl FnOnce(&mut agent_link::AgentConfig)) -> CmdResult<()> {
+    agent_link::update_config(f)
+        .map_err(|e| CmdError::Failed(format!("агент у треї: налаштування не записано: {e}")))
+}
+
+/// Чи працює стежник (у вікні чи в агенті).
 #[tauri::command]
 pub fn gamemode_running(state: State<'_, AppState>) -> bool {
+    if agent_link::agent_active() {
+        return agent_link::read_config().gamemode;
+    }
     lock(&state.gamemode).is_some()
 }
 
-/// Дозволяє режиму гри працювати без точки відновлення (до кінця цього запуску програми).
+/// Дозволяє режиму гри працювати без точки відновлення (до кінця цього запуску програми чи
+/// агента).
 #[tauri::command]
-pub fn gamemode_allow_without_restore_point(state: State<'_, AppState>) {
-    *lock(&state.gamemode_allow_without_restore) = true;
+pub fn gamemode_allow_without_restore_point(state: State<'_, AppState>) -> CmdResult<()> {
+    *lock(&state.session.allow_without_restore) = true;
+    if agent_link::agent_active() {
+        agent_config(|c| c.allow_without_restore = true)?;
+    }
+    Ok(())
 }
 
-/// Запускає стежник за профілями.
+/// Запускає стежник за профілями (або просить агента).
 #[tauri::command]
 pub fn gamemode_start(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
-    let mut slot = lock(&state.gamemode);
-    if slot.is_some() {
-        return Ok(());
-    }
     let profiles = profiles::load(&state.link)?;
     if profiles.is_empty() {
         return Err(CmdError::Failed(
             "немає профілів ігор — спершу створи профіль".into(),
         ));
     }
-    let stop = Arc::new(AtomicBool::new(false));
-    let engine = state.changes.clone();
-    let allow = state.gamemode_allow_without_restore.clone();
-    let handle = {
-        let stop = stop.clone();
-        std::thread::Builder::new()
-            .name("optimax-gamemode".into())
-            .spawn(move || watch_loop(&app, &engine, &allow, &profiles, &stop))?
-    };
-    *slot = Some(Watcher {
-        stop,
-        handle: Some(handle),
-    });
+    if agent_link::agent_active() {
+        return agent_config(|c| c.gamemode = true);
+    }
+    let mut slot = lock(&state.gamemode);
+    if slot.is_some() {
+        return Ok(());
+    }
+    *slot = Some(Watcher::start(super::session::host(&app), profiles)?);
     Ok(())
 }
 
 /// Зупиняє стежник; якщо гра йде — усе повертається.
 #[tauri::command]
-pub fn gamemode_stop(state: State<'_, AppState>) {
+pub fn gamemode_stop(state: State<'_, AppState>) -> CmdResult<()> {
+    if agent_link::agent_active() {
+        agent_config(|c| c.gamemode = false)?;
+    }
     let watcher = lock(&state.gamemode).take();
     if let Some(w) = watcher {
         w.shutdown();
     }
-}
-
-/// Повний шлях до exe запущеного процесу.
-fn exe_path_of(pid: u32) -> Option<String> {
-    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-    let mut sys = System::new();
-    let pid = Pid::from_u32(pid);
-    sys.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[pid]),
-        true,
-        ProcessRefreshKind::nothing().with_exe(UpdateKind::Always),
-    );
-    sys.process(pid)?
-        .exe()
-        .map(|p| p.to_string_lossy().into_owned())
-}
-
-/// Запам'ятовує шлях до гри в профілі й ставить вибрану відеокарту. Windows читає вибір
-/// відеокарти під час запуску гри, тож він постійний (не відкочується після сесії) і діє з
-/// наступного запуску; запис — у журналі змін («Резервні копії»).
-fn remember_path_and_gpu(
-    link: &Link,
-    engine: &mut dyn Changes,
-    profile: &GameProfile,
-    game: &ProcessInfo,
-    confirm: &dyn Confirm,
-) -> Option<Text> {
-    let path = exe_path_of(game.pid)?;
-    if profile.exe_path.as_deref() != Some(path.as_str()) {
-        let mut updated = profile.clone();
-        updated.exe_path = Some(path.clone());
-        if let Err(e) = profiles::upsert(link, &updated) {
-            tracing::warn!(
-                "не вдалося запам'ятати шлях до {}: {}",
-                profile.exe,
-                e.message()
-            );
-        }
-    }
-    let preference = profile.gpu?;
-    let desired = Desired::GpuPreference {
-        exe_path: path,
-        preference,
-    };
-    let plan = engine.plan(&desired).ok()?;
-    if plan.is_noop() {
-        return None;
-    }
-    match engine.apply(&plan, confirm) {
-        Ok(_) => Some(Text::new("gm.applied.gpu")),
-        Err(e) => Some(
-            Text::new("gm.skip.error")
-                .arg("what", "GPU")
-                .arg("error", e),
-        ),
-    }
-}
-
-fn finish(app: &AppHandle, engine: &Mutex<ChangeHub>, game: &str, report: &SessionReport) {
-    let result: RollbackResult = end_session(&mut *lock(engine), report).into();
-    let _ = app.emit(
-        "gamemode",
-        GameModeEvent::Ended {
-            game: game.into(),
-            result,
-        },
-    );
-}
-
-fn watch_loop(
-    app: &AppHandle,
-    engine: &Mutex<ChangeHub>,
-    allow: &Mutex<bool>,
-    profiles: &[GameProfile],
-    stop: &AtomicBool,
-) {
-    let _ = app.emit(
-        "gamemode",
-        GameModeEvent::Watching {
-            games: profiles.iter().map(|p| p.exe.clone()).collect(),
-        },
-    );
-    let mut state = WatchState::Idle;
-    let mut session: Option<SessionReport> = None;
-    // Гра, для якої чекаємо згоди користувача (щоб не питати щопівсекунди).
-    let mut waiting_confirm: Option<(ProcessInfo, bool)> = None;
-    let mut next_poll = Instant::now();
-    while !stop.load(Ordering::SeqCst) {
-        std::thread::sleep(Duration::from_millis(200));
-        if Instant::now() < next_poll {
-            continue;
-        }
-        next_poll = Instant::now() + POLL_INTERVAL;
-        let allowed = *lock(allow);
-        match step(&state, &scan(&PROCESSES, profiles)) {
-            Some(WatchEvent::GameStarted { profile_exe, game }) => {
-                if let Some((g, was_allowed)) = &waiting_confirm {
-                    if g == &game && *was_allowed == allowed {
-                        continue;
-                    }
-                }
-                let Some(profile) = profiles.iter().find(|p| p.exe == profile_exe) else {
-                    continue;
-                };
-                let confirm = FlagConfirm::new(allowed);
-                let result = start_session(
-                    &mut *lock(engine),
-                    &PROCESSES,
-                    &MEMORY,
-                    profile,
-                    &game,
-                    &confirm,
-                );
-                match result {
-                    Ok(mut report) => {
-                        waiting_confirm = None;
-                        // Окремо від сесії: вибір відеокарти не відкочується після гри.
-                        let link = &app.state::<AppState>().link;
-                        if let Some(t) = remember_path_and_gpu(
-                            link,
-                            &mut *lock(engine),
-                            profile,
-                            &game,
-                            &confirm,
-                        ) {
-                            report.applied.push(t);
-                        }
-                        let _ = app.emit(
-                            "gamemode",
-                            GameModeEvent::Started {
-                                game: game.name.clone(),
-                                pid: game.pid,
-                                applied: report.applied.clone(),
-                                skipped: report.skipped.clone(),
-                            },
-                        );
-                        if profile.black_box {
-                            super::blackbox::start(app, &game.name);
-                        }
-                        session = Some(report);
-                        state = WatchState::Active { profile_exe, game };
-                    }
-                    Err(TweakError::Cancelled) => {
-                        let reason = confirm.reason().unwrap_or_default();
-                        let _ = app.emit(
-                            "gamemode",
-                            GameModeEvent::NeedsConfirmation {
-                                game: game.name.clone(),
-                                reason,
-                            },
-                        );
-                        waiting_confirm = Some((game, allowed));
-                    }
-                    Err(e) => {
-                        tracing::error!("режим гри для {} не ввімкнено: {e}", game.name);
-                        waiting_confirm = Some((game, allowed));
-                    }
-                }
-            }
-            Some(WatchEvent::GameExited) => {
-                super::blackbox::finish(app);
-                if let (Some(report), WatchState::Active { game, .. }) = (session.take(), &state) {
-                    finish(app, engine, &game.name, &report);
-                }
-                state = WatchState::Idle;
-            }
-            None => {
-                if matches!(state, WatchState::Idle) {
-                    waiting_confirm = None;
-                }
-            }
-        }
-    }
-    super::blackbox::finish(app);
-    if let (Some(report), WatchState::Active { game, .. }) = (session.take(), &state) {
-        finish(app, engine, &game.name, &report);
-    }
-    let _ = app.emit("gamemode", GameModeEvent::Stopped);
+    Ok(())
 }

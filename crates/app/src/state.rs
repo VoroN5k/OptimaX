@@ -84,16 +84,12 @@ pub struct AppState {
     pub stability: Mutex<Option<crate::commands::stability::StabSession>>,
     /// «Щойно лагнуло»: стеження з кільцевим буфером.
     pub lag: Mutex<Option<crate::commands::lag::LagSession>>,
-    /// Чорна скринька (сесія режиму гри з автоматичними знімками фризів).
-    pub blackbox: Mutex<Option<crate::commands::blackbox::BlackBox>>,
-    /// Лічильник сесій чорної скриньки.
-    pub blackbox_seq: Mutex<u64>,
+    /// Режим гри й чорна скринька (спільне з агентом у треї: `crate::session`).
+    pub session: crate::session::SessionCore,
     /// Оверлей у грі (є, поки ввімкнений у налаштуваннях).
     pub overlay: Mutex<Option<crate::commands::overlay::Controller>>,
-    /// Режим гри.
-    pub gamemode: Mutex<Option<crate::commands::gamemode::Watcher>>,
-    /// Користувач дозволив режиму гри працювати без точки відновлення (до кінця сеансу).
-    pub gamemode_allow_without_restore: Arc<Mutex<bool>>,
+    /// Стежник режиму гри у вікні (коли агента в треї немає).
+    pub gamemode: Mutex<Option<crate::session::gamemode::Watcher>>,
     /// Налаштування.
     pub settings: Mutex<Settings>,
     /// Розпакований PresentMon (один раз за запуск).
@@ -127,8 +123,10 @@ impl AppState {
     /// першій зміні: службою або рушієм у процесі).
     pub fn new() -> anyhow::Result<Self> {
         let link = Arc::new(crate::link::Link::new());
+        let changes = Arc::new(Mutex::new(crate::changes::ChangeHub::new(link.clone())));
         Ok(Self {
-            changes: Arc::new(Mutex::new(crate::changes::ChangeHub::new(link.clone()))),
+            session: crate::session::SessionCore::new(link.clone(), changes.clone()),
+            changes,
             plans: Mutex::new(HashMap::new()),
             next_plan_id: Mutex::new(1),
             metrics: Mutex::new(None),
@@ -139,11 +137,8 @@ impl AppState {
             experiment: Mutex::new(None),
             stability: Mutex::new(None),
             lag: Mutex::new(None),
-            blackbox: Mutex::new(None),
-            blackbox_seq: Mutex::new(0),
             overlay: Mutex::new(None),
             gamemode: Mutex::new(None),
-            gamemode_allow_without_restore: Arc::new(Mutex::new(false)),
             settings: Mutex::new(Settings::load()),
             presentmon: OnceLock::new(),
             startup: Mutex::new(crate::dto::StartupReport::default()),

@@ -21,7 +21,7 @@ pub struct AppInfo {
 }
 
 /// Невдалий відкат.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct RollbackFailure {
     /// Запис журналу.
@@ -31,7 +31,7 @@ pub struct RollbackFailure {
 }
 
 /// Результат відкату.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct RollbackResult {
     /// Відкочені записи.
@@ -313,7 +313,7 @@ pub struct ProcessEntry {
 }
 
 /// Подія режиму гри.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum GameModeEvent {

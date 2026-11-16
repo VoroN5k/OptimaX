@@ -6,6 +6,8 @@
 #[cfg(windows)]
 mod agent;
 #[cfg(windows)]
+mod agent_link;
+#[cfg(windows)]
 mod applog;
 #[cfg(windows)]
 mod changes;
@@ -28,6 +30,8 @@ mod profiles;
 mod release_notes;
 #[cfg(windows)]
 mod report;
+#[cfg(windows)]
+mod session;
 #[cfg(windows)]
 mod settings;
 #[cfg(windows)]
@@ -64,14 +68,19 @@ mod app {
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::EnvFilter;
 
-    /// М'ютекс «вікно OptimaX уже відкрите» (простір імен сеансу).
-    const UI_MUTEX: &str = r"Local\OptimaX-UI";
+    use crate::agent_link::UI_MUTEX;
     /// Заголовок головного вікна (`app.windows[0].title` у `tauri.conf.json`).
     const MAIN_TITLE: &str = "OptimaX by X44TO";
 
     /// Після аварійного завершення: доводить незавершені зміни й повертає залишки режиму гри.
+    /// Якщо режим гри веде агент у треї, це робить він (інакше вікно повернуло б зміни його
+    /// поточної сесії).
     fn startup_recovery(state: &AppState) {
         use optimax_tweaks::Changes;
+        if crate::agent_link::agent_active() {
+            tracing::info!("відновлення після збою — за агентом у треї");
+            return;
+        }
         let mut engine = lock(&state.changes);
         let mut report = StartupReport::default();
         match engine.recover_pending() {
@@ -112,7 +121,7 @@ mod app {
         experiment::cancel_session(state);
         stability::cancel_session(state);
         lag::stop_session(state);
-        blackbox::finish_state(state);
+        crate::session::blackbox::finish_state(&state.session);
         overlay::stop(state);
         if let Err(e) = ab::cancel_session(state) {
             tracing::error!("не вдалося відкотити зміну A/B-тесту при виході: {e:?}");
@@ -273,6 +282,7 @@ mod app {
                     })?;
                 let state = app.state::<AppState>();
                 startup_recovery(&state);
+                crate::commands::session::watch_agent(app.handle());
                 let (up, hotkey) = {
                     let s = lock(&state.settings);
                     (s.upscale, s.upscale_hotkey)

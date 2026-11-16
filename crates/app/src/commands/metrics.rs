@@ -6,7 +6,7 @@ use optimax_metrics::{GpuApi, NvmlGpu, Sampler, SamplerConfig, SysinfoSource};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
-/// Запускає збір (якщо ще не запущено). Інтервал 250–2000 мс; в економному режимі — 1000 мс.
+/// Запускає збір (якщо ще не запущено). Інтервал 250–2000 мс; з «Ефектами: Вимкнені» — 1000 мс.
 #[tauri::command]
 pub fn metrics_start(
     app: AppHandle,
@@ -17,8 +17,8 @@ pub fn metrics_start(
     if slot.is_some() {
         return Ok(());
     }
-    let economy = lock(&state.settings).economy;
-    let ms = if economy {
+    let slow = lock(&state.settings).slow_metrics();
+    let ms = if slow {
         1000
     } else {
         interval_ms.clamp(250, 2000)

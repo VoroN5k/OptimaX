@@ -114,3 +114,21 @@ code, .mono {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* «Ефекти» (docs/DESIGN.md розд. 8; атрибути ставить lib/effects.svelte.ts).
+   «Вимкнені» — як системний зменшений рух: без анімацій і переходів. */
+:root[data-effects="off"] *, :root[data-effects="off"] *::before, :root[data-effects="off"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+/* «Спокійні» і контракт вимірювань (запис, A/B, стабільність, режим гри): нескінченні анімації
+   доходять до кінця одного циклу й зупиняються, одноразові переходи лишаються. */
+:root[data-effects="calm"] *, :root[data-effects="calm"] *::before, :root[data-effects="calm"] *::after,
+:root.measuring *, :root.measuring *::before, :root.measuring *::after {
+  animation-iteration-count: 1 !important;
+}
+/* Згорнуте чи приховане вікно не рендерить анімацій узагалі. */
+:root.window-hidden *, :root.window-hidden *::before, :root.window-hidden *::after {
+  animation-play-state: paused !important;
+}

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { startTour } from "../lib/tour.svelte";
   import { api, asCmdError } from "../lib/api";
-  import type { AnimationLevel } from "../lib/bindings/AnimationLevel";
+  import type { Palette } from "../lib/bindings/Palette";
+  import { systemReduced } from "../lib/effects.svelte";
   import type { DotsStats } from "../lib/dots";
   import { tk } from "../lib/i18n";
   import { logLocal, ui } from "../lib/state.svelte";
@@ -22,6 +23,14 @@
 
   async function save() {
     await api.setSettings($state.snapshot(ui.settings));
+  }
+
+  /** «Як у системі» — `null` у налаштуваннях (рівень за prefers-reduced-motion). */
+  type EffectsChoice = "system" | "full" | "calm" | "off";
+  let effects = $state<EffectsChoice>(ui.settings.effects ?? "system");
+  function setEffects(v: EffectsChoice) {
+    ui.settings.effects = v === "system" ? null : v;
+    void save();
   }
 
   // Звіт для відгуку: збирає бекенд, файл користувач переглядає й надсилає сам.
@@ -114,26 +123,39 @@
     <div class="rows">
       <div class="row">
         <div>
-          <strong>{tk("ui.settings.animation")}</strong>
-          <p class="small muted">{tk("ui.settings.animation_hint")}</p>
+          <strong>{tk("ui.settings.effects")}</strong>
+          <p class="small muted">{tk("ui.settings.effects_hint")}</p>
+          {#if effects === "system"}
+            <p class="small dim">{tk(systemReduced() ? "ui.settings.effects.system_reduced" : "ui.settings.effects.system_full")}</p>
+          {/if}
         </div>
         <Segmented
-          label={tk("ui.settings.animation")}
-          bind:value={ui.settings.animation}
-          onchange={(_v: AnimationLevel) => save()}
+          label={tk("ui.settings.effects")}
+          bind:value={effects}
+          onchange={setEffects}
           options={[
-            { value: "high", label: tk("ui.settings.anim.high") },
-            { value: "low", label: tk("ui.settings.anim.low") },
-            { value: "off", label: tk("ui.settings.anim.off") },
+            { value: "system", label: tk("ui.settings.effects.system") },
+            { value: "full", label: tk("ui.settings.effects.full") },
+            { value: "calm", label: tk("ui.settings.effects.calm") },
+            { value: "off", label: tk("ui.settings.effects.off") },
           ]}
         />
       </div>
       <div class="row">
         <div>
-          <strong>{tk("ui.settings.economy")}</strong>
-          <p class="small muted">{tk("ui.settings.economy_hint")}</p>
+          <strong>{tk("ui.settings.palette")}</strong>
+          <p class="small muted">{tk("ui.settings.palette_hint")}</p>
         </div>
-        <Toggle label={tk("ui.settings.economy")} bind:checked={ui.settings.economy} onchange={() => save()} />
+        <Segmented
+          label={tk("ui.settings.palette")}
+          bind:value={ui.settings.palette}
+          onchange={(_v: Palette) => save()}
+          options={[
+            { value: "champagne", label: tk("ui.settings.palette.champagne") },
+            { value: "aurora", label: tk("ui.settings.palette.aurora") },
+            { value: "emerald", label: tk("ui.settings.palette.emerald") },
+          ]}
+        />
       </div>
       <div class="row">
         <div>

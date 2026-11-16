@@ -27,7 +27,7 @@ export const LOG_LIMIT = 500;
 export const ui = $state({
   screen: "analysis" as ScreenId,
   info: null as AppInfo | null,
-  settings: { animation: "high", economy: false } as Settings,
+  settings: { effects: null, palette: "champagne" } as Settings,
   bgMode: "idle" as BgMode,
   /** Режим гри активний (гра запущена) — анімація повністю вимикається. */
   gameActive: false,

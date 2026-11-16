@@ -4,6 +4,7 @@
   import { tk } from "./lib/i18n";
   import type { DotsStats } from "./lib/dots";
   import { rememberSplash } from "./lib/splash";
+  import { effectiveEffects, measuringNow, trackEffects } from "./lib/effects.svelte";
   import { cl, flashBg, gm, logLocal, pushLog, ui, up } from "./lib/state.svelte";
   import BackgroundDots from "./components/BackgroundDots.svelte";
   import LogPanel from "./components/LogPanel.svelte";
@@ -30,6 +31,7 @@
   let dotsStats = $state<DotsStats | null>(null);
 
   onMount(() => {
+    const stopEffects = trackEffects();
     // Перевірка оновлень при запуску — лише якщо користувач сам її ввімкнув (мережевий запит).
     if (ui.settings.update_check_on_start) {
       void api
@@ -119,29 +121,28 @@
     }
     return () => {
       clearTimeout(tourTimer);
+      stopEffects();
       subs.forEach((p) => void p.then((u) => u()));
     };
   });
 
-  // Фон — лише на «Аналізі» й «Діагностиці»; вимикається в режимі гри, під час вимірювань,
-  // в економному режимі й коли користувач вимкнув його в налаштуваннях.
+  // Фон — лише на «Аналізі» й «Діагностиці» й лише з «Ефектами: Повні»; вимикається в режимі
+  // гри й під час вимірювань (контракт, CLAUDE.md 10.5).
   const showBg = $derived(ui.screen === "analysis" || ui.screen === "diagnosis");
   // Заставка запуску вирішується до читання налаштувань — запам'ятовуємо їх локально.
-  $effect(() => rememberSplash(ui.settings.animation !== "off" && !ui.settings.economy));
+  $effect(() => rememberSplash(effectiveEffects() === "full"));
 
   // Повернення на вкладку відкриває той розділ, де користувач був.
   $effect(() => remember(ui.screen));
 
-  const animate = $derived(
-    showBg && ui.settings.animation !== "off" && !ui.settings.economy && !ui.gameActive && !ui.measuring,
-  );
+  const animate = $derived(showBg && effectiveEffects() === "full" && !measuringNow());
 </script>
 
 <div class="shell">
   {#if showBg}
     <BackgroundDots
       enabled={animate}
-      quality={ui.settings.animation === "low" ? "low" : "high"}
+      quality="high"
       mode={ui.bgMode}
       leftInset={0}
       onstats={(s) => (dotsStats = s)}

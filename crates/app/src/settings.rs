@@ -3,30 +3,44 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Якість фонової анімації.
+/// Рівень ефектів інтерфейсу (`docs/DESIGN.md` розд. 8). Під час запису й аналізу нескінченні
+/// анімації й фон вимкнені за будь-якого рівня — це контракт, а не налаштування.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum Effects {
+    /// Усі анімації, фон і розмиття плиток.
+    Full,
+    /// Лише одноразові переходи: без нескінченних анімацій, фону й розмиття.
+    Calm,
+    /// Без анімацій; живі метрики оновлюються раз на секунду.
+    Off,
+}
+
+/// Палітра акценту: змінює лише акцентні кольори, семантичні (увага, GPU, помилка) — ні.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
-pub enum AnimationLevel {
-    /// Повна.
+pub enum Palette {
+    /// Шампань (за замовчуванням).
     #[default]
-    High,
-    /// Менше точок і кадрів.
-    Low,
-    /// Вимкнена.
-    Off,
+    Champagne,
+    /// Аврора.
+    Aurora,
+    /// Смарагд.
+    Emerald,
 }
 
 /// Налаштування.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Settings {
-    /// Фонова анімація.
+    /// Ефекти інтерфейсу; `None` — за системним `prefers-reduced-motion` (зменшений рух → вимкнені).
     #[serde(default)]
-    pub animation: AnimationLevel,
-    /// Економний режим: без анімацій, рідше оновлення метрик.
+    pub effects: Option<Effects>,
+    /// Палітра акценту.
     #[serde(default)]
-    pub economy: bool,
+    pub palette: Palette,
     /// Як починати запис гри (діагностика й A/B).
     #[serde(default)]
     pub record_start: optimax_frametime::StartMode,
@@ -96,6 +110,20 @@ impl Default for CleanupSettings {
     }
 }
 
+/// Старі поля: економний режим чи вимкнена анімація → «Вимкнені», низька якість → «Спокійні».
+/// Типові значення (`high`, без економії) нічого не задають: діє системне налаштування руху.
+fn legacy_effects(o: &serde_json::Map<String, serde_json::Value>) -> Option<Effects> {
+    let economy = o.get("economy").and_then(serde_json::Value::as_bool) == Some(true);
+    match (
+        economy,
+        o.get("animation").and_then(serde_json::Value::as_str),
+    ) {
+        (true, _) | (_, Some("off")) => Some(Effects::Off),
+        (_, Some("low")) => Some(Effects::Calm),
+        _ => None,
+    }
+}
+
 fn yes() -> bool {
     true
 }
@@ -103,8 +131,8 @@ fn yes() -> bool {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            animation: AnimationLevel::default(),
-            economy: false,
+            effects: None,
+            palette: Palette::default(),
             record_start: optimax_frametime::StartMode::Auto,
             record_sound: true,
             upscale: optimax_upscale::UpscaleSettings::default(),
@@ -132,8 +160,28 @@ impl Settings {
     pub fn load() -> Self {
         path()
             .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|s| serde_json::from_str(&s).ok())
+            .and_then(|s| Self::parse(&s))
             .unwrap_or_default()
+    }
+
+    /// Розбирає `settings.json`, переносячи старі «Анімацію фону» й «Економний режим» в «Ефекти».
+    fn parse(json: &str) -> Option<Self> {
+        let mut v: serde_json::Value = serde_json::from_str(json).ok()?;
+        if let Some(o) = v.as_object_mut() {
+            if !o.contains_key("effects") {
+                if let Some(e) = legacy_effects(o) {
+                    o.insert("effects".into(), serde_json::json!(e));
+                }
+            }
+            o.remove("animation");
+            o.remove("economy");
+        }
+        serde_json::from_value(v).ok()
+    }
+
+    /// Рідше оновлення живих метрик (раніше — «Економний режим»).
+    pub fn slow_metrics(&self) -> bool {
+        self.effects == Some(Effects::Off)
     }
 
     /// Зберігає.
@@ -146,5 +194,40 @@ impl Settings {
         }
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(p, json)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_economy_or_off_becomes_effects_off() {
+        let s = Settings::parse(r#"{"economy":true,"animation":"high"}"#).expect("s");
+        assert_eq!(s.effects, Some(Effects::Off));
+        assert!(s.slow_metrics());
+        let s = Settings::parse(r#"{"animation":"off"}"#).expect("s");
+        assert_eq!(s.effects, Some(Effects::Off));
+    }
+
+    #[test]
+    fn legacy_low_becomes_calm_and_defaults_follow_system() {
+        let s = Settings::parse(r#"{"animation":"low"}"#).expect("s");
+        assert_eq!(s.effects, Some(Effects::Calm));
+        assert!(!s.slow_metrics());
+        let s = Settings::parse(r#"{"animation":"high","economy":false}"#).expect("s");
+        assert_eq!(s.effects, None);
+        assert_eq!(Settings::parse("{}").expect("s"), Settings::default());
+    }
+
+    #[test]
+    fn new_fields_win_over_legacy_and_roundtrip() {
+        let s =
+            Settings::parse(r#"{"effects":"full","palette":"aurora","economy":true}"#).expect("s");
+        assert_eq!(s.effects, Some(Effects::Full));
+        assert_eq!(s.palette, Palette::Aurora);
+        let json = serde_json::to_string(&s).expect("j");
+        assert!(!json.contains("economy") && !json.contains("animation"));
+        assert_eq!(Settings::parse(&json).expect("s"), s);
     }
 }

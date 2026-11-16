@@ -1,6 +1,7 @@
 //! Tauri-команди. Довгі операції виконуються поза потоком UI (окремі потоки / spawn_blocking).
 
 pub mod ab;
+pub mod agent;
 pub mod audit;
 pub mod blackbox;
 pub mod cleanup;

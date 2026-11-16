@@ -91,13 +91,22 @@ pub fn stop() -> Result<(), ServiceError> {
     ) else {
         return Ok(());
     };
-    if svc
-        .query_status()
-        .is_ok_and(|s| s.current_state != ServiceState::Stopped)
-    {
+    let Ok(status) = svc.query_status() else {
+        return Ok(());
+    };
+    if status.current_state != ServiceState::Stopped {
         let _ = svc.stop();
         if !wait_for(&svc, ServiceState::Stopped) {
             return Err(ServiceError::Os("служба не зупинилась вчасно".into()));
+        }
+        // STOPPED служба повідомляє ще до виходу процесу, а живий процес тримає exe: інсталятор
+        // тоді не може його замінити («Error opening file for writing»). Чекаємо на сам процес.
+        if let Some(pid) = status.process_id.filter(|&p| p != 0) {
+            if !optimax_core::process::wait_exit(pid, WAIT) {
+                return Err(ServiceError::Os(
+                    "процес служби не завершився вчасно".into(),
+                ));
+            }
         }
     }
     Ok(())

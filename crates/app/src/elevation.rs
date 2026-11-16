@@ -61,14 +61,34 @@ fn dev_as_invoker() -> bool {
     cfg!(debug_assertions) && std::env::var("OPTIMAX_DEV_AS_INVOKER").is_ok_and(|v| v == "1")
 }
 
-/// Аргументи цього запуску (без exe) — для копії з правами.
+/// Позначка копії, яку запустило вже відкрите вікно перед своїм закриттям: вона спершу чекає,
+/// поки те вікно закриється (інакше «одне вікно на сеанс» її б не пустило).
+pub const RELAUNCHED_ARG: &str = "--relaunched";
+
+/// Аргументи цього запуску (без exe і без [`RELAUNCHED_ARG`]) — для копії з правами.
 fn own_args() -> Vec<String> {
-    std::env::args().skip(1).collect()
+    std::env::args()
+        .skip(1)
+        .filter(|a| a != RELAUNCHED_ARG)
+        .collect()
 }
 
-/// Перезапускає програму з правами адміністратора (UAC). `Ok(())` — копію запущено.
+/// Перезапускає програму з правами адміністратора (UAC) до відкриття вікна. `Ok(())` — копію
+/// запущено.
 pub fn relaunch() -> Result<(), optimax_core::CoreError> {
     run_elevated(&own_args(), false).map(|_| ())
+}
+
+/// Те саме з відкритого вікна, яке зараз закриється: копія дочекається його закриття.
+pub fn relaunch_from_window() -> Result<(), optimax_core::CoreError> {
+    let mut args = own_args();
+    args.push(RELAUNCHED_ARG.into());
+    run_elevated(&args, false).map(|_| ())
+}
+
+/// Ця копія запущена з [`relaunch_from_window`].
+pub fn is_relaunched() -> bool {
+    std::env::args().any(|a| a == RELAUNCHED_ARG)
 }
 
 /// Вирішує, чи працювати в цьому процесі.

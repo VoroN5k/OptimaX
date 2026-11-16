@@ -148,6 +148,23 @@ impl ProcessApi for WinProcesses {
     }
 }
 
+/// Чекає завершення процесу `pid` не довше `timeout`. `true` — процесу вже немає (або його не
+/// відкрити як «немає такого»); `false` — він ще живий після `timeout`.
+pub fn wait_exit(pid: u32, timeout: std::time::Duration) -> bool {
+    use windows::Win32::Foundation::{WAIT_FAILED, WAIT_TIMEOUT};
+    use windows::Win32::System::Threading::{WaitForSingleObject, PROCESS_SYNCHRONIZE};
+    // SAFETY: лише право чекати; дескриптор обгортається в Handle.
+    let Ok(h) = (unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) }) else {
+        // Процесу з таким PID немає (вже завершився).
+        return true;
+    };
+    let h = Handle(h);
+    let ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+    // SAFETY: дійсний дескриптор процесу з правом SYNCHRONIZE.
+    let r = unsafe { WaitForSingleObject(h.0, ms) };
+    r != WAIT_TIMEOUT && r != WAIT_FAILED
+}
+
 /// Чи працює поточний процес із підвищеними правами (адміністратор після UAC).
 pub fn is_elevated() -> bool {
     use windows::Win32::Security::{

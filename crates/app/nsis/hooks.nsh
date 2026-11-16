@@ -32,4 +32,9 @@
 !macro NSIS_HOOK_PREUNINSTALL
   IfFileExists "$INSTDIR\${MAINBINARYNAME}.exe" 0 +2
     nsExec::Exec '"$INSTDIR\${MAINBINARYNAME}.exe" --uninstall-service'
+  ; Автозапуск агента в треї (етап 4 docs/SERVICE.md) — лише при справжньому видаленні, не при
+  ; оновленні (інакше згода користувача губилася б).
+  ${If} $UpdateMode <> 1
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "OptimaX Agent"
+  ${EndIf}
 !macroend

@@ -118,7 +118,7 @@ pub async fn service_uninstall() -> CmdResult<ServiceView> {
 /// працюють). Після запуску копії ця завершується.
 #[tauri::command]
 pub fn app_relaunch_elevated(app: tauri::AppHandle) -> CmdResult<()> {
-    match crate::elevation::relaunch() {
+    match crate::elevation::relaunch_from_window() {
         Ok(()) => {
             app.exit(0);
             Ok(())

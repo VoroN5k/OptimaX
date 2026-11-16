@@ -10,7 +10,7 @@ use std::sync::{Mutex, PoisonError};
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use self::windows::{is_elevated, WinProcesses};
+pub use self::windows::{is_elevated, wait_exit, WinProcesses};
 
 /// Клас пріоритету процесу Windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -212,5 +212,27 @@ mod tests {
         p.spawn(10, "other.exe", 200);
         assert!(matches!(p.priority(&old), Err(CoreError::NotFound(_))));
         assert!(p.set_priority(&old, PriorityClass::BelowNormal).is_err());
+    }
+}
+
+#[cfg(all(test, windows))]
+mod wait_tests {
+    use std::time::Duration;
+
+    #[test]
+    fn waits_for_a_finished_child_and_times_out_on_a_live_process() {
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "exit"])
+            .spawn()
+            .expect("cmd");
+        let pid = child.id();
+        // Дескриптор `child` ще відкритий, тож PID не переприсвоєно; процес завершується сам.
+        assert!(super::wait_exit(pid, Duration::from_secs(10)));
+        let _ = child.wait();
+        // Цей процес живий — очікування закінчується за таймаутом.
+        assert!(!super::wait_exit(
+            std::process::id(),
+            Duration::from_millis(50)
+        ));
     }
 }

@@ -12,6 +12,7 @@ pub mod etw;
 pub mod finding;
 pub mod i18n;
 pub mod input;
+pub mod instance;
 pub mod memory;
 pub mod overlay;
 pub mod pawnio;
@@ -24,6 +25,7 @@ pub mod service;
 pub mod sysdirs;
 pub mod taskbar;
 pub mod toast;
+pub mod tray;
 
 pub use date::CivilDate;
 pub use error::CoreError;

@@ -31,6 +31,7 @@ import type { ExpReport } from "../../src/lib/bindings/ExpReport";
 import type { ResView } from "../../src/lib/bindings/ResView";
 import type { ScanView } from "../../src/lib/bindings/ScanView";
 import type { Settings } from "../../src/lib/bindings/Settings";
+import type { AgentView } from "../../src/lib/bindings/AgentView";
 import type { StartupReport } from "../../src/lib/bindings/StartupReport";
 import type { UpscaleView } from "../../src/lib/bindings/UpscaleView";
 
@@ -66,6 +67,9 @@ export interface Responses {
   service_status: ServiceView;
   service_install: ServiceView;
   service_uninstall: ServiceView;
+  agent_status: AgentView;
+  agent_set_autostart: AgentView;
+  agent_start: AgentView;
   blackbox_state: BlackBoxView;
   exp_state: ExpView | null;
   exp_list: ExpRecord[];
@@ -640,6 +644,9 @@ export function defaults(): Responses {
     service_status: structuredClone(serviceNone),
     service_install: structuredClone(serviceRunning),
     service_uninstall: structuredClone(serviceNone),
+    agent_status: structuredClone(agentPortable),
+    agent_set_autostart: { ...agentReady, autostart: true },
+    agent_start: { ...agentReady, running: true, can_start: false },
     blackbox_state: { active: null, last: null },
     exp_state: null,
     exp_list: [],
@@ -665,6 +672,11 @@ export const serviceNone: ServiceView = {
   error: null,
   same_version: false,
 };
+
+/** Агент: портативна копія — недоступний. */
+export const agentPortable: AgentView = { available: false, autostart: false, running: false, can_start: false };
+/** Агент: встановлена копія без прав адміністратора, агент не працює. */
+export const agentReady: AgentView = { available: true, autostart: false, running: false, can_start: true };
 
 export const serviceRunning: ServiceView = {
   ...serviceNone,

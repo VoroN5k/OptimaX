@@ -4,6 +4,8 @@
 //! Бінарник (`main.rs`) лише викликає [`run`]; маніфест адміністратора вбудовується лише в нього.
 
 #[cfg(windows)]
+mod agent;
+#[cfg(windows)]
 mod applog;
 #[cfg(windows)]
 mod changes;
@@ -40,12 +42,18 @@ pub fn run() -> anyhow::Result<()> {
     app::run()
 }
 
+/// Запускає агента в треї (`OptimaX.exe --agent`, блокує потік до виходу з агента).
+#[cfg(windows)]
+pub fn run_agent() -> anyhow::Result<()> {
+    agent::run()
+}
+
 #[cfg(windows)]
 mod app {
     use crate::commands::{
-        ab, audit, blackbox, cleanup, dashboard, diagnosis, driver_online, experiment, feedback,
-        gamemode, history, lag, laptop, metrics, network, overlay, resolution, sensors, service,
-        stability, startup, system, tweaks, update, upscale,
+        ab, agent, audit, blackbox, cleanup, dashboard, diagnosis, driver_online, experiment,
+        feedback, gamemode, history, lag, laptop, metrics, network, overlay, resolution, sensors,
+        service, stability, startup, system, tweaks, update, upscale,
     };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
@@ -55,6 +63,11 @@ mod app {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::EnvFilter;
+
+    /// М'ютекс «вікно OptimaX уже відкрите» (простір імен сеансу).
+    const UI_MUTEX: &str = r"Local\OptimaX-UI";
+    /// Заголовок головного вікна (`app.windows[0].title` у `tauri.conf.json`).
+    const MAIN_TITLE: &str = "OptimaX by X44TO";
 
     /// Після аварійного завершення: доводить незавершені зміни й повертає залишки режиму гри.
     fn startup_recovery(state: &AppState) {
@@ -177,6 +190,23 @@ mod app {
             .try_init();
         tracing::info!("OptimaX {} запущено", env!("CARGO_PKG_VERSION"));
 
+        // Копія, яку запустило вікно перед своїм закриттям («Перезапустити з правами»): чекаємо,
+        // поки воно закриється.
+        if crate::elevation::is_relaunched() {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while optimax_core::instance::is_taken(UI_MUTEX) && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        // Одне вікно OptimaX на сеанс: уже відкрите — на передній план, а цей процес виходить.
+        // Ще до рішення про права, щоб не просити UAC даремно.
+        if optimax_core::instance::is_taken(UI_MUTEX) {
+            optimax_core::instance::activate_window(MAIN_TITLE);
+            tracing::info!("OptimaX уже відкрита — показуємо її вікно");
+            return Ok(());
+        }
+
         // Служба є — працюємо без прав; немає — перезапуск з правами (UAC).
         match crate::elevation::decide() {
             crate::elevation::Start::Here => {}
@@ -184,6 +214,19 @@ mod app {
                 return Ok(())
             }
         }
+        // Займаємо лише в процесі, що справді відкриє вікно (не в тому, що перезапустився з UAC).
+        // Тримається до виходу з `run`.
+        let _single = match optimax_core::instance::acquire(UI_MUTEX) {
+            Ok(Some(g)) => Some(g),
+            Ok(None) => {
+                optimax_core::instance::activate_window(MAIN_TITLE);
+                return Ok(());
+            }
+            Err(e) => {
+                tracing::warn!("перевірка «одне вікно» недоступна: {e}");
+                None
+            }
+        };
         let elevated = optimax_core::process::is_elevated();
         tracing::info!(
             "права: {}",
@@ -355,6 +398,9 @@ mod app {
                 service::service_install,
                 service::service_uninstall,
                 service::app_relaunch_elevated,
+                agent::agent_status,
+                agent::agent_set_autostart,
+                agent::agent_start,
                 blackbox::blackbox_state,
             ])
             .build(tauri::generate_context!())?;

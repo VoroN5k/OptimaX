@@ -51,6 +51,8 @@ struct FeedbackReport {
     log: Vec<LogLine>,
     /// Останні рядки файлу журналу програми (і попередніх запусків).
     app_log: Vec<String>,
+    /// Останні рядки журналу агента в треї (якщо він працював).
+    agent_log: Vec<String>,
 }
 
 fn failed(e: impl std::fmt::Display) -> CmdError {
@@ -103,6 +105,7 @@ pub async fn feedback_report(state: State<'_, AppState>) -> CmdResult<String> {
             cleanup_journal: summarize_cleanup_journal(read_json(&journal_path()?)),
             log,
             app_log: crate::applog::tail(crate::applog::REPORT_LINES),
+            agent_log: crate::applog::tail_of(crate::applog::AGENT, crate::applog::REPORT_LINES),
         };
         let mut value = serde_json::to_value(&report).map_err(failed)?;
         redact(&mut value, &secrets_from_env());

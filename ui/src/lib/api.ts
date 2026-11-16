@@ -17,6 +17,7 @@ import type { StabRecord } from "./bindings/StabRecord";
 import type { StabEntry } from "./bindings/StabEntry";
 import type { SensorsStatus } from "./bindings/SensorsStatus";
 import type { ServiceView } from "./bindings/ServiceView";
+import type { AgentView } from "./bindings/AgentView";
 import type { StabView } from "./bindings/StabView";
 import type { TestKind } from "./bindings/TestKind";
 import type { HistoryView } from "./bindings/HistoryView";
@@ -108,6 +109,9 @@ export const api = {
   serviceInstall: () => invoke<ServiceView>("service_install"),
   serviceUninstall: () => invoke<ServiceView>("service_uninstall"),
   relaunchElevated: () => invoke<void>("app_relaunch_elevated"),
+  agentStatus: () => invoke<AgentView>("agent_status"),
+  agentSetAutostart: (on: boolean) => invoke<AgentView>("agent_set_autostart", { on }),
+  agentStart: () => invoke<AgentView>("agent_start"),
   blackboxState: () => invoke<BlackBoxView>("blackbox_state"),
   crashReport: () => invoke<CrashReport>("crash_report"),
   hardwareInfo: () => invoke<HardwareInfo>("hardware_info"),

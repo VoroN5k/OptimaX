@@ -14,6 +14,7 @@
   import ReleaseNotes from "../components/ReleaseNotes.svelte";
   import SensorsCard from "../components/SensorsCard.svelte";
   import ServiceCard from "../components/ServiceCard.svelte";
+  import AgentCard from "../components/AgentCard.svelte";
   import Segmented from "../components/Segmented.svelte";
   import Toggle from "../components/Toggle.svelte";
 
@@ -166,6 +167,8 @@
   <SensorsCard onsave={save} />
 
   <ServiceCard />
+
+  <AgentCard />
 
   <Card title={tk("ui.update.title")}>
     <div class="rows">

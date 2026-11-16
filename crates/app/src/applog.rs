@@ -14,18 +14,28 @@ pub const MAX: u64 = 2 * 1024 * 1024;
 /// Скільки останніх рядків іде у звіт для відгуку.
 pub const REPORT_LINES: usize = 300;
 
-/// Шлях до файлу журналу програми.
-pub fn path() -> Option<PathBuf> {
+/// Файл журналу вікна програми.
+pub const APP: &str = "app.log";
+/// Файл журналу агента в треї (окремий: два процеси не ділять один файл з обрізанням).
+pub const AGENT: &str = "agent.log";
+
+/// Шлях до файлу журналу `name` ([`APP`] чи [`AGENT`]).
+pub fn path_of(name: &str) -> Option<PathBuf> {
     optimax_core::datadir::ui_dir()
         .ok()
-        .map(|d| d.join("logs").join("app.log"))
+        .map(|d| d.join("logs").join(name))
 }
 
-/// Відкриває журнал для запису (`None` — тека недоступна; тоді журнал лише в інтерфейсі).
-pub fn open() -> Option<CappedLog> {
-    let p = path()?;
+/// Відкриває журнал `name` для запису (`None` — тека недоступна; тоді журналу у файлі немає).
+pub fn open_file(name: &str) -> Option<CappedLog> {
+    let p = path_of(name)?;
     std::fs::create_dir_all(p.parent()?).ok()?;
     CappedLog::open(&p, MAX).ok()
+}
+
+/// Відкриває журнал вікна програми.
+pub fn open() -> Option<CappedLog> {
+    open_file(APP)
 }
 
 /// Останні `n` рядків з кількох текстів (від старішого до новішого), без порожніх.
@@ -41,9 +51,9 @@ pub fn last_lines(texts: &[String], n: usize) -> Vec<String> {
         .collect()
 }
 
-/// Останні рядки журналу програми (попередній файл + поточний) для звіту.
-pub fn tail(n: usize) -> Vec<String> {
-    let Some(p) = path() else {
+/// Останні рядки журналу `name` (попередній файл + поточний) для звіту.
+pub fn tail_of(name: &str, n: usize) -> Vec<String> {
+    let Some(p) = path_of(name) else {
         return Vec::new();
     };
     let read = |p: &std::path::Path| {
@@ -52,6 +62,11 @@ pub fn tail(n: usize) -> Vec<String> {
             .unwrap_or_default()
     };
     last_lines(&[read(&CappedLog::old_path(&p)), read(&p)], n)
+}
+
+/// Останні рядки журналу вікна програми.
+pub fn tail(n: usize) -> Vec<String> {
+    tail_of(APP, n)
 }
 
 #[cfg(test)]

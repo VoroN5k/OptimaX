@@ -5,19 +5,27 @@
   import type { HistoryEntry } from "../lib/bindings/HistoryEntry";
   import type { HistoryView } from "../lib/bindings/HistoryView";
   import type { RecordComparison } from "../lib/bindings/RecordComparison";
-  import type { StateChange } from "../lib/bindings/StateChange";
   import { dateTime } from "../lib/format";
+  import { fps, stateValue } from "../lib/historyFormat";
   import { t, tk } from "../lib/i18n";
   import { logLocal, ui } from "../lib/state.svelte";
   import Button from "./Button.svelte";
   import Card from "./Card.svelte";
   import Modal from "./Modal.svelte";
+  import ComparisonSummary from "./ComparisonSummary.svelte";
   import ResultView from "./ResultView.svelte";
   import Segmented from "./Segmented.svelte";
   import StateView from "./StateView.svelte";
 
   // Історія записів «Чому лагає?»: записи гри в часі, що змінилося між ними, порівняння двох
   // записів і повторний аналіз старого запису. Порівняння й зміни рахує бекенд.
+
+  let {
+    onCompare,
+  }: {
+    /** Наступний крок «Перевірити A/B» з відкритого запису. */
+    onCompare?: (game: string, variants: string[]) => void;
+  } = $props();
 
   let view = $state<HistoryView | null>(null);
   let loading = $state(true);
@@ -123,16 +131,8 @@
       await load();
     });
 
-  const fps = (v: number | null) => (v == null ? "—" : v.toFixed(0));
-  const pct = (v: number | null) => (v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(1)} %`);
   const when = (ms: number) => dateTime(Math.floor(ms / 1000));
 
-  /** Стани HAGS / ігрового режиму приходять назвами (`enabled`…) — показуємо словами. */
-  const STATES = new Set(["enabled", "disabled", "not_set", "default"]);
-  function value(c: StateChange, v: string): string {
-    if ((c.field === "hags" || c.field === "game_mode") && STATES.has(v)) return tk(`ui.history.state.${v}`);
-    return v;
-  }
 </script>
 
 <div class="history">
@@ -184,7 +184,7 @@
                 <div class="chips">
                   <span class="small dim">{tk("ui.history.changed")}</span>
                   {#each r.changes as c (c.field)}
-                    <span class="chip small" title={`${value(c, c.from)} → ${value(c, c.to)}`}>
+                    <span class="chip small" title={`${stateValue(c, c.from)} → ${stateValue(c, c.to)}`}>
                       {tk(`ui.history.field.${c.field}`)}
                     </span>
                   {/each}
@@ -229,47 +229,7 @@
         title={tk("ui.history.cmp_title")}
         subtitle={tk("ui.history.cmp_between", { from: when(c.older.at_unix_ms), to: when(c.newer.at_unix_ms) })}
       >
-        <div class="cmp">
-          <div class="delta {c.trend}">
-            <span class="small muted">{tk("ui.diag.avg")}</span>
-            <strong class="mono">{fps(c.older.avg_fps)} → {fps(c.newer.avg_fps)}</strong>
-            <span class="mono">{pct(c.avg_fps_change_pct)}</span>
-          </div>
-          <div class="delta">
-            <span class="small muted">1% low</span>
-            <strong class="mono">{fps(c.older.low_1pct_fps)} → {fps(c.newer.low_1pct_fps)}</strong>
-            <span class="mono">{pct(c.low_1pct_change_pct)}</span>
-          </div>
-          <p class="trend {c.trend}" role="status">
-            <i class="dot" aria-hidden="true"></i>
-            {tk(`ui.history.trend.${c.trend}`, { t: c.threshold_pct.toFixed(0) })}
-          </p>
-        </div>
-        {#if !c.same_game}
-          <p class="warn small">{tk("ui.history.warn_game")}</p>
-        {/if}
-        {#if c.scene === "different"}
-          <p class="warn small">{tk("ui.history.warn_scene", { a: c.older.scene ?? "", b: c.newer.scene ?? "" })}</p>
-        {:else if c.scene === "unknown"}
-          <p class="small muted note">{tk("ui.history.scene_unknown")}</p>
-        {/if}
-        {#if !c.same_display}
-          <p class="warn small">{tk("ui.history.warn_display")}</p>
-        {/if}
-        {#if c.bottleneck_changed}
-          <p class="small">{tk("ui.history.bottleneck_changed", { from: t(c.older.title), to: t(c.newer.title) })}</p>
-        {/if}
-        <h3 class="section muted">{tk("ui.history.what_changed")}</h3>
-        {#if c.changes.length}
-          <dl class="changes">
-            {#each c.changes as ch (ch.field)}
-              <dt>{tk(`ui.history.field.${ch.field}`)}</dt>
-              <dd class="mono">{value(ch, ch.from)} → {value(ch, ch.to)}</dd>
-            {/each}
-          </dl>
-        {:else}
-          <p class="small muted">{tk("ui.history.no_changes")}</p>
-        {/if}
+        <ComparisonSummary cmp={c} />
       </Card>
     {/if}
 
@@ -278,7 +238,7 @@
         <span>{tk("ui.history.opened", { when: when(opened.entry.at_unix_ms) })}</span>
         <Button small variant="ghost" onclick={() => (opened = null)}>{tk("ui.history.close")}</Button>
       </div>
-      <ResultView result={opened.result} />
+      <ResultView result={opened.result} {onCompare} historyId={opened.entry.id} />
     {/if}
   {/if}
 </div>
@@ -376,9 +336,6 @@
     border: 1px solid var(--border);
     color: var(--text-muted);
   }
-  .note {
-    margin: calc(var(--space) * 3) 0 0;
-  }
   .chips {
     display: flex;
     flex-wrap: wrap;
@@ -405,75 +362,6 @@
   }
   .err {
     color: var(--danger);
-  }
-  .cmp {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: stretch;
-    gap: calc(var(--space) * 3);
-  }
-  .delta {
-    display: grid;
-    gap: 2px;
-    min-width: 180px;
-    padding: calc(var(--space) * 3) calc(var(--space) * 4);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--bg-input);
-  }
-  .delta strong {
-    font-size: 20px;
-    font-weight: 600;
-  }
-  .trend {
-    flex: 1;
-    min-width: 220px;
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    margin: 0;
-    font-size: 14px;
-  }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    background: var(--text-dim);
-  }
-  .trend.better .dot {
-    background: var(--ok);
-  }
-  .trend.worse .dot {
-    background: var(--warn);
-  }
-  .warn {
-    margin: calc(var(--space) * 3) 0 0;
-    color: var(--warn);
-  }
-  .section {
-    margin: calc(var(--space) * 4) 0 calc(var(--space) * 2);
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .changes {
-    display: grid;
-    grid-template-columns: minmax(160px, max-content) 1fr;
-    gap: 4px calc(var(--space) * 4);
-    margin: 0;
-    padding: calc(var(--space) * 3);
-    border-radius: var(--radius-sm);
-    background: var(--bg-input);
-    font-size: 13px;
-  }
-  .changes dt {
-    color: var(--text-muted);
-  }
-  .changes dd {
-    margin: 0;
-    word-break: break-word;
   }
   .opened {
     display: flex;

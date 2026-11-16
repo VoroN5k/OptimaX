@@ -10,6 +10,7 @@ const finding = (f: Partial<Finding> & Pick<Finding, "id" | "title" | "detail">)
   confidence: 80,
   advice: null,
   evidence: [],
+  next: null,
   ...f,
 });
 

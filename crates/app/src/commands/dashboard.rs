@@ -282,6 +282,7 @@ mod tests {
                 finding("audit", "os.ok", Impact::Info),
             ],
             skipped: vec![],
+            areas: vec![],
         };
         let s = ConfigSummary::from_report(report);
         assert_eq!((s.high, s.moderate), (1, 2));

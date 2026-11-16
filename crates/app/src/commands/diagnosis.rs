@@ -227,9 +227,15 @@ pub fn diag_start(
                 };
                 // Історія — окремим потоком: стан ПК і стиснення не затримують результат.
                 let for_history = result.clone();
+                let notify = app.clone();
                 let spawned = std::thread::Builder::new()
                     .name("optimax-history".into())
-                    .spawn(move || super::history::remember(&for_history, &rec, scene));
+                    .spawn(move || {
+                        // Після збереження UI просить порівняння з попереднім записом гри.
+                        if let Some(id) = super::history::remember(&for_history, &rec, scene) {
+                            let _ = notify.emit("history-saved", id);
+                        }
+                    });
                 if let Err(e) = spawned {
                     tracing::warn!("історія записів: потік не запустився: {e}");
                 }

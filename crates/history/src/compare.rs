@@ -180,6 +180,16 @@ pub fn compare(a: &HistoryEntry, b: &HistoryEntry) -> RecordComparison {
     }
 }
 
+/// Попередній запис тієї самої гри (назва без урахування регістру) для запису `id`: найновіший
+/// серед старіших за нього. Немає такого запису чи попереднього — `None`.
+pub fn previous_of<'a>(entries: &'a [HistoryEntry], id: &str) -> Option<&'a HistoryEntry> {
+    let cur = entries.iter().find(|e| e.id == id)?;
+    entries
+        .iter()
+        .filter(|e| e.at_unix_ms < cur.at_unix_ms && e.game.eq_ignore_ascii_case(&cur.game))
+        .max_by_key(|e| e.at_unix_ms)
+}
+
 /// Помітне погіршення в грі: найновіший запис проти попереднього порівнянного.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -317,6 +327,72 @@ pub(crate) mod tests {
             has_recording: true,
             scene: None,
         }
+    }
+
+    fn game_entry(game: &str, at: i64) -> HistoryEntry {
+        let mut e = entry(at, 100.0, None);
+        e.game = game.into();
+        e.id = format!("{at}-{game}");
+        e
+    }
+
+    /// Найновіші першими, як `Store::list`.
+    fn newest_first() -> Vec<HistoryEntry> {
+        vec![
+            game_entry("re9.exe", 3),
+            game_entry("cs2.exe", 2),
+            game_entry("re9.exe", 1),
+        ]
+    }
+
+    #[test]
+    fn previous_of_same_game_skips_other_games() {
+        let list = newest_first();
+        assert_eq!(
+            previous_of(&list, "3-re9.exe").map(|e| e.at_unix_ms),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn previous_of_ignores_case() {
+        let mut list = newest_first();
+        list[0].game = "RE9.exe".into();
+        assert_eq!(
+            previous_of(&list, "3-re9.exe").map(|e| e.at_unix_ms),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn previous_of_first_record_is_none() {
+        assert!(previous_of(&newest_first(), "1-re9.exe").is_none());
+        assert!(previous_of(&newest_first(), "2-cs2.exe").is_none());
+    }
+
+    #[test]
+    fn previous_of_unknown_id_is_none() {
+        assert!(previous_of(&newest_first(), "nope").is_none());
+    }
+
+    #[test]
+    fn previous_of_never_returns_newer() {
+        let list = vec![
+            game_entry("re9.exe", 3),
+            game_entry("re9.exe", 2),
+            game_entry("re9.exe", 1),
+        ];
+        assert_eq!(
+            previous_of(&list, "2-re9.exe").map(|e| e.at_unix_ms),
+            Some(1)
+        );
+        // Порядок списку не має значення: береться найновіший серед старіших.
+        let mut shuffled = list.clone();
+        shuffled.reverse();
+        assert_eq!(
+            previous_of(&shuffled, "3-re9.exe").map(|e| e.at_unix_ms),
+            Some(2)
+        );
     }
 
     #[test]

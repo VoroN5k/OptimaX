@@ -22,7 +22,7 @@ pub use timeline::{
     DpcPoint, DpcTimeline, FramePoint, GpuPoint, IoProcess, SamplePoint, ShaderWrite, Timeline,
 };
 
-use optimax_core::{Category, Evidence, Finding, FindingBuilder, Impact, Text};
+use optimax_core::{Category, Evidence, Finding, FindingBuilder, Impact, NextStep, Text, Tool};
 use optimax_frametime::{FrameStats, Recording};
 use rules::Analysis;
 use serde::{Deserialize, Serialize};
@@ -372,7 +372,9 @@ pub fn upscale_advice(bottleneck: Bottleneck, confidence: u8) -> Option<Finding>
     };
     let mut b = FindingBuilder::new("diag", id, category, Impact::Info, confidence);
     if bottleneck == Bottleneck::Gpu {
-        b = b.advice();
+        b = b.advice().next(NextStep::Open {
+            tool: Tool::Upscale,
+        });
     }
     Some(b.build())
 }

@@ -3,4 +3,4 @@
 /**
  * Фоновий шар (`docs/DESIGN.md` розд. 9, 11). Працює лише з «Ефектами: Повні» і поза вимірюваннями.
  */
-export type Background = "real" | "decorative" | "off";
+export type Background = "on" | "off";

@@ -22,6 +22,21 @@ test.describe("Головна", () => {
     expect(await unmocked(page)).toEqual([]);
   });
 
+  test("кільце рахує області без зауважень, а не знахідки", async ({ page }) => {
+    await mockBackend(page);
+    await page.goto("/");
+    // 6 областей у фікстурі, зауваження у двох → 4 з 6.
+    await expect(page.getByRole("img", { name: "Областей без зауважень: 67%" })).toBeVisible();
+    await expect(page.getByText("4 з 6", { exact: true })).toBeVisible();
+  });
+
+  test("інформаційний рівень — «До відома», а не «Безпечно»", async ({ page }) => {
+    await mockBackend(page);
+    await page.goto("/");
+    await expect(page.getByText("До відома", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Безпечно", { exact: true })).toHaveCount(0);
+  });
+
   test("«Оновити» повторює аудит і скан", async ({ page }) => {
     await mockBackend(page);
     await page.goto("/");

@@ -1,20 +1,21 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
 
-  // Рядок «що можна перевірити» (docs/DESIGN.md розд. 7, CheckRow): бейдж-номер 26×26 і текст;
-  // між рядками межа, hover — легкий фон.
-  let { n, children }: { n: number; children: Snippet } = $props();
+  // Рядок «що робити далі» (docs/DESIGN.md розд. 7, CheckRow): бейдж-номер 26×26, текст і
+  // необов'язкова кнопка наступного кроку праворуч; між рядками межа, hover — легкий фон.
+  let { n, children, action }: { n: number; children: Snippet; action?: Snippet } = $props();
 </script>
 
 <li class="row">
   <span class="badge mono" aria-hidden="true">{n}</span>
   <span class="text">{@render children()}</span>
+  {#if action}<span class="action">{@render action()}</span>{/if}
 </li>
 
 <style>
   .row {
     display: grid;
-    grid-template-columns: 36px minmax(0, 1fr);
+    grid-template-columns: 36px minmax(0, 1fr) auto;
     gap: calc(var(--space) * 2);
     align-items: center;
     padding: calc(var(--space) * 2.5) calc(var(--space) * 2);

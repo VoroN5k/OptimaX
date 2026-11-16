@@ -29,5 +29,7 @@ pub mod tray;
 
 pub use date::CivilDate;
 pub use error::CoreError;
-pub use finding::{Category, Confidence, Evidence, Finding, FindingBuilder, Impact};
+pub use finding::{
+    Category, Confidence, Evidence, Finding, FindingBuilder, Impact, NextStep, Tool,
+};
 pub use i18n::{Catalog, Text};

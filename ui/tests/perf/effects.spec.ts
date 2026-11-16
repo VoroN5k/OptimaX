@@ -6,12 +6,11 @@ import { mockBackend } from "../e2e/mock";
 // CPU — частка одного ядра за процесами (CDP SystemInfo.getProcessInfo), пам'ять — JS-купа.
 const SECONDS = Number(process.env.SECONDS_PER_MODE ?? 15);
 const SCENARIOS = [
-  { name: "Повні + фон із запису", effects: "full", background: "real", last: gpuResult },
-  { name: "Повні + декоративний фон", effects: "full", background: "decorative", last: gpuResult },
+  { name: "Повні + фон", effects: "full", background: "on", last: gpuResult },
   { name: "Повні без фону", effects: "full", background: "off", last: gpuResult },
-  { name: "Спокійні", effects: "calm", background: "real", last: gpuResult },
-  { name: "Вимкнені", effects: "off", background: "real", last: gpuResult },
-  { name: "Повні, вікно неактивне (поверх гра)", effects: "full", background: "real", last: gpuResult, blur: true },
+  { name: "Спокійні", effects: "calm", background: "on", last: gpuResult },
+  { name: "Вимкнені", effects: "off", background: "on", last: gpuResult },
+  { name: "Повні, вікно неактивне (поверх гра)", effects: "full", background: "on", last: gpuResult, blur: true },
 ] as const;
 
 test("витрати за режимами ефектів", async ({ baseURL }) => {

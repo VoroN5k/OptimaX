@@ -395,6 +395,7 @@ mod app {
                 dashboard::dashboard_disk,
                 history::history_list,
                 history::history_compare,
+                history::history_vs_previous,
                 history::history_open,
                 history::history_delete,
                 history::history_clear,

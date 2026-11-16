@@ -130,9 +130,10 @@
   });
 
   /** Тест роздільності має сенс, коли вузьке місце — GPU чи CPU (а не ліміт кадрів). */
-  function compareReflex(game: string) {
+  /** Наступний крок «Перевірити A/B»: «Порівняння» з грою запису й назвами варіантів. */
+  function openCompare(game: string, variants: string[]) {
     exe = game;
-    expPreset = [tk("ui.exp.preset.reflex_off"), tk("ui.exp.preset.reflex_on")];
+    expPreset = variants;
     tab = "compare";
   }
 
@@ -171,7 +172,7 @@
   {#if tab === "crash"}
     <CrashView />
   {:else if tab === "history"}
-    <RecordHistory />
+    <RecordHistory onCompare={openCompare} />
   {:else if tab === "compare"}
     <Experiment bind:game={exe} bind:preset={expPreset} />
   {:else if tab === "watch"}
@@ -247,7 +248,9 @@
           result={shown}
           {example}
           hideResFindings={resShown}
-          onCompareReflex={example ? undefined : () => compareReflex(shown.diagnosis.game)}
+          onCompare={example ? undefined : openCompare}
+          historyId={example ? null : ui.lastRecordId}
+          live={!example}
         >
           {#snippet after()}
             {#if resTestable && result}

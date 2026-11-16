@@ -100,6 +100,17 @@ fn ids(d: &Diagnosis) -> Vec<&str> {
     d.verdicts.iter().map(|v| v.finding.id.as_str()).collect()
 }
 
+/// Другий варіант A/B кроку знахідки (перший завжди «Як зараз»).
+fn compare_after(f: &Finding) -> Option<&str> {
+    match &f.next {
+        Some(optimax_core::NextStep::Compare { variants }) => {
+            assert_eq!(variants[0].key, "diag.next.as_is");
+            Some(variants[1].key.as_str())
+        }
+        _ => None,
+    }
+}
+
 fn find<'a>(d: &'a Diagnosis, id: &str) -> Option<&'a Finding> {
     d.verdicts.iter().map(|v| &v.finding).find(|f| f.id == id)
 }
@@ -118,6 +129,7 @@ fn gpu_bound_scenario() {
     assert_eq!(d.bottleneck, Bottleneck::Gpu);
     assert_eq!(ids(&d)[0], "summary.gpu");
     let f = find(&d, "gpu_bound").unwrap();
+    assert_eq!(compare_after(f), Some("diag.next.lower_graphics"));
     // Без перевірки чутливості до роздільності — не більше 85 %.
     assert!(f.confidence <= Confidence::new(85));
     assert!(find(&d, "cpu_bound").is_none());
@@ -127,6 +139,12 @@ fn gpu_bound_scenario() {
     let up = find(&d, "upscale.helps").unwrap();
     assert_eq!(up.confidence, f.confidence);
     assert!(up.advice.is_some());
+    assert_eq!(
+        up.next,
+        Some(optimax_core::NextStep::Open {
+            tool: optimax_core::Tool::Upscale
+        })
+    );
     assert!(find(&d, "upscale.no_help").is_none());
 }
 
@@ -158,6 +176,7 @@ fn cpu_bound_scenario_with_core_hopping() {
     let d = diagnose_timeline(&tl, &Context::default());
     assert_eq!(d.bottleneck, Bottleneck::Cpu);
     let f = find(&d, "cpu_bound").unwrap();
+    assert_eq!(compare_after(f), Some("diag.next.lower_cpu"));
     assert_eq!(f.impact, Impact::Moderate);
     let hopping = f
         .evidence
@@ -578,6 +597,7 @@ fn isolated_hitches_explained_not_called_stutter() {
     );
     assert!(find(&d, "stutter.found").is_none() && find(&d, "stutter.unknown").is_none());
     let f = find(&d, "stutter.isolated").expect("пояснення 0.1% low");
+    assert!(f.next.is_none(), "фризи — не A/B-налаштування");
     assert_eq!(f.impact, Impact::Info);
     assert_eq!(f.title.args["spikes"], "3");
     assert_eq!(f.title.args["max"], "105");
@@ -619,6 +639,7 @@ fn thermal_throttling_detected() {
     });
     let d = diagnose_timeline(&tl, &Context::default());
     let f = find(&d, "throttling").unwrap();
+    assert!(f.next.is_none(), "тротлінг — не A/B-налаштування");
     // 2300 замість 2600 МГц — втрата ~12 %, виміряна: високий вплив.
     assert_eq!(f.impact, Impact::High);
     assert!(f
@@ -642,6 +663,7 @@ fn vram_near_full_without_correlation_is_moderate() {
     });
     let d = diagnose_timeline(&tl, &Context::default());
     let f = find(&d, "vram.near_full").unwrap();
+    assert_eq!(compare_after(f), Some("diag.next.lower_textures"));
     assert_eq!(f.impact, Impact::Moderate);
 }
 
@@ -666,6 +688,7 @@ fn vram_correlated_with_spikes_is_high() {
     });
     let d = diagnose_timeline(&tl, &Context::default());
     let f = find(&d, "vram.stutter").unwrap_or_else(|| panic!("{:?}", ids(&d)));
+    assert_eq!(compare_after(f), Some("diag.next.lower_textures"));
     assert_eq!(f.impact, Impact::High);
 }
 
@@ -807,6 +830,7 @@ fn composed_present_reported_with_evidence() {
     );
     let d = diagnose_timeline(&tl, &Context::default());
     let f = find(&d, "present.composed").unwrap();
+    assert_eq!(compare_after(f), Some("diag.next.fullscreen"));
     assert_eq!(f.category, Category::Display);
     assert!(f.advice.is_some());
     // Прямий факт PresentMon: 70 + 25 × 0.9.
@@ -1421,6 +1445,10 @@ fn vsync_judder_detected_only_with_vsync_and_known_refresh() {
     let tl = vsync_on(timeline(&vsync_frames(60.0, 8, 2000), |_, _| base_sample()));
     let d = diagnose_timeline(&tl, &ctx);
     assert!(find(&d, "vsync.judder").is_some());
+    assert_eq!(
+        find(&d, "vsync.judder").and_then(compare_after),
+        Some("diag.next.adaptive_sync")
+    );
     // Без частоти монітора — не вгадуємо.
     assert!(find(&diagnose_timeline(&tl, &Context::default()), "vsync.judder").is_none());
     // V-Sync вимкнено (SyncInterval 0) — шаблон не про нього.
@@ -1578,6 +1606,7 @@ fn main_thread_at_ceiling_is_cpu_bound_even_when_no_core_is() {
     let d = diagnose_timeline(&tl, &Context::default());
     assert_eq!(d.bottleneck, Bottleneck::Cpu);
     let f = find(&d, "cpu_bound.main_thread").expect("вердикт за головним потоком");
+    assert_eq!(compare_after(f), Some("diag.next.lower_cpu"));
     assert!(f.confidence.percent() >= 70 && f.confidence.percent() <= 85);
     assert!(f
         .evidence

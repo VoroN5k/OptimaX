@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import { api, asCmdError, on } from "./lib/api";
   import { tk } from "./lib/i18n";
-  import { buildBackdropData } from "./lib/backdrop";
   import { rememberSplash } from "./lib/splash";
   import { effectiveEffects, measuringNow, trackEffects, userIdle, windowHidden } from "./lib/effects.svelte";
   import { cl, flashBg, gm, logLocal, pushLog, ui, up } from "./lib/state.svelte";
@@ -64,7 +63,11 @@
     });
     const subs = [
       on("log", pushLog),
-      on("diag-done", (r) => (ui.lastRecord = r)),
+      on("diag-done", (r) => {
+        ui.lastRecord = r;
+        ui.lastRecordId = null;
+      }),
+      on("history-saved", (id) => (ui.lastRecordId = id)),
       on("upscale", (v) => {
         up.view = v;
       }),
@@ -141,9 +144,6 @@
   const bgActive = $derived(
     effectiveEffects() === "full" && !measuringNow() && ui.settings.background !== "off",
   );
-  const bgData = $derived(
-    ui.settings.background === "real" ? buildBackdropData(ui.lastRecord?.diagnosis.view) : null,
-  );
 
   // Повернення на вкладку відкриває той розділ, де користувач був.
   $effect(() => remember(ui.screen));
@@ -154,8 +154,6 @@
   <Backdrop
     active={bgActive}
     paused={windowHidden() || userIdle()}
-    data={bgData}
-    game={bgData ? (ui.lastRecord?.diagnosis.game ?? null) : null}
     grain={effectiveEffects() !== "off"}
     onstats={(s) => (bgStats = s)}
   />

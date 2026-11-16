@@ -59,6 +59,7 @@ export interface Responses {
   metrics_stop: null;
   history_list: HistoryView;
   history_compare: RecordComparison;
+  history_vs_previous: RecordComparison | null;
   history_open: DiagnosisResult;
   history_delete: null;
   history_clear: number;
@@ -98,13 +99,13 @@ export interface Responses {
 const GIB = 1073741824;
 
 export function finding(f: Partial<Finding> & Pick<Finding, "id" | "title" | "detail">): Finding {
-  return { category: "gpu", impact: "info", confidence: 80, advice: null, evidence: [], ...f };
+  return { category: "gpu", impact: "info", confidence: 80, advice: null, evidence: [], next: null, ...f };
 }
 
 export const settings: Settings = {
   effects: "off",
   palette: "champagne",
-  background: "real",
+  background: "on",
   record_start: "auto",
   record_sound: true,
   upscale: { filter: "fsr", fit: "aspect", sharpness: 0.2, capture_cursor: false },
@@ -147,6 +148,15 @@ export const config: ConfigSummary = {
       }),
     ],
     skipped: [],
+    // 6 областей, зауваження у двох (пам'ять, драйвер відеокарти).
+    areas: [
+      { check: "firmware", problems: 1 },
+      { check: "displays", problems: 0 },
+      { check: "gpus", problems: 1 },
+      { check: "power_plan", problems: 0 },
+      { check: "game_mode", problems: 0 },
+      { check: "hags", problems: 0 },
+    ],
   },
 };
 
@@ -239,6 +249,13 @@ export const gpuResult: DiagnosisResult = {
           title: { key: "diag.gpu_bound.title", args: { share: "97" } },
           detail: { key: "diag.gpu_bound.detail", args: {} },
           advice: { key: "diag.gpu_bound.advice", args: {} },
+          next: {
+            kind: "compare",
+            variants: [
+              { key: "diag.next.as_is", args: {} },
+              { key: "diag.next.lower_graphics", args: {} },
+            ],
+          },
           // Як у rules.rs: частка часу GPU ≥ 95 % і середнє завантаження.
           evidence: [
             { label: { key: "diag.ev.gpu_busy_share", args: {} }, value: { key: "value.pct_needed", args: { v: "97", need: "80" } } },
@@ -254,6 +271,7 @@ export const gpuResult: DiagnosisResult = {
           title: { key: "diag.upscale.helps.title", args: {} },
           detail: { key: "diag.upscale.helps.detail", args: {} },
           advice: { key: "diag.upscale.helps.advice", args: {} },
+          next: { kind: "open", tool: "upscale" },
         }),
         expected_gain: null,
       },
@@ -647,6 +665,7 @@ export function defaults(): Responses {
     metrics_stop: null,
     history_list: structuredClone(history),
     history_compare: structuredClone(comparison),
+    history_vs_previous: null,
     history_open: structuredClone(gpuResult),
     history_delete: null,
     history_clear: 3,

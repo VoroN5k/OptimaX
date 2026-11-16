@@ -151,8 +151,7 @@
           bind:value={ui.settings.background}
           onchange={(_v: Background) => save()}
           options={[
-            { value: "real", label: tk("ui.settings.background.real") },
-            { value: "decorative", label: tk("ui.settings.background.decorative") },
+            { value: "on", label: tk("ui.settings.background.on") },
             { value: "off", label: tk("ui.settings.background.off") },
           ]}
         />

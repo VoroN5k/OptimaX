@@ -3,7 +3,7 @@
 
 use crate::drivers::driver_kind;
 use crate::timeline::{DpcPoint, DpcTimeline, SamplePoint, ShaderWrite, Timeline};
-use optimax_core::{Category, Evidence, Finding, FindingBuilder, Impact, Text};
+use optimax_core::{Category, Evidence, Finding, FindingBuilder, Impact, NextStep, Text};
 use optimax_frametime::{find_spikes, FrameStats, PresentMode};
 use optimax_metrics::ThrottleReason;
 use std::collections::HashMap;
@@ -62,6 +62,13 @@ pub const SHADER_AFTER_MS: f64 = 1500.0;
 
 fn draft(id: &'static str, category: Category, impact: Impact, confidence: u8) -> FindingBuilder {
     FindingBuilder::new("diag", id, category, impact, confidence)
+}
+
+/// Крок «Перевірити A/B»: «Як зараз» проти варіанта після зміни з поради.
+fn compare_step(after: &'static str) -> NextStep {
+    NextStep::Compare {
+        variants: [Text::new("diag.next.as_is"), Text::new(after)],
+    }
 }
 
 fn pct(v: f64) -> Text {
@@ -255,6 +262,7 @@ pub fn composed_present(a: &Analysis<'_>) -> Option<Finding> {
     .arg("share", format!("{:.0}", share * 100.0))
     .arg("mode", top.as_str())
     .advice()
+    .next(compare_step("diag.next.fullscreen"))
     .evidence(Text::new("diag.ev.composed_share"), pct(share))
     .evidence(
         Text::new("diag.ev.present_mode"),
@@ -378,6 +386,7 @@ pub fn gpu_bound(a: &Analysis<'_>) -> Option<Finding> {
         )
         .arg("avg", format!("{:.0}", avg.unwrap_or(0.0)))
         .advice()
+        .next(compare_step("diag.next.lower_graphics"))
         .evidence(Text::new("diag.ev.gpu_busy_share"), pct(share));
     if let Some(u) = a.gpu_avg_util() {
         d = d.evidence(
@@ -444,6 +453,7 @@ pub fn cpu_bound(a: &Analysis<'_>) -> Option<Finding> {
     .arg("gpu", format!("{gpu_avg:.0}"))
     .arg("core", top_core)
     .advice()
+    .next(compare_step("diag.next.lower_cpu"))
     .evidence(Text::new("diag.ev.core_saturated_share"), pct(share))
     .evidence(
         Text::new("diag.ev.gpu_avg"),
@@ -508,7 +518,8 @@ pub fn cpu_main_thread(a: &Analysis<'_>) -> Option<Finding> {
     )
     .arg("busy", format!("{:.0}", m.running * 100.0))
     .arg("gpu", format!("{gpu_avg:.0}"))
-    .advice();
+    .advice()
+    .next(compare_step("diag.next.lower_cpu"));
     for e in thread_evidence(a) {
         d = d.evidence(e.label, e.value);
     }
@@ -548,6 +559,7 @@ pub fn vram_pressure(a: &Analysis<'_>) -> Option<Finding> {
     Some(
         d.arg("peak", format!("{:.0}", peak * 100.0))
             .advice()
+            .next(compare_step("diag.next.lower_textures"))
             .evidence(Text::new("diag.ev.vram_full_share"), pct(share))
             .evidence(Text::new("diag.ev.vram_peak"), pct(peak))
             .evidence(Text::new("diag.ev.spikes_with_factor"), pct(at_spikes))
@@ -1337,6 +1349,7 @@ pub fn vsync_judder(a: &Analysis<'_>) -> Option<Finding> {
             .arg("ms1", format!("{interval:.1}"))
             .arg("ms2", format!("{:.1}", interval * 2.0))
             .advice()
+            .next(compare_step("diag.next.adaptive_sync"))
             .evidence(Text::new("diag.ev.vsync_quantized"), pct(quantized))
             .evidence(Text::new("diag.ev.vsync_missed"), pct(missed))
             .evidence(

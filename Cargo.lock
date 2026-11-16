@@ -2430,6 +2430,7 @@ dependencies = [
  "optimax-core",
  "optimax-metrics",
  "serde",
+ "serde_json",
  "tracing",
  "ts-rs",
  "windows",

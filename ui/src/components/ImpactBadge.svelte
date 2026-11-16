@@ -4,13 +4,14 @@
   import StatusPill from "./StatusPill.svelte";
 
   // Вплив знахідки: колір завжди дублюється текстом (не лише колір). «Впливає на звичні речі» —
-  // --bad, «Помірний вплив» — --warn, «Безпечно» — --ok (docs/DESIGN.md розд. 7). `pulse` — для
+  // --bad, «Помірний вплив» — --warn, «До відома» — нейтральний (docs/DESIGN.md розд. 7): інформаційна
+  // знахідка (напр. «відеокарта працює на межі») — не «безпечно» й не «добре», а просто факт. `pulse` — для
   // активного вердикту (головна знахідка).
   let { impact, pulse = false }: { impact: Impact; pulse?: boolean } = $props();
   const key = $derived(
     impact === "high" ? "ui.badge.high" : impact === "moderate" ? "ui.badge.moderate" : "ui.badge.info",
   );
-  const tone = $derived(impact === "high" ? "bad" : impact === "moderate" ? "warn" : "ok");
+  const tone = $derived(impact === "high" ? "bad" : impact === "moderate" ? "warn" : "neutral");
 </script>
 
 <StatusPill {tone} {pulse} small>{tk(key)}</StatusPill>

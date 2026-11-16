@@ -13,8 +13,8 @@ mod session;
 mod store;
 
 pub use compare::{
-    compare, diff, driver_effects, fps_noise_pct, regressions, DriverEffect, RecordComparison,
-    Regression, Trend, MIN_SIGNIFICANT_PCT,
+    compare, diff, driver_effects, fps_noise_pct, previous_of, regressions, DriverEffect,
+    RecordComparison, Regression, Trend, MIN_SIGNIFICANT_PCT,
 };
 pub use model::{
     clean_scene, scene_match, DisplayState, FileStamp, HistoryEntry, SceneMatch, StateChange,

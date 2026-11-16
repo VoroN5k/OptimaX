@@ -51,6 +51,16 @@ pub struct SkippedCheck {
     pub error: String,
 }
 
+/// Успішна перевірка й кількість її знахідок вище «до відома».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct AreaResult {
+    /// Яка перевірка.
+    pub check: CheckId,
+    /// Знахідок із впливом вище інформаційного.
+    pub problems: u32,
+}
+
 /// Результат аудиту.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -59,13 +69,22 @@ pub struct AuditReport {
     pub findings: Vec<Finding>,
     /// Перевірки, що не вдалися.
     pub skipped: Vec<SkippedCheck>,
+    /// Успішні перевірки (області) — для підсумку «без зауважень: X з Y».
+    #[serde(default)]
+    pub areas: Vec<AreaResult>,
 }
 
 impl AuditReport {
     /// Додає знахідки, зібрані поза [`run_audit`] (напр. частоти шини пам'яті з PawnIO), і
     /// впорядковує, як [`run_audit`].
+    /// Знахідки вище «до відома» зараховуються до області [`CheckId::Firmware`] (пам'ять).
     pub fn add(&mut self, extra: impl IntoIterator<Item = Finding>) {
+        let start = self.findings.len();
         self.findings.extend(extra);
+        let n = problems(&self.findings[start..]);
+        if let Some(a) = self.areas.iter_mut().find(|a| a.check == CheckId::Firmware) {
+            a.problems += n;
+        }
         sort(&mut self.findings);
     }
 
@@ -81,8 +100,15 @@ impl AuditReport {
 pub fn run_audit(probe: &dyn SystemProbe, today: CivilDate) -> AuditReport {
     let mut findings = Vec::new();
     let mut skipped = Vec::new();
+    let mut areas = Vec::new();
     let mut handle = |check: CheckId, result: Result<Vec<Finding>, CoreError>| match result {
-        Ok(f) => findings.extend(f),
+        Ok(f) => {
+            areas.push(AreaResult {
+                check,
+                problems: problems(&f),
+            });
+            findings.extend(f);
+        }
         Err(e) => {
             tracing::warn!("перевірка {check:?} не вдалася: {e}");
             skipped.push(SkippedCheck {
@@ -145,7 +171,19 @@ pub fn run_audit(probe: &dyn SystemProbe, today: CivilDate) -> AuditReport {
     }
 
     sort(&mut findings);
-    AuditReport { findings, skipped }
+    AuditReport {
+        findings,
+        skipped,
+        areas,
+    }
+}
+
+fn problems(findings: &[Finding]) -> u32 {
+    let n = findings
+        .iter()
+        .filter(|f| f.impact > optimax_core::Impact::Info)
+        .count();
+    u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 /// Стабільне сортування: спершу вплив, потім впевненість; порядок перевірок зберігається.
@@ -264,6 +302,86 @@ mod tests {
                 "power.saver"
             ]
         );
+    }
+
+    fn above_info(r: &AuditReport) -> u32 {
+        r.findings
+            .iter()
+            .filter(|f| f.impact > Impact::Info)
+            .count() as u32
+    }
+
+    #[test]
+    fn areas_cover_successful_checks() {
+        let r = run_audit(&MockProbe { fail_gpus: false }, today());
+        let checks: Vec<CheckId> = r.areas.iter().map(|a| a.check).collect();
+        assert_eq!(
+            checks,
+            vec![
+                CheckId::Firmware,
+                CheckId::Displays,
+                CheckId::Gpus,
+                CheckId::PowerPlan,
+                CheckId::GameMode,
+                CheckId::Hags
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_check_not_in_areas() {
+        let r = run_audit(&MockProbe { fail_gpus: true }, today());
+        assert!(r.areas.iter().all(|a| a.check != CheckId::Gpus));
+        assert_eq!(r.areas.len(), 5);
+    }
+
+    #[test]
+    fn problems_count_only_above_info() {
+        let r = run_audit(&MockProbe { fail_gpus: false }, today());
+        let total: u32 = r.areas.iter().map(|a| a.problems).sum();
+        assert_eq!(total, above_info(&r));
+        let firmware = r
+            .areas
+            .iter()
+            .find(|a| a.check == CheckId::Firmware)
+            .unwrap();
+        // ram.single_module і ram.below_rated.
+        assert!(firmware.problems >= 2);
+    }
+
+    #[test]
+    fn add_counts_into_firmware() {
+        let mut r = run_audit(&MockProbe { fail_gpus: false }, today());
+        let before = r
+            .areas
+            .iter()
+            .find(|a| a.check == CheckId::Firmware)
+            .unwrap()
+            .problems;
+        let f = |impact| {
+            optimax_core::FindingBuilder::new(
+                "audit",
+                "x",
+                optimax_core::Category::Memory,
+                impact,
+                50,
+            )
+            .build()
+        };
+        r.add([f(Impact::Moderate), f(Impact::Info)]);
+        let after = r
+            .areas
+            .iter()
+            .find(|a| a.check == CheckId::Firmware)
+            .unwrap()
+            .problems;
+        assert_eq!(after, before + 1);
+    }
+
+    #[test]
+    fn old_report_without_areas_deserializes() {
+        let r: AuditReport = serde_json::from_str(r#"{"findings":[],"skipped":[]}"#).unwrap();
+        assert!(r.areas.is_empty());
     }
 
     #[test]

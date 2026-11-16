@@ -105,6 +105,32 @@ impl Evidence {
     }
 }
 
+/// Розділ програми, куди веде наступний крок знахідки.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum Tool {
+    /// Апскейл.
+    Upscale,
+}
+
+/// Що людина може зробити після поради (кнопка під нею). Вирішує бекенд.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NextStep {
+    /// Перевірити A/B у «Порівнянні»: назви двох варіантів.
+    Compare {
+        /// «Як зараз» і варіант після зміни.
+        variants: [Text; 2],
+    },
+    /// Відкрити розділ програми.
+    Open {
+        /// Розділ.
+        tool: Tool,
+    },
+}
+
 /// Будівник [`Finding`]: ключі тексту `<prefix>.<id>.title`, `.detail`, `.advice`
 /// з однаковими аргументами, щоб шаблони в каталозі могли використовувати будь-який з них.
 #[derive(Debug, Clone)]
@@ -117,6 +143,7 @@ pub struct FindingBuilder {
     args: Vec<(&'static str, String)>,
     has_advice: bool,
     evidence: Vec<Evidence>,
+    next: Option<NextStep>,
 }
 
 impl FindingBuilder {
@@ -137,6 +164,7 @@ impl FindingBuilder {
             args: Vec::new(),
             has_advice: false,
             evidence: Vec::new(),
+            next: None,
         }
     }
 
@@ -151,6 +179,13 @@ impl FindingBuilder {
     #[must_use]
     pub fn advice(mut self) -> Self {
         self.has_advice = true;
+        self
+    }
+
+    /// Наступний крок під порадою.
+    #[must_use]
+    pub fn next(mut self, step: NextStep) -> Self {
+        self.next = Some(step);
         self
     }
 
@@ -192,6 +227,7 @@ impl FindingBuilder {
             detail: text("detail"),
             advice: self.has_advice.then(|| text("advice")),
             evidence: self.evidence,
+            next: self.next,
         }
     }
 }
@@ -216,4 +252,47 @@ pub struct Finding {
     pub advice: Option<Text>,
     /// Докази (виміряні значення).
     pub evidence: Vec<Evidence>,
+    /// Що людина може зробити далі (кнопка під порадою).
+    #[serde(default)]
+    pub next: Option<NextStep>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finding_without_next_deserializes() {
+        let f = FindingBuilder::new("diag", "x", Category::Gpu, Impact::Info, 50).build();
+        let mut v = serde_json::to_value(&f).expect("json");
+        v.as_object_mut().expect("obj").remove("next");
+        let back: Finding = serde_json::from_value(v).expect("old json");
+        assert_eq!(back.next, None);
+    }
+
+    #[test]
+    fn builder_sets_next() {
+        let f = FindingBuilder::new("diag", "x", Category::Gpu, Impact::Info, 50)
+            .next(NextStep::Open {
+                tool: Tool::Upscale,
+            })
+            .build();
+        assert_eq!(
+            f.next,
+            Some(NextStep::Open {
+                tool: Tool::Upscale
+            })
+        );
+        let step = NextStep::Compare {
+            variants: [Text::new("a"), Text::new("b")],
+        };
+        let v = serde_json::to_value(&step).expect("json");
+        assert_eq!(v["kind"], "compare");
+        assert_eq!(v["variants"][1]["key"], "b");
+        let v = serde_json::to_value(NextStep::Open {
+            tool: Tool::Upscale,
+        })
+        .expect("json");
+        assert_eq!(v, serde_json::json!({"kind": "open", "tool": "upscale"}));
+    }
 }

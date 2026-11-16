@@ -80,7 +80,10 @@
     moderate: config.data?.moderate ?? 0,
     info: report?.findings.filter((f) => f.impact === "info").length ?? 0,
   });
-  const okShare = $derived(report && report.findings.length ? (counts.info / report.findings.length) * 100 : 0);
+  /** Області аудиту (успішні перевірки) і ті з них, де немає зауважень вище «до відома». */
+  const areas = $derived(report?.areas ?? []);
+  const okAreas = $derived(areas.filter((a) => a.problems === 0).length);
+  const okShare = $derived(areas.length ? (okAreas / areas.length) * 100 : 0);
   /** Аудит уже впорядкував знахідки від найвпливовіших. */
   const findings = $derived(report?.findings ?? []);
 
@@ -241,7 +244,13 @@
     {#if report}
       <Card>
         <div class="summary">
-          <Ring value={okShare} label={tk("ui.analysis.ring_label")} caption={tk("ui.analysis.ring_caption")} />
+          {#if areas.length}
+            <Ring
+              value={okShare}
+              label={tk("ui.analysis.ring_label")}
+              caption={tk("ui.analysis.ring_caption", { ok: okAreas, total: areas.length })}
+            />
+          {/if}
           <div class="counts">
             <div class="count high"><strong>{counts.high}</strong><span>{tk("ui.badge.high")}</span></div>
             <div class="count moderate"><strong>{counts.moderate}</strong><span>{tk("ui.badge.moderate")}</span></div>
@@ -460,7 +469,7 @@
     color: var(--warn);
   }
   .count.info strong {
-    color: var(--info);
+    color: var(--text-3);
   }
   .verdict {
     flex: 1;

@@ -182,7 +182,8 @@ pub(crate) fn compress(rec: &Recording) -> CmdResult<Vec<u8>> {
 
 /// Зберігає завершений запис «Діагностики» в історію (блокує: стан ПК і стиснення).
 /// Помилка лише логується — діагностика від історії не залежить.
-pub fn remember(r: &DiagnosisResult, rec: &Recording, scene: Option<String>) {
+/// Повертає id збереженого запису (`None` — не збережено).
+pub fn remember(r: &DiagnosisResult, rec: &Recording, scene: Option<String>) -> Option<String> {
     let run = || -> CmdResult<Option<String>> {
         let state = system_state(&r.diagnosis.game);
         let Some(entry) = entry_from(r, rec, state, scene, now_ms()) else {
@@ -195,9 +196,15 @@ pub fn remember(r: &DiagnosisResult, rec: &Recording, scene: Option<String>) {
         Ok(Some(entry.id))
     };
     match run() {
-        Ok(Some(id)) => tracing::info!("запис додано в історію ({id})"),
-        Ok(None) => {}
-        Err(e) => tracing::warn!("не вдалося зберегти запис в історію: {}", e.message()),
+        Ok(Some(id)) => {
+            tracing::info!("запис додано в історію ({id})");
+            Some(id)
+        }
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!("не вдалося зберегти запис в історію: {}", e.message());
+            None
+        }
     }
 }
 
@@ -246,6 +253,22 @@ pub async fn history_compare(a: String, b: String) -> CmdResult<RecordComparison
         let files = dir()?;
         let store = Store::new(&files);
         Ok(compare(&get(&store, &a)?, &get(&store, &b)?))
+    })
+    .await
+}
+
+/// Порівняння запису `id` з попереднім записом тієї самої гри (`None` — це перший запис гри).
+/// Який запис попередній, вирішує [`optimax_history::previous_of`].
+#[tauri::command]
+pub async fn history_vs_previous(id: String) -> CmdResult<Option<RecordComparison>> {
+    blocking(move || {
+        let files = dir()?;
+        let (entries, _) = Store::new(&files).list().map_err(failed)?;
+        let cur = entries
+            .iter()
+            .find(|e| e.id == id)
+            .ok_or_else(|| CmdError::NotFound(format!("запису {id} немає в історії")))?;
+        Ok(optimax_history::previous_of(&entries, &id).map(|prev| compare(prev, cur)))
     })
     .await
 }

@@ -1,50 +1,34 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import {
-    BackdropScene,
-    hexToTriplet,
-    type BackdropColors,
-    type BackdropData,
-    type LaneLayout,
-  } from "../lib/backdrop";
-  import { tk } from "../lib/i18n";
+  import { BackdropScene, hexToTriplet, type BackdropColors } from "../lib/backdrop";
 
-  // Фоновий шар (docs/DESIGN.md розд. 9): зерно, анімований розмитий canvas і різкий canvas
-  // підписів (малюється лише при зміні розміру чи даних). Підписи й легенда — тільки для
-  // реального запису; декоративний фон без них. `active = false` — нічого не малюється
-  // (ефекти не «Повні», вимірювання, фон вимкнено). Згорнуте вікно, canvas поза екраном —
-  // пауза; зменшений рух — один статичний кадр.
+  // Фоновий шар «Шовк» (docs/DESIGN.md розд. 9): зерно й canvas з поверхнею. Суто декоративний,
+  // без підписів і цифр. `active = false` — нічого не малюється (ефекти не «Повні», вимірювання,
+  // фон вимкнено). Згорнуте вікно, canvas поза екраном — пауза; зменшений рух — один статичний кадр.
   let {
     active,
     paused = false,
-    data,
-    game = null,
     grain = true,
     onstats,
   }: {
     active: boolean;
     /** Вікно неактивне: кадр лишається, цикл стоїть. */
     paused?: boolean;
-    data: BackdropData | null;
-    game?: string | null;
     grain?: boolean;
     onstats?: (s: { fps: number; ms: number }) => void;
   } = $props();
 
-  const FRAME_MS = 33;
-  const DPR_MAX = 2;
-  /** Анімований шар малюється в половинній роздільності: масштабування саме дає м'якість, яку раніше
-   *  робив CSS `filter: blur(2.5px)` на все вікно, а пікселів учетверо менше (заміри — docs/DESIGN.md). */
-  const ANIM_SCALE = 0.5;
+  /** Рух дуже повільний — 20 кадрів/с досить для плавності й удвічі дешевше за 30+. */
+  const FRAME_MS = 50;
+  /** Роздільність шару не вища за CSS-пікселі: тонкі лінії від масштабування лише м'якшають. */
+  const SCALE = 1;
 
   let anim = $state<HTMLCanvasElement | undefined>();
-  let labels = $state<HTMLCanvasElement | undefined>();
   let hidden = $state(document.hidden);
   let onScreen = $state(true);
   let reduced = $state(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 
   let scene: BackdropScene | null = null;
-  let lanes: LaneLayout | null = null;
   let raf = 0;
   let last = 0;
   let w = 0;
@@ -54,81 +38,20 @@
 
   function colors(): BackdropColors {
     const css = getComputedStyle(document.documentElement);
-    const v = (name: string, fb: string) => hexToTriplet(css.getPropertyValue(name), fb);
     return {
-      run: v("--thread-work", "108,124,255"),
-      wait: v("--warn", "255,178,122"),
-      idle: v("--thread-idle", "143,148,170"),
-      frame: v("--a2", "201,164,94"),
-      over: css.getPropertyValue("--warn-glow").replace(/\s/g, "") || "255,138,91",
-      cursor: css.getPropertyValue("--glow").replace(/\s/g, "") || "233,205,140",
+      near: css.getPropertyValue("--glow").replace(/\s/g, "") || "233,205,140",
+      far: hexToTriplet(css.getPropertyValue("--thread-idle"), "143,148,170"),
     };
   }
 
   function resize(): void {
-    if (!anim || !labels || !scene) return;
+    if (!anim || !scene) return;
     w = window.innerWidth;
     h = window.innerHeight;
-    const dpr = Math.min(DPR_MAX, window.devicePixelRatio || 1);
-    for (const [c, k] of [
-      [anim, ANIM_SCALE],
-      [labels, dpr],
-    ] as const) {
-      c.width = Math.round(w * k);
-      c.height = Math.round(h * k);
-      c.getContext("2d")?.setTransform(k, 0, 0, k, 0, 0);
-    }
-    lanes = scene.layout(w, h);
-    drawLabels();
-  }
-
-  /** Підписи доріжок і легенда — лише для запису. */
-  function drawLabels(): void {
-    const ctx = labels?.getContext("2d");
-    if (!ctx || !lanes) return;
-    ctx.clearRect(0, 0, w, h);
-    if (!data || !active) return;
-    const css = getComputedStyle(document.documentElement);
-    const mono = css.getPropertyValue("--font-mono") || "monospace";
-    const text2 = css.getPropertyValue("--text-2").trim() || "#B2B0AA";
-    const text3 = css.getPropertyValue("--text-3").trim() || "#8F8D88";
-    const c = colors();
-    ctx.font = `10px ${mono}`;
-    ctx.textBaseline = "middle";
-    data.lanes.forEach((l, i) => {
-      const y = lanes?.y[i];
-      if (y === undefined) return;
-      ctx.fillStyle = text3;
-      ctx.fillText(tk(`ui.bg.lane.${l.key}`), 32, y - 9);
-    });
-    ctx.fillStyle = text3;
-    ctx.fillText(tk("ui.bg.frames"), 32, lanes.stripY - 14);
-    // Легенда — один рядок у смузі під верхньою панеллю (над заголовком сторінки); унизу вона
-    // просвічувала крізь плитки й заважала читати текст.
-    let x = 32;
-    const ly = 68;
-    const item = (rgb: string, label: string) => {
-      ctx.fillStyle = `rgba(${rgb},0.8)`;
-      ctx.fillRect(x, ly - 4, 8, 8);
-      ctx.fillStyle = text2;
-      ctx.fillText(label, x + 14, ly);
-      x += 14 + ctx.measureText(label).width + 18;
-    };
-    const head = (label: string) => {
-      ctx.fillStyle = text3;
-      ctx.fillText(label, x, ly);
-      x += ctx.measureText(label).width + 12;
-    };
-    head(tk("ui.bg.legend.threads", { game: game ?? "" }));
-    item(c.run, tk("ui.bg.legend.run"));
-    item(c.wait, tk("ui.bg.legend.wait"));
-    item(c.idle, tk("ui.bg.legend.idle"));
-    x += 14;
-    head(tk("ui.bg.legend.frames"));
-    item(c.frame, tk("ui.bg.legend.frame"));
-    item(c.over, tk("ui.bg.legend.spike"));
-    ctx.fillStyle = text3;
-    ctx.fillText(tk("ui.bg.legend.replay"), x + 6, ly);
+    anim.width = Math.round(w * SCALE);
+    anim.height = Math.round(h * SCALE);
+    anim.getContext("2d")?.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+    scene.layout(w, h);
   }
 
   const loop = (now: number): void => {
@@ -151,7 +74,6 @@
     if (!active) {
       stop();
       anim.getContext("2d")?.clearRect(0, 0, w, h);
-      drawLabels();
       return;
     }
     if (reduced) {
@@ -160,10 +82,10 @@
     } else if (!hidden && !paused && onScreen) {
       if (!raf) raf = requestAnimationFrame(loop);
     } else {
-      // Пауза (вікно неактивне, простій): цикл стоїть, але один нерухомий кадр лишається —
-      // інакше фон, змонтований на паузі, був би порожнім.
+      // Пауза (вікно неактивне, простій): цикл стоїть, але нерухомий кадр лишається — інакше фон,
+      // змонтований на паузі, був би порожнім.
       stop();
-      if (!hidden) scene.frame(performance.now(), false);
+      if (!hidden) scene.frame(performance.now(), true);
     }
   }
 
@@ -171,14 +93,13 @@
     const ctx = anim?.getContext("2d", { alpha: true });
     if (!ctx || !anim) return;
     scene = new BackdropScene(ctx, colors());
-    scene.setData(data);
     resize();
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
     const onMq = () => (reduced = mq.matches);
     const onVis = () => (hidden = document.hidden);
     const onResize = () => {
       resize();
-      if (reduced && active) scene?.frame(performance.now(), false);
+      if (active && !raf) scene?.frame(performance.now(), !reduced);
     };
     mq.addEventListener("change", onMq);
     document.addEventListener("visibilitychange", onVis);
@@ -188,7 +109,7 @@
     // Палітра змінює кольори акценту — перечитати токени.
     const mo = new MutationObserver(() => {
       scene?.setColors(colors());
-      drawLabels();
+      if (active && !raf) scene?.frame(performance.now(), !reduced);
     });
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-palette"] });
     const statsTimer = onstats
@@ -210,16 +131,6 @@
     };
   });
 
-  // Нові дані запису — новий відлік і підписи.
-  $effect(() => {
-    void data;
-    void game;
-    if (!scene) return;
-    scene.setData(data);
-    resize();
-    sync();
-  });
-
   $effect(() => {
     void [active, paused, hidden, onScreen, reduced];
     sync();
@@ -228,7 +139,6 @@
 
 <div class="backdrop" aria-hidden="true" class:off={!active}>
   <canvas bind:this={anim} class="anim"></canvas>
-  <canvas bind:this={labels} class="labels"></canvas>
 </div>
 {#if grain}
   <svg class="grain" aria-hidden="true" width="100%" height="100%">
@@ -258,12 +168,10 @@
     height: 100%;
     display: block;
   }
-  /* Краї анімованого шару згасають, розмиття не дає йому конкурувати з текстом. Підписи — різкі
-     й без маски, інакше біля краю їх не прочитати. */
+  /* Бічні краї поверхні згасають; верх згасає сам (дальні рядки прозорі). */
   .anim {
-    -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 40%, #000 30%, transparent);
-    mask-image: radial-gradient(ellipse 90% 70% at 50% 40%, #000 30%, transparent);
-    filter: blur(1px);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
   }
   .grain {
     opacity: 0.07;

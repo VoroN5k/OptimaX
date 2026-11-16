@@ -3,6 +3,7 @@ import type { Category } from "./Category";
 import type { Confidence } from "./Confidence";
 import type { Evidence } from "./Evidence";
 import type { Impact } from "./Impact";
+import type { NextStep } from "./NextStep";
 import type { Text } from "./Text";
 
 /**
@@ -40,4 +41,8 @@ advice: Text | null,
 /**
  * Докази (виміряні значення).
  */
-evidence: Array<Evidence>, };
+evidence: Array<Evidence>, 
+/**
+ * Що людина може зробити далі (кнопка під порадою).
+ */
+next: NextStep | null, };

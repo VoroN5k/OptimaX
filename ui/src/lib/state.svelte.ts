@@ -28,7 +28,7 @@ export const LOG_LIMIT = 500;
 export const ui = $state({
   screen: "analysis" as ScreenId,
   info: null as AppInfo | null,
-  settings: { effects: null, palette: "champagne", background: "real" } as Settings,
+  settings: { effects: null, palette: "champagne", background: "on" } as Settings,
   bgMode: "idle" as BgMode,
   /** Режим гри активний (гра запущена) — анімація повністю вимикається. */
   gameActive: false,
@@ -50,6 +50,8 @@ export const ui = $state({
   serviceInstall: false,
   /** Останній запис гри (для фонового шару з реальних даних). */
   lastRecord: null as DiagnosisResult | null,
+  /** Id останнього запису в історії (приходить після `diag-done`); `null` — ще не збережено. */
+  lastRecordId: null as string | null,
   /** Відкрита висувна панель журналу дій (кнопка «Журнал» у верхній панелі). */
   logOpen: false,
 });

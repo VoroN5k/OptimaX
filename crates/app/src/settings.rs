@@ -22,11 +22,11 @@ pub enum Effects {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum Background {
-    /// Реальні дані останнього запису (стани потоків гри, кадри); без запису — декоративний.
+    /// Декоративна поверхня «Шовк», без даних, підписів і цифр. Старі значення `real` і
+    /// `decorative` (фон із доріжками потоків, прибраний 2026-11-16) читаються як увімкнений.
     #[default]
-    Real,
-    /// Завжди декоративний, без підписів і цифр.
-    Decorative,
+    #[serde(alias = "real", alias = "decorative")]
+    On,
     /// Без фону.
     Off,
 }
@@ -236,6 +236,16 @@ mod tests {
         let s = Settings::parse(r#"{"animation":"high","economy":false}"#).expect("s");
         assert_eq!(s.effects, None);
         assert_eq!(Settings::parse("{}").expect("s"), Settings::default());
+    }
+
+    #[test]
+    fn legacy_background_modes_become_on() {
+        for old in ["real", "decorative", "on"] {
+            let s = Settings::parse(&format!(r#"{{"background":"{old}"}}"#)).expect("s");
+            assert_eq!(s.background, Background::On);
+        }
+        let s = Settings::parse(r#"{"background":"off"}"#).expect("s");
+        assert_eq!(s.background, Background::Off);
     }
 
     #[test]

@@ -1,11 +1,15 @@
 <script lang="ts">
-  import { tick, type Snippet } from "svelte";
+  import type { Snippet } from "svelte";
   import type { DiagnosisResult } from "../lib/bindings/DiagnosisResult";
+  import type { Finding } from "../lib/bindings/Finding";
   import { findingRing, splitTitle } from "../lib/findingRing";
   import { t, tk } from "../lib/i18n";
   import { ui } from "../lib/state.svelte";
   import Button from "./Button.svelte";
+  import { api } from "../lib/api";
+  import type { RecordComparison } from "../lib/bindings/RecordComparison";
   import CheckRow from "./CheckRow.svelte";
+  import ComparisonSummary from "./ComparisonSummary.svelte";
   import Disclosure from "./Disclosure.svelte";
   import DualRing from "./DualRing.svelte";
   import FindingCard from "./FindingCard.svelte";
@@ -16,19 +20,20 @@
   import ImpactBadge from "./ImpactBadge.svelte";
   import KpiStrip from "./KpiStrip.svelte";
   import LatencyCard from "./LatencyCard.svelte";
-  import ListRow from "./ListRow.svelte";
-  import SideTile from "./SideTile.svelte";
   import TimelineExplorer from "./TimelineExplorer.svelte";
 
   // Результат запису «Pro Premium» (docs/DESIGN.md розд. 6): смуга показників, головна знахідка
-  // з кільцем (числа — лише з доказів), бічна колонка (друга знахідка й розбори), решта знахідок і
-  // розбори (радар, анатомія, затримка, шкала). Спільний для «Чому лагає?» та «Історії».
+  // з кільцем (числа — лише з доказів) і «Що робити далі» з кнопками наступного кроку (крок вирішує
+  // бекенд, `Finding.next`), решта знахідок без повтору порад, розбори — в одній згортці «Для
+  // досвідчених». Спільний для «Чому лагає?» та «Історії».
   let {
     result,
     example = false,
     hideResFindings = false,
     after,
-    onCompareReflex,
+    onCompare,
+    historyId = null,
+    live = false,
   }: {
     result: DiagnosisResult;
     /** Позначений приклад знайомства (не виміряні дані). */
@@ -37,14 +42,32 @@
     hideResFindings?: boolean;
     /** Що показати після розборів (напр. тест роздільності). */
     after?: Snippet;
-    /** Відкрити «Порівняння» з Reflex (немає в історії й прикладі). */
-    onCompareReflex?: () => void;
+    /** Відкрити «Порівняння» з грою й назвами варіантів (немає в прикладі). */
+    onCompare?: (game: string, variants: string[]) => void;
+    /** Id запису в історії: є — показати порівняння з попереднім записом гри (вибирає бекенд). */
+    historyId?: string | null;
+    /** Щойно записаний результат (не з «Історії» й не приклад): лише тоді підказка «запиши ще раз». */
+    live?: boolean;
   } = $props();
+
+  let previous = $state<RecordComparison | null>(null);
+  $effect(() => {
+    const id = historyId;
+    previous = null;
+    if (!id) return;
+    let alive = true;
+    api
+      .historyVsPrevious(id)
+      .then((c) => alive && (previous = c))
+      .catch((e: unknown) => console.warn("порівняння з попереднім записом:", e));
+    return () => {
+      alive = false;
+    };
+  });
 
   type Review = "chart" | "anatomy" | "latency" | "timeline";
   let open = $state<Record<Review, boolean>>({ chart: false, anatomy: false, latency: false, timeline: false });
-  let els = $state<Partial<Record<Review, HTMLElement>>>({});
-  let findingsEl = $state<HTMLElement | undefined>();
+  let expertOpen = $state(false);
 
   const stats = $derived(result.diagnosis.stats);
   const summary = $derived(result.diagnosis.verdicts[0]?.finding ?? null);
@@ -54,12 +77,21 @@
   const rest = $derived(
     result.diagnosis.verdicts.slice(1).filter((v) => !(hideResFindings && v.finding.id.startsWith("res."))),
   );
-  const side = $derived(rest[0]?.finding ?? null);
-  /** «Що можна перевірити»: поради знахідок у порядку діагностики (до трьох). */
-  const checks = $derived(
-    [summary, ...rest.map((v) => v.finding)]
-      .flatMap((f) => (f?.advice ? [f.advice] : []))
-      .slice(0, 3),
+  /** «Що робити далі»: знахідки з порадою в порядку діагностики (до трьох). */
+  const steps = $derived(
+    [summary, ...rest.map((v) => v.finding)].filter((f): f is Finding => !!f?.advice).slice(0, 3),
+  );
+  /** Знахідки, чия порада вже стоїть угорі, — у картках без повтору (копія, дані бекенду не чіпаємо).
+   *  За самим об'єктом, не за id: id може повторюватися (кілька фонових процесів — `background`). */
+  const shownAdvice = $derived(new Set<Finding>(steps));
+  const cardOf = (f: Finding): Finding => (shownAdvice.has(f) ? { ...f, advice: null } : f);
+  /** Крок наступної дії лишається в картці, якщо знахідка не потрапила в трійку вгорі. */
+  const cardStep = (f: Finding): boolean =>
+    !shownAdvice.has(f) && (f.next?.kind === "open" || (f.next?.kind === "compare" && !!onCompare));
+  const compareReflex = $derived(
+    onCompare
+      ? () => onCompare(result.diagnosis.game, [tk("ui.exp.preset.reflex_off"), tk("ui.exp.preset.reflex_on")])
+      : undefined,
   );
   const ring = $derived(
     findingRing(
@@ -77,18 +109,28 @@
   );
   const fix1 = (v: number) => v.toFixed(1);
 
-  async function openReview(r: Review) {
-    open[r] = true;
-    await tick();
-    els[r]?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  }
-  function toFindings() {
-    findingsEl?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  }
+  /** Назви наявних розборів — підсумок згортки «Для досвідчених». */
+  const expertSummary = $derived(
+    [
+      result.diagnosis.view?.frames.t.length ? tk("ui.tl.title") : null,
+      result.diagnosis.chart ? tk("ui.chart.title") : null,
+      result.diagnosis.anatomy ? tk("ui.anatomy.title") : null,
+      result.diagnosis.latency ? tk("ui.lat.title") : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  );
 </script>
 
-{#snippet openUpscale()}
-  <Button small variant="secondary" icon="upscale" onclick={() => (ui.screen = "upscale")}>{tk("ui.up.open")}</Button>
+{#snippet stepAction(f: Finding)}
+  {#if f.next?.kind === "compare" && onCompare}
+    {@const variants = f.next.variants.map((v) => t(v))}
+    <Button small variant="secondary" icon="diagnosis" onclick={() => onCompare(result.diagnosis.game, variants)}>
+      {tk("ui.diag.next.compare")}
+    </Button>
+  {:else if f.next?.kind === "open" && f.next.tool === "upscale"}
+    <Button small variant="secondary" icon="upscale" onclick={() => (ui.screen = "upscale")}>{tk("ui.up.open")}</Button>
+  {/if}
 {/snippet}
 
 {#if summary}
@@ -144,12 +186,18 @@
             />
           {/if}
         </div>
-        {#if checks.length}
+        {#if steps.length}
           <div>
             <div class="micro">{tk("ui.diag.check")}</div>
             <ul class="checks">
-              {#each checks as c, i (i)}<CheckRow n={i + 1}>{t(c)}</CheckRow>{/each}
+              {#each steps as f, i (i)}
+                <CheckRow n={i + 1}>
+                  {#if f.advice}{t(f.advice)}{/if}
+                  {#snippet action()}{@render stepAction(f)}{/snippet}
+                </CheckRow>
+              {/each}
             </ul>
+            {#if live && !example}<p class="small muted rerecord">{tk("ui.diag.next.rerecord")}</p>{/if}
           </div>
         {/if}
         {#if evidence.length}
@@ -166,57 +214,28 @@
     </div>
 
     <div class="side">
-      {#if side}
-        <SideTile title={t(side.title)} confidence={side.confidence} onclick={toFindings}>
-          {#snippet pill()}<ImpactBadge impact={side.impact} />{/snippet}
-        </SideTile>
-      {/if}
-      {#if result.diagnosis.chart || result.diagnosis.anatomy || result.diagnosis.latency || result.diagnosis.view?.frames.t.length}
-        <section class="tile reviews" aria-label={tk("ui.diag.reviews")}>
-          <div class="micro head">{tk("ui.diag.reviews")}</div>
-          {#if result.diagnosis.chart}
-            <ListRow title={tk("ui.chart.title")} onclick={() => openReview("chart")}>
-              {tk("ui.chart.spikes", { n: result.diagnosis.chart.spikes_total })}
-            </ListRow>
-          {/if}
-          {#if result.diagnosis.anatomy}
-            {@const an = result.diagnosis.anatomy}
-            <ListRow title={tk("ui.anatomy.title")} onclick={() => openReview("anatomy")}>
-              {tk("ui.anatomy.summary", { ms: an.typical.frame_ms.toFixed(1), n: an.spikes.length })}
-            </ListRow>
-          {/if}
-          {#if result.diagnosis.latency}
-            {@const lat = result.diagnosis.latency}
-            <ListRow title={tk("ui.lat.title")} onclick={() => openReview("latency")}>
-              {lat.pc_latency
-                ? tk("ui.lat.summary_pcl", { ms: lat.pc_latency.median_ms.toFixed(1) })
-                : lat.frame_to_display
-                  ? tk("ui.lat.summary", { ms: lat.frame_to_display.median_ms.toFixed(1) })
-                  : tk("ui.lat.summary_input")}
-            </ListRow>
-          {/if}
-          {#if result.diagnosis.view && result.diagnosis.view.frames.t.length}
-            {@const v = result.diagnosis.view}
-            <ListRow title={tk("ui.tl.title")} onclick={() => openReview("timeline")}>
-              {tk("ui.tl.summary", { s: ((v.end_ms - v.start_ms) / 1000).toFixed(0), n: v.spikes.length })}
-            </ListRow>
-          {/if}
+      {#if previous}
+        <section class="tile prev" aria-label={tk("ui.prev.title")}>
+          <div class="micro">{tk("ui.prev.title")}</div>
+          <ComparisonSummary cmp={previous} compact />
+          <p class="small muted prev-note">{tk("ui.prev.note")}</p>
         </section>
       {/if}
     </div>
   </div>
 
-  <section class="findings" data-tour="diag-findings" aria-label={tk("ui.diag.findings")} bind:this={findingsEl}>
+  <section class="findings" data-tour="diag-findings" aria-label={tk("ui.diag.findings")} >
     <h2 class="micro">{tk("ui.diag.findings_n", { n: rest.length })}</h2>
     {#if rest.length}
       <div class="list">
         {#each rest as v, i (`${result.diagnosis.game}-${i}-${v.finding.id}`)}
-          <FindingCard
-            finding={v.finding}
-            collapsible
-            expanded={i === 0}
-            action={v.finding.id === "upscale.helps" ? openUpscale : undefined}
-          />
+          {#if cardStep(v.finding)}
+            <FindingCard finding={cardOf(v.finding)} collapsible expanded={i === 0}>
+              {#snippet action()}{@render stepAction(v.finding)}{/snippet}
+            </FindingCard>
+          {:else}
+            <FindingCard finding={cardOf(v.finding)} collapsible expanded={i === 0} />
+          {/if}
         {/each}
       </div>
     {:else}
@@ -224,58 +243,64 @@
     {/if}
   </section>
 
-  {#if result.diagnosis.view && result.diagnosis.view.frames.t.length}
-    {@const v = result.diagnosis.view}
-    <div class="anchor" bind:this={els.timeline}>
-      <Fold
-        title={tk("ui.tl.title")}
-        summary={tk("ui.tl.summary", { s: ((v.end_ms - v.start_ms) / 1000).toFixed(0), n: v.spikes.length })}
-        bind:open={open.timeline}
-      >
-        <p class="small muted fold-hint">{tk("ui.tl.subtitle")}</p>
-        <TimelineExplorer view={v} chart={result.diagnosis.chart} />
-      </Fold>
-    </div>
-  {/if}
-  {#if result.diagnosis.chart}
-    <div class="anchor" data-tour="diag-radar" bind:this={els.chart}>
-      <Fold
-        title={tk("ui.chart.title")}
-        summary={tk("ui.chart.spikes", { n: result.diagnosis.chart.spikes_total })}
-        bind:open={open.chart}
-      >
-        <p class="small muted fold-hint">{tk("ui.chart.subtitle")}</p>
-        <FrametimeChart chart={result.diagnosis.chart} />
-      </Fold>
-    </div>
-  {/if}
-  {#if result.diagnosis.anatomy}
-    {@const an = result.diagnosis.anatomy}
-    <div class="anchor" bind:this={els.anatomy}>
-      <Fold
-        title={tk("ui.anatomy.title")}
-        summary={tk("ui.anatomy.summary", { ms: an.typical.frame_ms.toFixed(1), n: an.spikes.length })}
-        bind:open={open.anatomy}
-      >
-        <FrameAnatomy anatomy={an} start={result.diagnosis.view?.start_ms ?? result.diagnosis.chart?.start_ms ?? 0} />
-      </Fold>
-    </div>
-  {/if}
-  {#if result.diagnosis.latency}
-    {@const lat = result.diagnosis.latency}
-    <div class="anchor" bind:this={els.latency}>
-      <Fold
-        title={tk("ui.lat.title")}
-        summary={lat.pc_latency
-          ? tk("ui.lat.summary_pcl", { ms: lat.pc_latency.median_ms.toFixed(1) })
-          : lat.frame_to_display
-            ? tk("ui.lat.summary", { ms: lat.frame_to_display.median_ms.toFixed(1) })
-            : tk("ui.lat.summary_input")}
-        bind:open={open.latency}
-      >
-        <LatencyCard latency={lat} frameGen={result.diagnosis.frame_gen != null} {onCompareReflex} />
-      </Fold>
-    </div>
+  {#if expertSummary}
+    <Fold title={tk("ui.diag.expert")} summary={expertSummary} bind:open={expertOpen}>
+      <div class="expert">
+      {#if result.diagnosis.view && result.diagnosis.view.frames.t.length}
+        {@const v = result.diagnosis.view}
+        <div class="anchor">
+          <Fold
+            title={tk("ui.tl.title")}
+            summary={tk("ui.tl.summary", { s: ((v.end_ms - v.start_ms) / 1000).toFixed(0), n: v.spikes.length })}
+            bind:open={open.timeline}
+          >
+            <p class="small muted fold-hint">{tk("ui.tl.subtitle")}</p>
+            <TimelineExplorer view={v} chart={result.diagnosis.chart} />
+          </Fold>
+        </div>
+      {/if}
+      {#if result.diagnosis.chart}
+        <div class="anchor" data-tour="diag-radar">
+          <Fold
+            title={tk("ui.chart.title")}
+            summary={tk("ui.chart.spikes", { n: result.diagnosis.chart.spikes_total })}
+            bind:open={open.chart}
+          >
+            <p class="small muted fold-hint">{tk("ui.chart.subtitle")}</p>
+            <FrametimeChart chart={result.diagnosis.chart} />
+          </Fold>
+        </div>
+      {/if}
+      {#if result.diagnosis.anatomy}
+        {@const an = result.diagnosis.anatomy}
+        <div class="anchor">
+          <Fold
+            title={tk("ui.anatomy.title")}
+            summary={tk("ui.anatomy.summary", { ms: an.typical.frame_ms.toFixed(1), n: an.spikes.length })}
+            bind:open={open.anatomy}
+          >
+            <FrameAnatomy anatomy={an} start={result.diagnosis.view?.start_ms ?? result.diagnosis.chart?.start_ms ?? 0} />
+          </Fold>
+        </div>
+      {/if}
+      {#if result.diagnosis.latency}
+        {@const lat = result.diagnosis.latency}
+        <div class="anchor">
+          <Fold
+            title={tk("ui.lat.title")}
+            summary={lat.pc_latency
+              ? tk("ui.lat.summary_pcl", { ms: lat.pc_latency.median_ms.toFixed(1) })
+              : lat.frame_to_display
+                ? tk("ui.lat.summary", { ms: lat.frame_to_display.median_ms.toFixed(1) })
+                : tk("ui.lat.summary_input")}
+            bind:open={open.latency}
+          >
+            <LatencyCard latency={lat} frameGen={result.diagnosis.frame_gen != null} onCompareReflex={compareReflex} />
+          </Fold>
+        </div>
+      {/if}
+      </div>
+    </Fold>
   {/if}
   {@render after?.()}
   {#if result.presentmon_messages.length}
@@ -383,13 +408,21 @@
     margin: 0;
     color: var(--text);
   }
-  .reviews {
-    display: flex;
-    flex-direction: column;
-    padding: calc(var(--space) * 2) 0;
+  .prev {
+    display: grid;
+    gap: calc(var(--space) * 2);
+    align-content: start;
+    padding: calc(var(--space) * 5);
   }
-  .reviews .head {
-    padding: calc(var(--space) * 3) calc(var(--space) * 5) calc(var(--space) * 2);
+  .prev-note {
+    margin: calc(var(--space) * 2) 0 0;
+  }
+  .rerecord {
+    margin: calc(var(--space) * 3) 0 0;
+  }
+  .expert {
+    display: grid;
+    gap: calc(var(--space) * 3);
   }
   .findings {
     display: grid;

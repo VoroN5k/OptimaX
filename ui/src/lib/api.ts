@@ -96,6 +96,8 @@ export const api = {
   dashboardDisk: (refresh: boolean) => invoke<DiskSummary>("dashboard_disk", { refresh }),
   historyList: () => invoke<HistoryView>("history_list"),
   historyCompare: (a: string, b: string) => invoke<RecordComparison>("history_compare", { a, b }),
+  /** Порівняння запису з попереднім записом тієї ж гри (`null` — перший запис гри). */
+  historyVsPrevious: (id: string) => invoke<RecordComparison | null>("history_vs_previous", { id }),
   historyOpen: (id: string) => invoke<DiagnosisResult>("history_open", { id }),
   historyDelete: (id: string) => invoke<void>("history_delete", { id }),
   historyClear: () => invoke<number>("history_clear"),
@@ -218,6 +220,8 @@ type Events = {
   "lag-status": WatchStatus;
   "lag-update": LagView;
   "diag-done": DiagnosisResult;
+  /** Запис збережено в історію (id) — після `diag-done`, окремим потоком. */
+  "history-saved": string;
   "diag-error": CmdError;
   upscale: UpscaleView;
   "net-progress": NetProgress;

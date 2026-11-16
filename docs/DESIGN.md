@@ -45,7 +45,7 @@
 | 1. Токени й шрифти | зроблено 2026-11-16 (`ui/src/styles/tokens.css`; старі імена токенів — псевдоніми на нові до переходу компонентів) |
 | 2. Оболонка й навігація | зроблено 2026-11-16 (`TopBar.svelte`, `SubTabs.svelte`, `lib/nav.ts`; журнал — висувна панель; бічне меню прибрано) |
 | 3. Компоненти | зроблено 2026-11-16 (нові: StatusPill, HeroCard, KpiStrip, DualRing, CheckRow, Disclosure, SideTile, ListRow, ToolbarGroup, Track, JerkMarker, Legend; оновлені: Card/.tile, Fold, Button, Segmented, Toggle, Ring, бейджі; галерея `?gallery` лише в dev) |
-| 4. Екран «Діагностика» | — |
+| 4. Екран «Діагностика» | зроблено 2026-11-16 (`ResultView.svelte` — і в «Історії»; кільце з доказів правил-вердиктів, `lib/findingRing.ts`; шкала запису — наявний `TimelineExplorer` у згортці) |
 | 5. Анімації й «Ефекти» | — |
 | 6. Фоновий шар і заставка | — |
 | 7. Доступність і заміри | — |

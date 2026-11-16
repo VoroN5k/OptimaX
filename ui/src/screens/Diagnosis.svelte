@@ -9,6 +9,7 @@
   import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
   import Fold from "../components/Fold.svelte";
+  import KpiStrip from "../components/KpiStrip.svelte";
   import CrashView from "../components/CrashView.svelte";
   import Experiment from "../components/Experiment.svelte";
   import Page from "../components/Page.svelte";
@@ -228,6 +229,16 @@
       {:else if error}
         <Card><StateView kind="error" title={tk("ui.common.error")} text={error.message} /></Card>
       {:else if !shown}
+        <!-- Без запису — «—», а не правдоподібні числа (docs/DESIGN.md розд. 6, порожній стан). -->
+        <KpiStrip
+          label={tk("ui.diag.empty_kpi")}
+          items={[
+            { label: tk("ui.diag.kpi.avg"), value: null },
+            { label: tk("ui.diag.kpi.low1"), value: null },
+            { label: tk("ui.diag.kpi.low01"), value: null },
+            { label: tk("ui.diag.kpi.p99"), value: null },
+          ]}
+        />
         <Card><StateView kind="empty" title={tk("ui.diag.empty_title")} text={tk("ui.diag.empty_text")} /></Card>
       {/if}
 

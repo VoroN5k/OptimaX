@@ -14,11 +14,11 @@ test.describe("Діагностика", () => {
   test("результат: вердикт зверху, знахідки компактні, без позначки прикладу", async ({ page }) => {
     await mockBackend(page, { diag_state: { recording: false, last: gpuResult } });
     await openDiagnosis(page);
-    await expect(page.getByText(tk("diag.summary.gpu.title", { game: "re9.exe" }))).toBeVisible();
+    await expect(page.getByRole("heading", { name: tk("diag.summary.gpu.title", { game: "re9.exe" }) })).toBeVisible();
     await expect(page.locator("[data-tour=diag-stats]")).toContainText("125.0");
     await expect(page.getByText(tk("ui.diag.findings_n", { n: 2 }))).toBeVisible();
     // Перша знахідка розгорнута (видно пораду), друга — лише заголовок.
-    await expect(page.getByText(tk("diag.gpu_bound.advice"), { exact: false })).toBeVisible();
+    await expect(page.getByRole("region", { name: tk("ui.diag.findings") }).getByText(tk("diag.gpu_bound.advice"), { exact: false })).toBeVisible();
     await expect(page.getByText(tk("diag.upscale.helps.detail"))).toHaveCount(0);
     await page.getByRole("button", { name: tk("diag.upscale.helps.title") }).click();
     await expect(page.getByText(tk("diag.upscale.helps.detail"))).toBeVisible();
@@ -70,7 +70,7 @@ test.describe("Діагностика", () => {
     await mockBackend(page, { diag_state: { recording: false, last: structuredClone(gpuResult) } });
     await page.goto("/");
     await go(page, "diagnosis");
-    const fold = page.getByRole("button", { name: new RegExp(tk("ui.anatomy.title")) });
+    const fold = page.getByRole("region", { name: tk("ui.diag.reviews") }).getByRole("button", { name: new RegExp(tk("ui.anatomy.title")) });
     await expect(fold).toContainText(tk("ui.anatomy.summary", { ms: "8.0", n: 1 }));
     await fold.click();
     await expect(page.getByText(tk("ui.anatomy.queued", { pct: 34 }))).toBeVisible();
@@ -85,7 +85,7 @@ test.describe("Діагностика", () => {
     await mockBackend(page, { diag_state: { recording: false, last: structuredClone(gpuResult) } });
     await page.goto("/");
     await go(page, "diagnosis");
-    const fold = page.getByRole("button", { name: new RegExp(tk("ui.tl.title")) });
+    const fold = page.getByRole("region", { name: tk("ui.diag.reviews") }).getByRole("button", { name: new RegExp(tk("ui.tl.title")) });
     await expect(fold).toContainText(tk("ui.tl.summary", { s: "30", n: 1 }));
     await fold.click();
     const canvas = page.getByRole("application", { name: tk("ui.tl.aria") });
@@ -178,8 +178,8 @@ test.describe("Діагностика", () => {
   test("затримка: виміри з кількістю кадрів і чесні «немає даних»", async ({ page }) => {
     await mockBackend(page, { diag_state: { recording: false, last: gpuResult } });
     await openDiagnosis(page);
-    await page.getByRole("button", { name: tk("ui.lat.title") }).click();
-    await expect(page.getByText(tk("ui.lat.summary", { ms: "18.4" }))).toBeVisible();
+    await page.getByRole("region", { name: tk("ui.diag.reviews") }).getByRole("button", { name: new RegExp(tk("ui.lat.title")) }).click();
+    await expect(page.getByRole("region", { name: tk("ui.diag.reviews") }).getByText(tk("ui.lat.summary", { ms: "18.4" }))).toBeVisible();
     await expect(page.getByText(tk("ui.lat.detail", { p95: "27.1", n: 3700 }))).toBeVisible();
     await expect(page.getByText(tk("ui.lat.none_pcl"))).toBeVisible();
     await expect(page.getByText(tk("ui.lat.honest"))).toBeVisible();
@@ -200,10 +200,10 @@ test.describe("Діагностика", () => {
     last.diagnosis.verdicts.push(hint);
     await mockBackend(page, { diag_state: { recording: false, last } });
     await openDiagnosis(page);
-    await expect(page.getByText(tk("ui.lat.summary_pcl", { ms: "47.1" }))).toBeVisible();
+    await expect(page.getByRole("region", { name: tk("ui.diag.reviews") }).getByText(tk("ui.lat.summary_pcl", { ms: "47.1" }))).toBeVisible();
     const title = tk("diag.latency_queue.title", { gap: "19.2", frames: "1.4" });
     await page.getByRole("button", { name: title }).click();
-    await expect(page.getByText(tk("diag.latency_queue.advice"))).toBeVisible();
+    await expect(page.getByRole("region", { name: tk("ui.diag.findings") }).getByText(tk("diag.latency_queue.advice"))).toBeVisible();
   });
 
   test("затримка: кнопка відкриває «Порівняння» з готовими варіантами, але не запускає його", async ({ page }) => {
@@ -211,7 +211,7 @@ test.describe("Діагностика", () => {
     last.diagnosis.latency!.pc_latency = { median_ms: 47.1, p95_ms: 52.6, samples: 3700 };
     await mockBackend(page, { diag_state: { recording: false, last } });
     await openDiagnosis(page);
-    await page.getByRole("button", { name: tk("ui.lat.title") }).click();
+    await page.getByRole("region", { name: tk("ui.diag.reviews") }).getByRole("button", { name: new RegExp(tk("ui.lat.title")) }).click();
     await page.getByRole("button", { name: tk("ui.lat.compare_reflex") }).click();
     await expect(page.getByLabel(tk("ui.exp.name_a"))).toHaveValue(tk("ui.exp.preset.reflex_off"));
     await expect(page.getByLabel(tk("ui.exp.name_n", { l: "B" }), { exact: true })).toHaveValue(tk("ui.exp.preset.reflex_on"));
@@ -222,7 +222,7 @@ test.describe("Діагностика", () => {
   test("затримка: без PC Latency кнопки порівняння немає", async ({ page }) => {
     await mockBackend(page, { diag_state: { recording: false, last: gpuResult } });
     await openDiagnosis(page);
-    await page.getByRole("button", { name: tk("ui.lat.title") }).click();
+    await page.getByRole("region", { name: tk("ui.diag.reviews") }).getByRole("button", { name: new RegExp(tk("ui.lat.title")) }).click();
     await expect(page.getByText(tk("ui.lat.none_pcl"))).toBeVisible();
     await expect(page.getByRole("button", { name: tk("ui.lat.compare_reflex") })).toHaveCount(0);
   });

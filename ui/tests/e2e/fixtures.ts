@@ -238,6 +238,11 @@ export const gpuResult: DiagnosisResult = {
           title: { key: "diag.gpu_bound.title", args: { share: "97" } },
           detail: { key: "diag.gpu_bound.detail", args: {} },
           advice: { key: "diag.gpu_bound.advice", args: {} },
+          // Як у rules.rs: частка часу GPU ≥ 95 % і середнє завантаження.
+          evidence: [
+            { label: { key: "diag.ev.gpu_busy_share", args: {} }, value: { key: "value.pct_needed", args: { v: "97", need: "80" } } },
+            { label: { key: "diag.ev.gpu_avg", args: {} }, value: { key: "value.pct", args: { v: "98" } } },
+          ],
         }),
         expected_gain: null,
       },

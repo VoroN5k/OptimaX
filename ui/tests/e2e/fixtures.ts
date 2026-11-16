@@ -28,6 +28,8 @@ import type { ProcessEntry } from "../../src/lib/bindings/ProcessEntry";
 import type { AbFinal } from "../../src/lib/bindings/AbFinal";
 import type { AbView } from "../../src/lib/bindings/AbView";
 import type { ExpReport } from "../../src/lib/bindings/ExpReport";
+import type { HardwareInfo } from "../../src/lib/bindings/HardwareInfo";
+import { hwInfo } from "./hardwareFixture";
 import type { ResView } from "../../src/lib/bindings/ResView";
 import type { ScanView } from "../../src/lib/bindings/ScanView";
 import type { Settings } from "../../src/lib/bindings/Settings";
@@ -56,6 +58,7 @@ export interface Responses {
   list_processes: ProcessEntry[];
   cleanup_last_scan: ScanView | null;
   metrics_start: null;
+  hardware_info: HardwareInfo;
   metrics_stop: null;
   history_list: HistoryView;
   history_compare: RecordComparison;
@@ -662,6 +665,7 @@ export function defaults(): Responses {
     list_processes: [{ name: "re9.exe", cpu_percent: 31, memory_mib: 9000 }],
     cleanup_last_scan: null,
     metrics_start: null,
+    hardware_info: structuredClone(hwInfo),
     metrics_stop: null,
     history_list: structuredClone(history),
     history_compare: structuredClone(comparison),

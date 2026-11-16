@@ -21,7 +21,7 @@
   const id = `fold-${Math.random().toString(36).slice(2, 9)}`;
 </script>
 
-<section class="fold" class:open>
+<section class="tile fold" class:open>
   <button type="button" class="head" aria-expanded={open} aria-controls={id} onclick={() => (open = !open)}>
     <span class="chev" aria-hidden="true"><Icon name="chevron" size={16} /></span>
     <span class="text">
@@ -37,24 +37,13 @@
 </section>
 
 <style>
-  .fold {
-    background:
-      linear-gradient(180deg, var(--card-sheen), transparent 40%),
-      var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-card);
-    transition: border-color var(--dur) var(--ease);
-  }
-  .fold:hover {
-    border-color: var(--border-strong);
-  }
   .head {
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 3);
     width: 100%;
-    padding: calc(var(--space) * 4) calc(var(--space) * 5);
+    min-height: 44px;
+    padding: calc(var(--space) * 4) calc(var(--space) * 6);
     border: none;
     border-radius: var(--radius-lg);
     background: transparent;
@@ -64,13 +53,13 @@
     cursor: pointer;
   }
   .head:focus-visible {
-    outline: 2px solid var(--accent-from);
+    outline: 2px solid var(--a1);
     outline-offset: 2px;
   }
   .chev {
     display: inline-flex;
-    color: var(--text-muted);
-    transition: transform var(--dur) var(--ease);
+    color: var(--text-2);
+    transition: transform 250ms var(--ease);
   }
   .open .chev {
     transform: rotate(90deg);
@@ -87,7 +76,7 @@
     font-weight: 600;
   }
   .body {
-    padding: 0 calc(var(--space) * 5) calc(var(--space) * 5);
+    padding: 0 calc(var(--space) * 6) calc(var(--space) * 6);
   }
   .body[hidden] {
     display: none;

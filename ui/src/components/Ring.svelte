@@ -18,11 +18,11 @@
   <svg width={size} height={size} viewBox="0 0 {size} {size}" aria-hidden="true">
     <defs>
       <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="var(--accent-from)" />
-        <stop offset="1" stop-color="var(--accent-to)" />
+        <stop offset="0" stop-color="var(--a1)" />
+        <stop offset="1" stop-color="var(--a2)" />
       </linearGradient>
     </defs>
-    <circle cx={size / 2} cy={size / 2} {r} stroke="var(--border)" stroke-width={stroke} fill="none" />
+    <circle cx={size / 2} cy={size / 2} {r} stroke="var(--ring-track)" stroke-width={stroke} fill="none" />
     <circle
       class="arc"
       cx={size / 2}
@@ -67,8 +67,11 @@
     justify-content: center;
   }
   strong {
-    font-size: 22px;
-    font-weight: 600;
+    font-size: 26px;
+    line-height: 28px;
+    font-weight: 300;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
   }
   .label {
     text-align: center;

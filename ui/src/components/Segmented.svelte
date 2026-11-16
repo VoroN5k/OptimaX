@@ -41,30 +41,42 @@
 </div>
 
 <style>
+  /* Сегментований вибір (docs/DESIGN.md розд. 6.1): той самий вигляд, що й підвкладки. */
   .seg {
     display: inline-flex;
-    padding: 3px;
-    gap: 2px;
-    border-radius: var(--radius-md);
-    background: var(--bg-input);
-    border: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: var(--space);
+    padding: var(--space);
+    border-radius: var(--radius-seg);
+    background: var(--fill-2);
+    border: 1px solid var(--line-seg);
   }
   button {
+    height: var(--ctl-h-sm);
+    padding: 0 calc(var(--space) * 3.5);
     border: none;
+    border-radius: var(--radius-ctl);
     background: transparent;
-    color: var(--text-muted);
-    padding: calc(var(--space) * 1.5) calc(var(--space) * 3.5);
-    border-radius: calc(var(--radius-md) - 3px);
-    cursor: pointer;
-    font-weight: 500;
+    color: var(--text-2);
     font-size: 13px;
-    transition: color var(--dur) var(--ease), background-color var(--dur) var(--ease);
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      color var(--dur-fast) var(--ease),
+      background-color var(--dur-fast) var(--ease),
+      transform var(--dur-press) var(--ease);
   }
   button:hover {
     color: var(--text);
+    background: var(--hover);
+  }
+  button:active {
+    transform: scale(0.98);
   }
   button.active {
-    color: var(--on-accent);
-    background: var(--accent-gradient);
+    color: var(--text);
+    font-weight: 600;
+    background: var(--seg-active);
+    box-shadow: var(--seg-active-shadow);
   }
 </style>

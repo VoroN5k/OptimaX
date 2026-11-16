@@ -43,34 +43,41 @@
 </button>
 
 <style>
+  /* Кнопки (docs/DESIGN.md розд. 7, Button): головна — градієнт акценту, текст --onA, світіння,
+     на hover підйом на 1px і відблиск; другорядна — прозора з межею; натиск — scale(.98). */
   .btn {
+    position: relative;
+    overflow: hidden;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: calc(var(--space) * 2);
-    height: 38px;
-    padding: 0 calc(var(--space) * 4);
+    height: var(--ctl-h-lg);
+    padding: 0 calc(var(--space) * 4.5);
     border-radius: var(--radius-md);
-    border: 1px solid var(--border-strong);
-    background: transparent;
+    border: 1px solid var(--line-ctl);
+    background: var(--fill-1);
     color: var(--text);
+    font-size: var(--fs-body);
     font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
     transition:
       transform var(--dur-fast) var(--ease),
-      box-shadow var(--dur) var(--ease),
-      background-color var(--dur) var(--ease),
-      border-color var(--dur) var(--ease),
-      opacity var(--dur) var(--ease);
+      box-shadow var(--dur-fast) var(--ease),
+      background-color var(--dur-fast) var(--ease),
+      border-color var(--dur-fast) var(--ease),
+      opacity var(--dur-fast) var(--ease);
   }
   .small {
-    height: 30px;
+    height: var(--ctl-h-sm);
     padding: 0 calc(var(--space) * 3);
+    border-radius: var(--radius-ctl);
     font-size: 13px;
   }
   .btn:hover:not(:disabled) {
-    background: var(--bg-card-hover);
+    background: var(--fill-3);
+    border-color: var(--line-strong);
   }
   .btn:active:not(:disabled) {
     transform: scale(0.98);
@@ -81,26 +88,55 @@
   }
   .primary {
     border: none;
+    padding: 0 calc(var(--space) * 5.5);
     background: var(--accent-gradient);
-    color: var(--on-accent);
+    color: var(--onA);
+    font-weight: 600;
+    box-shadow: var(--shadow-btn);
+  }
+  .primary.small {
+    padding: 0 calc(var(--space) * 3.5);
   }
   .primary:hover:not(:disabled) {
     background: var(--accent-gradient);
-    box-shadow: 0 0 0 4px var(--accent-glow), 0 6px 24px var(--accent-glow);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-btn-hover);
+  }
+  .primary:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  /* Відблиск, що проходить кнопкою на hover. */
+  .primary::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -60%;
+    width: 40%;
+    background: var(--shine);
+    transform: skewX(-20deg);
+    transition: left var(--dur-slow) var(--ease);
+    pointer-events: none;
+  }
+  .primary:hover:not(:disabled)::after {
+    left: 130%;
   }
   .danger {
-    border-color: var(--danger);
-    color: var(--danger);
+    border-color: color-mix(in srgb, var(--bad) 55%, transparent);
+    color: var(--bad);
   }
   .danger:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    border-color: var(--bad);
+    background: color-mix(in srgb, var(--bad) 12%, transparent);
   }
   .ghost {
     border-color: transparent;
-    color: var(--text-muted);
+    background: transparent;
+    color: var(--text-2);
   }
   .ghost:hover:not(:disabled) {
     color: var(--text);
+    border-color: transparent;
   }
   .spinner {
     width: 14px;
@@ -113,6 +149,11 @@
   @keyframes spin {
     to {
       transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .primary::after {
+      display: none;
     }
   }
 </style>

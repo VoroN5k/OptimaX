@@ -50,6 +50,13 @@ async function boot(): Promise<void> {
     splash?.cancel();
     return;
   }
+  // Лише в розробці: галерея компонентів (`?gallery`). У збірку не потрапляє (import.meta.env.DEV).
+  if (import.meta.env.DEV && new URLSearchParams(location.search).has("gallery")) {
+    splash?.cancel();
+    const { default: Gallery } = await import("./dev/Gallery.svelte");
+    mount(Gallery, { target });
+    return;
+  }
   mount(App, { target });
   splash?.ready();
 }

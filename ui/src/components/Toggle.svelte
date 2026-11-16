@@ -32,7 +32,7 @@
     width: 42px;
     height: 24px;
     flex-shrink: 0;
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     border: 1px solid var(--border-strong);
     background: var(--bg-input);
     cursor: pointer;
@@ -59,5 +59,6 @@
   }
   .on .knob {
     transform: translateX(18px);
+    background: var(--onA);
   }
 </style>

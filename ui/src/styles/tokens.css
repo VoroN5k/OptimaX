@@ -73,6 +73,12 @@
   --shadow-hero: 0 40px 90px -40px rgba(0,0,0,.95), 0 0 60px -30px rgba(var(--glow), .5);
   --shadow-lift: inset 0 1px 0 rgba(255,255,255,.07), 0 18px 44px -22px rgba(var(--glow), .45);
   --shadow-modal: 0 24px 64px rgba(0,0,0,.6);
+  --shadow-btn: 0 8px 26px -10px rgba(var(--glow), .8), inset 0 1px 0 rgba(255,255,255,.45);
+  --shadow-btn-hover: 0 12px 32px -8px rgba(var(--glow), .6), inset 0 1px 0 rgba(255,255,255,.45);
+  --shine: linear-gradient(100deg, transparent, rgba(255,255,255,.6), transparent);
+  --shine-soft: linear-gradient(100deg, transparent, rgba(255,255,255,.06), transparent);
+  --ring-track: rgba(255,255,255,.07);
+  --ring-ticks: rgba(255,255,255,.22);
 
   /* ---- Рух ---- */
   --ease: cubic-bezier(.2,.8,.2,1);

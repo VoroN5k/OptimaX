@@ -51,6 +51,38 @@ code, .mono {
   color: var(--text-3);
 }
 
+/* Скляна плитка (docs/DESIGN.md розд. 7, Tile): спільна для Card, Fold, смуги показників і бічних
+   плиток. Розмиття — лише в режимі ефектів «Повні»; в інших — щільний фон. */
+.tile {
+  position: relative;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background: var(--tile);
+  box-shadow: var(--shadow-tile);
+}
+:root:not([data-effects="calm"]):not([data-effects="off"]) .tile {
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+:root[data-effects="calm"] .tile,
+:root[data-effects="off"] .tile {
+  background: var(--tile-solid);
+}
+/* Клікабельна плитка: підйом на 2px, межа й тінь з акцентом — лише для миші з наведенням. */
+.tile.lift {
+  transition:
+    transform var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+@media (hover: hover) {
+  .tile.lift:hover {
+    transform: translateY(-2px);
+    border-color: rgba(var(--glow), .35);
+    box-shadow: var(--shadow-lift);
+  }
+}
+
 /* Видиме кільце фокусу лише для клавіатури: 2px акценту з відступом 2px. */
 :focus { outline: none; }
 :focus-visible {

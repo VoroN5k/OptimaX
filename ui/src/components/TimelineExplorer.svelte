@@ -146,8 +146,26 @@
     return () => ro.disconnect();
   });
 
+  // Кожна метрика — свій колір зі змістом (CLAUDE.md 10.2, docs/DESIGN.md розд. 4): кадри — шампань,
+  // CPU — світла шампань, GPU — блакитний, черга — фіолетовий, ядро — блакитний, завантаження GPU —
+  // зелений, ривок — помаранчевий, драйвери й диск — червоний; стани потоку — індиго / помаранчевий /
+  // лавандовий / червоний / темний. Однаковий колір для різних ліній робив шкалу нечитабельною.
   type Colors = Record<
-    "text" | "muted" | "dim" | "border" | "strong" | "input" | "cpu" | "gpu" | "accent2" | "warn" | "danger",
+    | "text"
+    | "muted"
+    | "dim"
+    | "border"
+    | "input"
+    | "frame"
+    | "cpu"
+    | "gpu"
+    | "queue"
+    | "core"
+    | "gpuLoad"
+    | "warn"
+    | "danger"
+    | "run"
+    | "sleep",
     string
   >;
   let colors: Colors | null = null;
@@ -159,17 +177,21 @@
       muted: v("--text-muted"),
       dim: v("--text-dim"),
       border: v("--border"),
-      strong: v("--border-strong"),
       input: v("--bg-input"),
-      cpu: v("--accent-from"),
-      gpu: v("--ok"),
-      accent2: v("--accent-to"),
+      frame: v("--a2"),
+      cpu: v("--a1"),
+      gpu: v("--gpu"),
+      queue: v("--queue"),
+      core: v("--gpu"),
+      gpuLoad: v("--ok"),
       warn: v("--warn"),
-      danger: v("--danger"),
+      danger: v("--bad"),
+      run: v("--thread-work"),
+      sleep: v("--thread-sleep"),
     };
   }
   /** Кольори станів потоку в порядку `slot`: працює / ядро / синхр. / диск / сон / інше. */
-  const stateColor = (c: Colors) => [c.cpu, c.warn, c.accent2, c.danger, c.strong, c.dim];
+  const stateColor = (c: Colors) => [c.run, c.warn, c.queue, c.danger, c.sleep, c.dim];
 
   let frameReq = 0;
   $effect(() => {
@@ -394,7 +416,9 @@
           for (let col = 0; col <= plotW; col++) {
             const v = colMax[col] ?? 0;
             if (v <= 0) continue;
-            ctx.fillStyle = colSpike[col] ? c.warn : c.cpu;
+            ctx.fillStyle = colSpike[col] ? c.warn : c.frame;
+            // Звичайні кадри напівпрозорі — ривок виділяється на їхньому тлі.
+            ctx.globalAlpha = colSpike[col] ? 1 : 0.55;
             const y0 = yv(v, yMax);
             ctx.fillRect(LABEL_W + col, y0, 1, top + h - y0);
           }
@@ -406,11 +430,13 @@
             const x0 = Math.max(x(at - v), LABEL_W);
             const x1 = Math.min(x(at), LABEL_W + plotW);
             if (x1 <= x0) continue;
-            ctx.fillStyle = spikeFrame[i] ? c.warn : c.cpu;
+            ctx.fillStyle = spikeFrame[i] ? c.warn : c.frame;
+            ctx.globalAlpha = spikeFrame[i] ? 1 : 0.55;
             const y0 = yv(v, yMax);
             ctx.fillRect(x0, y0, Math.max(x1 - x0 - 1, 1), top + h - y0);
           }
         }
+        ctx.globalAlpha = 1;
         // Медіана.
         ctx.strokeStyle = c.muted;
         ctx.setLineDash([3, 3]);
@@ -427,7 +453,7 @@
       } else if (lane.id === "queue") {
         const pts = framePoints(view.frames.queue, lo, hi, perPx);
         const qMax = Math.max(1, ...pts.map((p) => p[1])) * 1.1;
-        line(ctx, lane, pts, (v) => yv(v, qMax), c.accent2);
+        line(ctx, lane, pts, (v) => yv(v, qMax), c.queue);
         scaleLabel(lane, qMax);
       } else if (lane.id === "main" && view.main) {
         drawThread(ctx, c, lane, view.main);
@@ -446,8 +472,8 @@
           }
           return out;
         };
-        line(ctx, lane, series(view.samples.core), (v) => yv(v, 100), c.cpu);
-        line(ctx, lane, series(view.samples.gpu), (v) => yv(v, 100), c.gpu);
+        line(ctx, lane, series(view.samples.core), (v) => yv(v, 100), c.core);
+        line(ctx, lane, series(view.samples.gpu), (v) => yv(v, 100), c.gpuLoad);
       } else if (lane.id === "drivers") {
         ctx.fillStyle = c.danger;
         for (const d of view.dpc) {
@@ -681,16 +707,16 @@
   <p class="small dim" id={hintId}>{tk("ui.tl.hint")}</p>
 
   <div class="legend small muted">
-    <span><i class="sw cpu"></i>{tk("ui.tl.legend.frame")}</span>
+    <span><i class="sw frame"></i>{tk("ui.tl.legend.frame")}</span>
     <span><i class="sw warn"></i>{tk("ui.tl.legend.spike")}</span>
     {#if hasWork}
       <span><i class="ln cpu"></i>{tk("ui.tl.legend.cpu")}</span>
       <span><i class="ln gpu"></i>{tk("ui.tl.legend.gpu")}</span>
     {/if}
-    {#if hasQueue}<span><i class="ln accent2"></i>{tk("ui.tl.legend.queue")}</span>{/if}
+    {#if hasQueue}<span><i class="ln queue"></i>{tk("ui.tl.legend.queue")}</span>{/if}
     {#if view.samples.t.length}
-      <span><i class="ln cpu"></i>{tk("ui.tl.legend.core")}</span>
-      <span><i class="ln gpu"></i>{tk("ui.tl.legend.gpu_util")}</span>
+      <span><i class="ln core"></i>{tk("ui.tl.legend.core")}</span>
+      <span><i class="ln gpuload"></i>{tk("ui.tl.legend.gpu_util")}</span>
     {/if}
     {#if view.dpc.length}<span><i class="sw danger"></i>{tk("ui.tl.legend.dpc")}</span>{/if}
     {#if view.shader_writes.length}<span><i class="dot warn"></i>{tk("ui.tl.legend.shader")}</span>{/if}
@@ -699,11 +725,11 @@
   {#if view.main}
     <div class="legend small muted">
       <span>{tk("ui.tl.states")}:</span>
-      <span><i class="sw cpu"></i>{tk("ui.anatomy.main.running")}</span>
+      <span><i class="sw run"></i>{tk("ui.anatomy.main.running")}</span>
       <span><i class="sw warn"></i>{tk("ui.anatomy.main.ready")}</span>
-      <span><i class="sw accent2"></i>{tk("ui.anatomy.main.sync")}</span>
+      <span><i class="sw queue"></i>{tk("ui.anatomy.main.sync")}</span>
       <span><i class="sw danger"></i>{tk("ui.anatomy.main.page_in")}</span>
-      <span><i class="sw strong"></i>{tk("ui.anatomy.main.sleep")}</span>
+      <span><i class="sw sleep"></i>{tk("ui.anatomy.main.sleep")}</span>
     </div>
     <p class="small dim">{tk("ui.tl.detail_note")}</p>
   {/if}
@@ -800,23 +826,33 @@
     height: 6px;
     border-radius: 50%;
   }
-  .cpu {
-    background: var(--accent-from);
+  .frame {
+    background: var(--a2);
   }
-  .gpu {
+  .cpu {
+    background: var(--a1);
+  }
+  .gpu,
+  .core {
+    background: var(--gpu);
+  }
+  .gpuload {
     background: var(--ok);
   }
-  .accent2 {
-    background: var(--accent-to);
+  .queue {
+    background: var(--queue);
+  }
+  .run {
+    background: var(--thread-work);
+  }
+  .sleep {
+    background: var(--thread-sleep);
   }
   .warn {
     background: var(--warn);
   }
   .sw.danger {
     background: var(--danger);
-  }
-  .strong {
-    background: var(--border-strong);
   }
   .gap {
     background: var(--border);

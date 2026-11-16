@@ -1,30 +1,36 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { log } from "../lib/state.svelte";
+  import { log, ui } from "../lib/state.svelte";
   import { time } from "../lib/format";
   import { tk } from "../lib/i18n";
 
-  // Журнал дій: моноширинний, автопрокрутка, у DOM не більше 500 рядків (обрізання в state).
-  let open = $state(false);
+  // Журнал дій — висувна панель справа (кнопка «Журнал» у верхній панелі): моноширинний,
+  // автопрокрутка, у DOM не більше 500 рядків (обрізання в state). Esc закриває.
   let box = $state<HTMLDivElement | undefined>();
 
   $effect(() => {
     const n = log.lines.length;
-    if (open && box && n) {
+    if (ui.logOpen && box && n) {
       void tick().then(() => {
         if (box) box.scrollTop = box.scrollHeight;
       });
     }
   });
+
+  function onkeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && ui.logOpen) ui.logOpen = false;
+  }
 </script>
 
-<section class="log" class:open aria-label={tk("ui.log.title")}>
-  <button type="button" class="head" aria-expanded={open} onclick={() => (open = !open)}>
-    <span class="dot" class:has={log.lines.length > 0} aria-hidden="true"></span>
-    {tk("ui.log.title")}
-    <span class="muted small">{tk("ui.log.count", { n: log.lines.length })}</span>
-  </button>
-  {#if open}
+<svelte:window {onkeydown} />
+
+{#if ui.logOpen}
+  <aside class="drawer" aria-label={tk("ui.log.title")}>
+    <div class="head">
+      <strong>{tk("ui.log.title")}</strong>
+      <span class="small dim">{tk("ui.log.count", { n: log.lines.length })} · v{ui.info?.version ?? "…"}</span>
+      <button type="button" class="close" aria-label={tk("ui.common.close")} onclick={() => (ui.logOpen = false)}>✕</button>
+    </div>
     <div class="lines mono" bind:this={box} aria-live="polite">
       {#each log.lines as l, i (i)}
         <div class="line {l.level}">
@@ -36,44 +42,58 @@
         <div class="dim">{tk("ui.log.empty")}</div>
       {/each}
     </div>
-  {/if}
-</section>
+  </aside>
+{/if}
 
 <style>
-  .log {
-    border-top: 1px solid var(--border);
-    background: var(--bg-sidebar);
+  .drawer {
+    position: fixed;
+    z-index: 20;
+    top: var(--topbar-h);
+    right: 0;
+    bottom: 0;
+    width: min(480px, 100vw);
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--line);
+    background: var(--drawer-bg);
+    box-shadow: var(--shadow-modal);
+    animation: slide var(--dur) var(--ease);
+  }
+  @keyframes slide {
+    from {
+      transform: translateX(24px);
+      opacity: 0;
+    }
   }
   .head {
     display: flex;
     align-items: center;
-    gap: calc(var(--space) * 2);
-    width: 100%;
-    padding: calc(var(--space) * 2) calc(var(--space) * 6);
-    border: none;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 12px;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 4) calc(var(--space) * 5);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .head .small {
+    flex: 1;
+  }
+  .close {
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--line-ctl);
+    border-radius: var(--radius-ctl);
+    background: var(--fill-2);
+    color: var(--text-2);
     cursor: pointer;
-    text-align: left;
   }
-  .head:hover {
+  .close:hover {
     color: var(--text);
-  }
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-dim);
-  }
-  .dot.has {
-    background: var(--ok);
+    background: var(--fill-3);
   }
   .lines {
-    max-height: 180px;
+    flex: 1;
     overflow-y: auto;
-    padding: 0 calc(var(--space) * 6) calc(var(--space) * 3);
-    font-size: 12px;
+    padding: calc(var(--space) * 3) calc(var(--space) * 5);
+    font-size: var(--fs-small);
   }
   .line {
     display: flex;
@@ -91,6 +111,6 @@
     color: var(--warn);
   }
   .error .mark {
-    color: var(--danger);
+    color: var(--bad);
   }
 </style>

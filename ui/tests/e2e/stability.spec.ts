@@ -2,10 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 import { stabDone, stabInfo, stabRunning } from "./fixtures";
 import { calls, emit, mockBackend } from "./mock";
 import { tk } from "./text";
+import { go } from "./nav";
 
 async function open(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: tk("ui.nav.stability") }).click();
+  await go(page, "stability");
   await expect(page.getByRole("heading", { level: 1, name: tk("ui.stab.title") })).toBeVisible();
 }
 

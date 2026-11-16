@@ -22,6 +22,7 @@ for (const f of files) {
 // Динамічні ключі: розгортаємо за відомими значеннями.
 const screens = ["analysis", "optimization", "games", "diagnosis", "hardware", "laptop", "network", "upscale", "cleanup", "apps", "startup", "appearance", "backups", "settings"];
 for (const s of screens) used.add(`ui.nav.${s}`);
+for (const t of ["overview", "diagnosis", "tests", "tools", "system"]) used.add(`ui.tab.${t}`);
 for (const s of ["laptop", "network", "cleanup", "apps", "startup", "appearance"]) used.add(`ui.placeholder.${s}`);
 for (const s of ["user_run", "machine_run", "machine_run32", "user_folder", "common_folder"]) used.add(`ui.startup.source.${s}`);
 for (const k of ["system", "unknown_flag"]) {

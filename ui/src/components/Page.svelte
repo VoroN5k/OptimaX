@@ -1,28 +1,49 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { tk } from "../lib/i18n";
+  import { siblingsOf, tabOf } from "../lib/nav";
+  import { ui, type ScreenId } from "../lib/state.svelte";
+  import SubTabs from "./SubTabs.svelte";
 
-  // Каркас екрана: заголовок + підзаголовок, прокручуваний вміст, sticky-панель дій унизу
-  // (ліворуч — вторинні дії, праворуч — головна).
+  // Каркас екрана (docs/DESIGN.md розд. 6): шапка — заголовок і підзаголовок ліворуч, підрозділи
+  // вкладки праворуч; прокручуваний вміст до 1176px по центру; sticky-панель дій унизу (ліворуч —
+  // вторинні дії, праворуч — головна). `tabs` — власні підрозділи сторінки замість розділів вкладки.
   let {
     title,
     subtitle,
     children,
     secondary,
     primary,
+    tabs,
   }: {
     title: string;
     subtitle?: string;
     children: Snippet;
     secondary?: Snippet;
     primary?: Snippet;
+    tabs?: Snippet;
   } = $props();
+
+  const siblings = $derived(siblingsOf(ui.screen));
 </script>
 
 <div class="page">
   <div class="scroll">
     <header>
-      <h1>{title}</h1>
-      {#if subtitle}<p class="muted">{subtitle}</p>{/if}
+      <div class="titles">
+        <h1>{title}</h1>
+        {#if subtitle}<p class="muted">{subtitle}</p>{/if}
+      </div>
+      {#if tabs}
+        {@render tabs()}
+      {:else if siblings.length > 1}
+        <SubTabs
+          label={tk(`ui.tab.${tabOf(ui.screen)}`)}
+          value={ui.screen}
+          options={siblings.map((s: ScreenId) => ({ value: s, label: tk(`ui.nav.${s}`) }))}
+          onselect={(s) => (ui.screen = s)}
+        />
+      {/if}
     </header>
     <div class="content">{@render children()}</div>
   </div>
@@ -49,14 +70,21 @@
   .scroll {
     flex: 1;
     overflow-y: auto;
-    padding: calc(var(--space) * 8) calc(var(--space) * 8) calc(var(--space) * 6);
+    padding: calc(var(--space) * 7) calc(var(--space) * 8) calc(var(--space) * 8);
   }
   header {
-    display: grid;
-    gap: calc(var(--space) * 1.5);
-    margin-bottom: calc(var(--space) * 6);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: calc(var(--space) * 3.5) calc(var(--space) * 6);
+    margin-bottom: calc(var(--space) * 5);
   }
-  /* Заголовок, вміст і панель дій — одна колонка, по центру на широких екранах. */
+  .titles {
+    display: grid;
+    gap: var(--space);
+  }
+  /* Шапка, вміст і панель дій — одна колонка, по центру на широких екранах. */
   header,
   .content,
   .bar {
@@ -76,14 +104,14 @@
   }
   .actionbar {
     padding: calc(var(--space) * 3) calc(var(--space) * 8);
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line-soft);
     /* Без backdrop-filter: над анімованим фоном розмиття перераховувалося б щокадру. */
-    background: color-mix(in srgb, var(--bg-sidebar) 94%, transparent);
+    background: var(--bar-bg);
   }
   .left,
   .right {
     display: flex;
-    gap: calc(var(--space) * 2);
+    gap: calc(var(--space) * 2.5);
     align-items: center;
   }
 </style>

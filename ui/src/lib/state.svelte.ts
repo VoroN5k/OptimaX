@@ -47,6 +47,8 @@ export const ui = $state({
   blackboxHidden: null as string | null,
   /** З «Головної» натиснули «Встановити службу»: картка служби одразу покаже згоду. */
   serviceInstall: false,
+  /** Відкрита висувна панель журналу дій (кнопка «Журнал» у верхній панелі). */
+  logOpen: false,
 });
 
 export const log = $state({ lines: [] as LogLine[] });

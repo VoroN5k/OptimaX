@@ -7,7 +7,8 @@
   import { cl, flashBg, gm, logLocal, pushLog, ui, up } from "./lib/state.svelte";
   import BackgroundDots from "./components/BackgroundDots.svelte";
   import LogPanel from "./components/LogPanel.svelte";
-  import Sidebar from "./components/Sidebar.svelte";
+  import TopBar from "./components/TopBar.svelte";
+  import { remember } from "./lib/nav";
   import Tour from "./components/Tour.svelte";
   import { startTour } from "./lib/tour.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
@@ -128,6 +129,9 @@
   // Заставка запуску вирішується до читання налаштувань — запам'ятовуємо їх локально.
   $effect(() => rememberSplash(ui.settings.animation !== "off" && !ui.settings.economy));
 
+  // Повернення на вкладку відкриває той розділ, де користувач був.
+  $effect(() => remember(ui.screen));
+
   const animate = $derived(
     showBg && ui.settings.animation !== "off" && !ui.settings.economy && !ui.gameActive && !ui.measuring,
   );
@@ -139,11 +143,11 @@
       enabled={animate}
       quality={ui.settings.animation === "low" ? "low" : "high"}
       mode={ui.bgMode}
-      leftInset={225}
+      leftInset={0}
       onstats={(s) => (dotsStats = s)}
     />
   {/if}
-  <Sidebar />
+  <TopBar />
   <main class="main">
     <UpdateBanner />
     <div class="screen">
@@ -187,6 +191,7 @@
 <style>
   .shell {
     display: flex;
+    flex-direction: column;
     height: 100%;
     min-width: 960px;
     min-height: 640px;

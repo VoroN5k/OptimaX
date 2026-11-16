@@ -33,6 +33,9 @@ import type { ScanView } from "../../src/lib/bindings/ScanView";
 import type { Settings } from "../../src/lib/bindings/Settings";
 import type { AgentView } from "../../src/lib/bindings/AgentView";
 import type { GameProfile } from "../../src/lib/bindings/GameProfile";
+import type { JournalEntry } from "../../src/lib/bindings/JournalEntry";
+import type { StartupEntry } from "../../src/lib/bindings/StartupEntry";
+import type { DriveView } from "../../src/lib/bindings/DriveView";
 import type { StartupReport } from "../../src/lib/bindings/StartupReport";
 import type { UpscaleView } from "../../src/lib/bindings/UpscaleView";
 
@@ -70,6 +73,9 @@ export interface Responses {
   service_uninstall: ServiceView;
   agent_status: AgentView;
   profiles_list: GameProfile[];
+  journal_entries: JournalEntry[];
+  startup_list: StartupEntry[];
+  cleanup_drives: DriveView[];
   gamemode_running: boolean;
   agent_set_autostart: AgentView;
   agent_start: AgentView;
@@ -649,6 +655,9 @@ export function defaults(): Responses {
     service_uninstall: structuredClone(serviceNone),
     agent_status: structuredClone(agentPortable),
     profiles_list: [],
+    journal_entries: [],
+    startup_list: [],
+    cleanup_drives: [],
     gamemode_running: false,
     agent_set_autostart: { ...agentReady, autostart: true },
     agent_start: { ...agentReady, running: true, can_start: false },

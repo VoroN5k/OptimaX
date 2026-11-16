@@ -1,10 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { calls, mockBackend, unmocked } from "./mock";
 import { tk } from "./text";
+import { go } from "./nav";
 
 async function open(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: tk("ui.nav.settings") }).click();
+  await go(page, "settings");
   await expect(page.getByText(tk("ui.sensors.title"))).toBeVisible();
 }
 

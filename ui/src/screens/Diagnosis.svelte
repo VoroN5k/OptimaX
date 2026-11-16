@@ -20,6 +20,7 @@
   import ResolutionTest from "../components/ResolutionTest.svelte";
   import StartModePicker from "../components/StartModePicker.svelte";
   import Segmented from "../components/Segmented.svelte";
+  import SubTabs from "../components/SubTabs.svelte";
   import StateView from "../components/StateView.svelte";
   import VerdictGuide from "../components/VerdictGuide.svelte";
   import { currentStep, wantsExample } from "../lib/tour.svelte";
@@ -147,10 +148,11 @@
   title={tk(`ui.diag.page.${tab}.title`)}
   subtitle={tk(`ui.diag.page.${tab}.subtitle`)}
 >
-  <div class="tabs">
-    <Segmented
+  {#snippet tabs()}
+    <SubTabs
       label={tk("ui.crash.tabs")}
-      bind:value={tab}
+      value={tab}
+      onselect={(v) => (tab = v)}
       options={[
         { value: "lag", label: tk("ui.crash.tab_lag") },
         { value: "watch", label: tk("ui.crash.tab_watch") },
@@ -159,6 +161,8 @@
         { value: "crash", label: tk("ui.crash.tab_crash") },
       ]}
     />
+  {/snippet}
+  <div class="tabs">
     <span data-tour="diag-help">
       <Button small variant="secondary" icon="help" onclick={() => (guideOpen = true)}>{tk("ui.guide.open")}</Button>
     </span>
@@ -273,7 +277,7 @@
   .tabs {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: calc(var(--space) * 3);
     margin-bottom: calc(var(--space) * 4);
   }

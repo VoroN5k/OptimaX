@@ -2,11 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { comparison } from "./fixtures";
 import { calls, mockBackend } from "./mock";
 import { tk } from "./text";
+import { go } from "./nav";
 
 async function openHistory(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: tk("ui.nav.diagnosis") }).click();
-  await page.getByRole("radio", { name: tk("ui.history.tab") }).click();
+  await go(page, "diagnosis");
+  await page.getByRole("tab", { name: tk("ui.history.tab") }).click();
   await expect(page.getByRole("heading", { level: 1, name: tk("ui.diag.page.history.title") })).toBeVisible();
 }
 

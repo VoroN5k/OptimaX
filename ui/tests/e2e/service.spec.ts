@@ -2,10 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 import { serviceNone, serviceRunning } from "./fixtures";
 import { calls, mockBackend, unmocked } from "./mock";
 import { tk } from "./text";
+import { go } from "./nav";
 
 async function open(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: tk("ui.nav.settings") }).click();
+  await go(page, "settings");
   await expect(page.getByText(tk("ui.service.title"))).toBeVisible();
 }
 
@@ -35,7 +36,7 @@ test.describe("Служба OptimaX", () => {
     expect((await calls(page)).some((c) => c.cmd === "service_install")).toBe(false);
     await page.getByRole("dialog").getByRole("button", { name: tk("ui.common.cancel") }).click();
 
-    await page.getByRole("button", { name: tk("ui.nav.analysis") }).click();
+    await go(page, "analysis");
     await page.getByRole("button", { name: tk("ui.service.hint.dismiss") }).click();
     await expect(page.getByText(tk("ui.service.hint.title"))).toBeHidden();
     const saved = (await calls(page)).filter((c) => c.cmd === "set_settings").pop();

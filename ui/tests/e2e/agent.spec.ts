@@ -2,10 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 import { agentReady } from "./fixtures";
 import { calls, mockBackend, unmocked } from "./mock";
 import { tk } from "./text";
+import { go } from "./nav";
 
 async function open(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: tk("ui.nav.settings") }).click();
+  await go(page, "settings");
   await expect(page.getByText(tk("ui.agent.title"))).toBeVisible();
 }
 
@@ -41,14 +42,14 @@ test.describe("Агент у треї", () => {
       app_info: { version: "0.0.0-test", elevated: false, service: true, presentmon_version: "2.6.0" },
     });
     await page.goto("/");
-    await page.getByRole("button", { name: tk("ui.nav.games") }).click();
+    await go(page, "games");
     await expect(page.getByText(tk("ui.games.by_agent"))).toBeVisible();
   });
 
   test("«Ігри» з правами адміністратора — агент режим гри не веде", async ({ page }) => {
     await mockBackend(page, { agent_status: { ...agentReady, running: true, can_start: false } });
     await page.goto("/");
-    await page.getByRole("button", { name: tk("ui.nav.games") }).click();
+    await go(page, "games");
     await expect(page.getByText(tk("ui.games.watch_title")).first()).toBeVisible();
     await expect(page.getByText(tk("ui.games.by_agent"))).toHaveCount(0);
   });

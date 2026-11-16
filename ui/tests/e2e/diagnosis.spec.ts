@@ -2,10 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 import { abDone, expDone, gpuResult, resMid } from "./fixtures";
 import { calls, emit, mockBackend } from "./mock";
 import { tk } from "./text";
+import { go } from "./nav";
 
 async function openDiagnosis(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: tk("ui.nav.diagnosis") }).click();
+  await go(page, "diagnosis");
   await expect(page.getByRole("heading", { level: 1, name: tk("ui.diag.title") })).toBeVisible();
 }
 
@@ -68,7 +69,7 @@ test.describe("Діагностика", () => {
   test("анатомія кадру: типовий кадр, черга і що розтягнуло ривки", async ({ page }) => {
     await mockBackend(page, { diag_state: { recording: false, last: structuredClone(gpuResult) } });
     await page.goto("/");
-    await page.getByRole("button", { name: tk("ui.nav.diagnosis") }).click();
+    await go(page, "diagnosis");
     const fold = page.getByRole("button", { name: new RegExp(tk("ui.anatomy.title")) });
     await expect(fold).toContainText(tk("ui.anatomy.summary", { ms: "8.0", n: 1 }));
     await fold.click();
@@ -83,7 +84,7 @@ test.describe("Діагностика", () => {
   test("шкала запису: перехід до найгіршого ривку й значення під курсором", async ({ page }) => {
     await mockBackend(page, { diag_state: { recording: false, last: structuredClone(gpuResult) } });
     await page.goto("/");
-    await page.getByRole("button", { name: tk("ui.nav.diagnosis") }).click();
+    await go(page, "diagnosis");
     const fold = page.getByRole("button", { name: new RegExp(tk("ui.tl.title")) });
     await expect(fold).toContainText(tk("ui.tl.summary", { s: "30", n: 1 }));
     await fold.click();
@@ -123,8 +124,8 @@ test.describe("Діагностика", () => {
       ],
     });
     await page.goto("/");
-    await page.getByRole("button", { name: tk("ui.nav.diagnosis") }).click();
-    await page.getByRole("radio", { name: tk("ui.exp.tab") }).click();
+    await go(page, "diagnosis");
+    await page.getByRole("tab", { name: tk("ui.exp.tab") }).click();
     // Збережене порівняння видно до старту нового.
     await expect(page.getByText(tk("ui.exp.saved_title"))).toBeVisible();
     await page.getByRole("combobox", { name: tk("ui.diag.game") }).fill("re9.exe");
@@ -165,7 +166,7 @@ test.describe("Діагностика", () => {
   test("A/B оптимізації: прогони з рушія, інтервал і підсумок без приросту", async ({ page }) => {
     await mockBackend(page, { ab_state: abDone });
     await page.goto("/");
-    await page.getByRole("button", { name: tk("ui.nav.optimization") }).click();
+    await go(page, "optimization");
     await expect(page.locator("ol.runs li")).toHaveCount(6);
     await expect(page.getByText(tk("ui.opt.done.no_effect"))).toBeVisible();
     await expect(page.getByText(tk("ui.exp.outcome.no_effect")).first()).toBeVisible();
@@ -245,7 +246,7 @@ test.describe("Діагностика", () => {
     view.report.runs[0]!.pc_latency_ms = 47.2;
     await mockBackend(page, { exp_state: view });
     await page.goto("/");
-    await page.getByRole("button", { name: tk("ui.nav.diagnosis") }).click();
+    await go(page, "diagnosis");
     const line = tk("ui.exp.verdict_latency", {
       a: "47.1",
       b: "32.9",

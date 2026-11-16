@@ -32,6 +32,9 @@ export async function mockBackend(page: Page, overrides: Partial<Responses> = {}
     const callbacks = new Map<number, Cb>();
     let nextId = 1;
     w.__calls = calls;
+    // Паралельні сторінки тестів можуть бути без фокуса ОС; інтерфейс вважав би вікно неактивним
+    // і ставив анімації на паузу. Тести моделюють активне вікно (втрату фокуса — подією blur).
+    document.hasFocus = () => true;
     w.__unmocked = unmocked;
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: (_event: string, id: number) => callbacks.delete(id),

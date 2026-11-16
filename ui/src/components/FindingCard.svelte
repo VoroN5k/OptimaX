@@ -115,6 +115,7 @@
   }
   .toggle {
     width: 100%;
+    min-height: 32px;
     align-items: center;
     padding: 0;
     border: none;
@@ -172,6 +173,7 @@
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
+    min-height: 32px;
     padding: 0;
   }
   .ev-toggle:hover {

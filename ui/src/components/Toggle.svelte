@@ -23,23 +23,34 @@
   {disabled}
   onclick={toggle}
 >
-  <span class="knob"></span>
+  <span class="track"><span class="knob"></span></span>
 </button>
 
 <style>
+  /* Кнопка — ціль 32 px заввишки (docs/DESIGN.md розд. 10), сама доріжка — 24 px. */
   .toggle {
+    display: inline-flex;
+    align-items: center;
+    width: 42px;
+    height: 32px;
+    flex-shrink: 0;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+  }
+  .track {
     position: relative;
+    display: block;
     width: 42px;
     height: 24px;
-    flex-shrink: 0;
     border-radius: var(--radius-pill);
     border: 1px solid var(--border-strong);
     background: var(--bg-input);
-    cursor: pointer;
-    padding: 0;
     transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
   }
-  .toggle.on {
+  .toggle.on .track {
     background: var(--accent-gradient);
     border-color: transparent;
   }

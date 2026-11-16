@@ -33,7 +33,7 @@
 
 <div class="wrap">
   <div class="ring" role="img" aria-label={aria}>
-    <div class="beam" aria-hidden="true"></div>
+    <div class="beam ambient" aria-hidden="true"></div>
     <svg width="208" height="208" viewBox="0 0 232 232" aria-hidden="true">
       <defs>
         <linearGradient id="o-{uid}" x1="0" y1="0" x2="1" y2="1">
@@ -126,6 +126,7 @@
     background: conic-gradient(from 0deg, transparent 0deg, transparent 290deg, rgba(var(--glow), 0.28) 360deg);
     -webkit-mask: radial-gradient(circle, transparent 0 46px, #000 47px 100px, transparent 101px);
     mask: radial-gradient(circle, transparent 0 46px, #000 47px 100px, transparent 101px);
+    will-change: transform;
     animation: spin 7s linear infinite;
   }
   @keyframes spin {

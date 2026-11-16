@@ -29,7 +29,7 @@
   {#if icon}
     <Icon name={icon} size={small ? 12 : 13} />
   {:else}
-    <span class="dot" class:pulse={pulsing} aria-hidden="true"></span>
+    <span class="dot" class:pulse={pulsing} class:ambient={pulsing} aria-hidden="true"></span>
   {/if}
   {@render children()}
 </span>
@@ -77,6 +77,7 @@
     inset: -4px;
     border-radius: 50%;
     border: 1px solid currentColor;
+    will-change: transform, opacity;
     animation: pulse 2.4s ease-out infinite;
   }
   @keyframes pulse {

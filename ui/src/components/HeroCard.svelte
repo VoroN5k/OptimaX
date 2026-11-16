@@ -9,11 +9,11 @@
 </script>
 
 <article class="frame" aria-label={label}>
-  <div class="spin" aria-hidden="true"></div>
+  <div class="spin ambient" aria-hidden="true"></div>
   <div class="inner">
     <div class="blobs" aria-hidden="true">
-      <div class="blob a"></div>
-      <div class="blob b"></div>
+      <div class="blob a ambient"></div>
+      <div class="blob b ambient"></div>
     </div>
     <div class="content">{@render children()}</div>
   </div>
@@ -42,6 +42,7 @@
       var(--a1) 330deg,
       transparent 360deg
     );
+    will-change: transform;
     animation: spin 9s linear infinite;
   }
   @keyframes spin {
@@ -65,6 +66,7 @@
   .blob {
     position: absolute;
     border-radius: 50%;
+    will-change: transform;
   }
   /* Готові радіальні градієнти замість filter: blur — той самий вигляд, дешевше для WebView2. */
   .a {

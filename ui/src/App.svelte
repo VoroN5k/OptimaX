@@ -4,7 +4,7 @@
   import { tk } from "./lib/i18n";
   import { buildBackdropData } from "./lib/backdrop";
   import { rememberSplash } from "./lib/splash";
-  import { effectiveEffects, measuringNow, trackEffects } from "./lib/effects.svelte";
+  import { effectiveEffects, measuringNow, trackEffects, userIdle, windowHidden } from "./lib/effects.svelte";
   import { cl, flashBg, gm, logLocal, pushLog, ui, up } from "./lib/state.svelte";
   import Backdrop from "./components/Backdrop.svelte";
   import LogPanel from "./components/LogPanel.svelte";
@@ -153,6 +153,7 @@
 <div class="shell">
   <Backdrop
     active={bgActive}
+    paused={windowHidden() || userIdle()}
     data={bgData}
     game={bgData ? (ui.lastRecord?.diagnosis.game ?? null) : null}
     grain={effectiveEffects() !== "off"}

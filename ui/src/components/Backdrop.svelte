@@ -16,12 +16,15 @@
   // пауза; зменшений рух — один статичний кадр.
   let {
     active,
+    paused = false,
     data,
     game = null,
     grain = true,
     onstats,
   }: {
     active: boolean;
+    /** Вікно неактивне: кадр лишається, цикл стоїть. */
+    paused?: boolean;
     data: BackdropData | null;
     game?: string | null;
     grain?: boolean;
@@ -30,6 +33,9 @@
 
   const FRAME_MS = 33;
   const DPR_MAX = 2;
+  /** Анімований шар малюється в половинній роздільності: масштабування саме дає м'якість, яку раніше
+   *  робив CSS `filter: blur(2.5px)` на все вікно, а пікселів учетверо менше (заміри — docs/DESIGN.md). */
+  const ANIM_SCALE = 0.5;
 
   let anim = $state<HTMLCanvasElement | undefined>();
   let labels = $state<HTMLCanvasElement | undefined>();
@@ -64,10 +70,13 @@
     w = window.innerWidth;
     h = window.innerHeight;
     const dpr = Math.min(DPR_MAX, window.devicePixelRatio || 1);
-    for (const c of [anim, labels]) {
-      c.width = Math.round(w * dpr);
-      c.height = Math.round(h * dpr);
-      c.getContext("2d")?.setTransform(dpr, 0, 0, dpr, 0, 0);
+    for (const [c, k] of [
+      [anim, ANIM_SCALE],
+      [labels, dpr],
+    ] as const) {
+      c.width = Math.round(w * k);
+      c.height = Math.round(h * k);
+      c.getContext("2d")?.setTransform(k, 0, 0, k, 0, 0);
     }
     lanes = scene.layout(w, h);
     drawLabels();
@@ -94,9 +103,10 @@
     });
     ctx.fillStyle = text3;
     ctx.fillText(tk("ui.bg.frames"), 32, lanes.stripY - 14);
-    // Легенда — під смугою кадрів (над нижньою панеллю дій), щоб не налазити на шапку сторінки.
+    // Легенда — один рядок у смузі під верхньою панеллю (над заголовком сторінки); унизу вона
+    // просвічувала крізь плитки й заважала читати текст.
     let x = 32;
-    const ly = lanes.stripY + 40;
+    const ly = 68;
     const item = (rgb: string, label: string) => {
       ctx.fillStyle = `rgba(${rgb},0.8)`;
       ctx.fillRect(x, ly - 4, 8, 8);
@@ -147,10 +157,13 @@
     if (reduced) {
       stop();
       scene.frame(performance.now(), false);
-    } else if (!hidden && onScreen) {
+    } else if (!hidden && !paused && onScreen) {
       if (!raf) raf = requestAnimationFrame(loop);
     } else {
+      // Пауза (вікно неактивне, простій): цикл стоїть, але один нерухомий кадр лишається —
+      // інакше фон, змонтований на паузі, був би порожнім.
       stop();
+      if (!hidden) scene.frame(performance.now(), false);
     }
   }
 
@@ -208,7 +221,7 @@
   });
 
   $effect(() => {
-    void [active, hidden, onScreen, reduced];
+    void [active, paused, hidden, onScreen, reduced];
     sync();
   });
 </script>
@@ -250,7 +263,7 @@
   .anim {
     -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 40%, #000 30%, transparent);
     mask-image: radial-gradient(ellipse 90% 70% at 50% 40%, #000 30%, transparent);
-    filter: blur(2.5px);
+    filter: blur(1px);
   }
   .grain {
     opacity: 0.07;

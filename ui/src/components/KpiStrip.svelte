@@ -22,7 +22,7 @@
 
 <section class="tile strip" aria-label={label} {onmousemove} style:--mx="{mx}px" style:--my="{my}px">
   <div class="spot" aria-hidden="true"></div>
-  <div class="shimmer" aria-hidden="true"></div>
+  <div class="shimmer ambient" aria-hidden="true"></div>
   <div class="cells">
     {#each items as k (k.label)}
       <div class="cell">
@@ -51,19 +51,22 @@
     top: 0;
     bottom: 0;
     width: 30%;
-    left: -40%;
+    left: 0;
     pointer-events: none;
     background: var(--shine-soft);
-    transform: skewX(-18deg);
+    /* Лише transform (окремий шар композиції): анімація `left` перераховувала розкладку щокадру. */
+    transform: translateX(-133%) skewX(-18deg);
+    will-change: transform;
     animation: shimmer 6s ease-in-out 1.5s infinite;
   }
+  /* Від -40 % до 140 % ширини смуги; ширина відблиску — 30 % смуги, тож у власних відсотках. */
   @keyframes shimmer {
     0% {
-      left: -40%;
+      transform: translateX(-133%) skewX(-18deg);
     }
     35%,
     100% {
-      left: 140%;
+      transform: translateX(467%) skewX(-18deg);
     }
   }
   .cells {

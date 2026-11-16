@@ -122,13 +122,20 @@ code, .mono {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
 }
-/* «Спокійні» і контракт вимірювань (запис, A/B, стабільність, режим гри): нескінченні анімації
-   доходять до кінця одного циклу й зупиняються, одноразові переходи лишаються. */
+/* «Спокійні», контракт вимірювань (запис, A/B, стабільність, режим гри), а також згорнуте, приховане
+   чи неактивне вікно й простій без введення: нескінченні анімації доходять до кінця циклу й
+   зупиняються. Одноразові переходи (поява сторінки) завершуються як звичайно — пауза
+   (animation-play-state) заморозила б їх на першому кадрі, і вміст лишився б прозорим. */
 :root[data-effects="calm"] *, :root[data-effects="calm"] *::before, :root[data-effects="calm"] *::after,
-:root.measuring *, :root.measuring *::before, :root.measuring *::after {
+:root.measuring *, :root.measuring *::before, :root.measuring *::after,
+:root.window-hidden *, :root.window-hidden *::before, :root.window-hidden *::after,
+:root.idle *, :root.idle *::before, :root.idle *::after {
   animation-iteration-count: 1 !important;
 }
-/* Згорнуте чи приховане вікно не рендерить анімацій узагалі. */
-:root.window-hidden *, :root.window-hidden *::before, :root.window-hidden *::after {
+/* Декоративний нескінченний рух (клас `ambient`: рамка й плями головної картки, промінь кільця,
+   відблиск смуги, пульс пілюлі) у неактивному вікні й у простої стає на паузу одразу, не чекаючи
+   кінця циклу (заміри етапу 7: кожна така анімація — до ≈27 % ядра, поки йде). */
+:root.window-hidden .ambient, :root.window-hidden .ambient::after,
+:root.idle .ambient, :root.idle .ambient::after {
   animation-play-state: paused !important;
 }

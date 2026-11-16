@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { api, asCmdError, on } from "../lib/api";
   import type { CmdError } from "../lib/bindings/CmdError";
   import type { DiagnosisResult } from "../lib/bindings/DiagnosisResult";
@@ -79,6 +79,13 @@
         const actionable = r.diagnosis.verdicts.some((v) => v.finding.impact !== "info");
         flashBg(actionable ? "warn" : "ok");
         logLocal("info", tk("ui.diag.done_log", { game: r.diagnosis.game }));
+        // Результат — одразу на екрані: показники зверху, головна картка під ними.
+        void tick().then(() =>
+          document.querySelector("[data-tour=diag-stats]")?.scrollIntoView({
+            block: "start",
+            behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+          }),
+        );
       }),
       on("diag-error", (e) => {
         error = e;
@@ -163,12 +170,11 @@
         { value: "crash", label: tk("ui.crash.tab_crash") },
       ]}
     />
-  {/snippet}
-  <div class="tabs">
-    <span data-tour="diag-help">
-      <Button small variant="secondary" icon="help" onclick={() => (guideOpen = true)}>{tk("ui.guide.open")}</Button>
+    <!-- «Довідка» — у шапці поруч із підрозділами: окремий рядок забирав висоту в результату. -->
+    <span class="help" data-tour="diag-help">
+      <Button variant="secondary" icon="help" label={tk("ui.guide.open")} onclick={() => (guideOpen = true)} />
     </span>
-  </div>
+  {/snippet}
   {#if tab === "crash"}
     <CrashView />
   {:else if tab === "history"}
@@ -288,12 +294,8 @@
 {/if}
 
 <style>
-  .tabs {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: calc(var(--space) * 3);
-    margin-bottom: calc(var(--space) * 4);
+  .help {
+    margin-left: calc(var(--space) * 2);
   }
   .stack {
     display: grid;

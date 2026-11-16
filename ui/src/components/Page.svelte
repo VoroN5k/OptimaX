@@ -35,7 +35,7 @@
         {#if subtitle}<p class="muted">{subtitle}</p>{/if}
       </div>
       {#if tabs}
-        {@render tabs()}
+        <div class="head-tools">{@render tabs()}</div>
       {:else if siblings.length > 1}
         <SubTabs
           label={tk(`ui.tab.${tabOf(ui.screen)}`)}
@@ -85,10 +85,15 @@
     display: grid;
     gap: var(--space);
     flex: 1 1 0;
-    min-width: 240px;
+    /* 200 px: на мінімальному вікні (960) поруч уміщаються 5 підрозділів «Діагностики» й «Довідка». */
+    min-width: 200px;
   }
   header > :global(:not(.titles)) {
     flex-shrink: 0;
+  }
+  .head-tools {
+    display: flex;
+    align-items: center;
   }
   /* Шапка, вміст і панель дій — одна колонка, по центру на широких екранах. */
   header,

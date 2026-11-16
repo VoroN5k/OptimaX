@@ -183,6 +183,7 @@
               inner={ring.inner ? { value: ring.inner.value, label: t(ring.inner.evidence.label) } : undefined}
               center={tk(ring.caption)}
               aria={ringAria}
+              size={168}
             />
           {/if}
         </div>
@@ -361,8 +362,8 @@
   }
   .hero-grid {
     display: grid;
-    gap: calc(var(--space) * 7);
-    align-items: center;
+    gap: calc(var(--space) * 6);
+    align-items: start;
   }
   .hero-grid.with-ring {
     grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));

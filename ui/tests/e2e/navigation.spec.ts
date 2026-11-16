@@ -80,9 +80,11 @@ test.describe("Каркас сторінки", () => {
       const header = page.locator(".page > .scroll > header");
       const h = await header.boundingBox();
       const t = await header.getByRole("tablist").boundingBox();
+      // Праворуч упритул — група інструментів шапки (підрозділи й, напр., «Довідка» в «Діагностиці»).
+      const tools = await header.locator(".head-tools, [role=tablist]").first().boundingBox();
       const title = await header.getByRole("heading", { level: 1 }).boundingBox();
-      if (!h || !t || !title) throw new Error(`немає шапки на ${screen}`);
-      expect(Math.abs(h.x + h.width - (t.x + t.width)), screen).toBeLessThan(2);
+      if (!h || !t || !tools || !title) throw new Error(`немає шапки на ${screen}`);
+      expect(Math.abs(h.x + h.width - (tools.x + tools.width)), screen).toBeLessThan(2);
       expect(t.y, screen).toBeLessThan(title.y + title.height + 60);
       expect(t.x, screen).toBeGreaterThan(title.x + 200);
     }

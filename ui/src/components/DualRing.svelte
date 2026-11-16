@@ -13,6 +13,7 @@
     inner,
     center,
     aria,
+    size = 208,
   }: {
     outer: RingValue;
     inner?: RingValue;
@@ -20,6 +21,8 @@
     center: string;
     /** Повний текстовий зміст для читачів екрана. */
     aria: string;
+    /** Діаметр показу, px (геометрія й маски масштабуються разом). */
+    size?: number;
   } = $props();
 
   const C_OUT = 2 * Math.PI * 88;
@@ -31,7 +34,8 @@
   const fmt = (v: number | null) => (v === null ? "—" : String(Math.round(v)));
 </script>
 
-<div class="wrap">
+<div class="wrap" style:--ring-k={size / 208}>
+  <div class="ring-box">
   <div class="ring" role="img" aria-label={aria}>
     <div class="beam ambient" aria-hidden="true"></div>
     <svg width="208" height="208" viewBox="0 0 232 232" aria-hidden="true">
@@ -88,6 +92,7 @@
       <div class="caption">{center}</div>
     </div>
   </div>
+  </div>
   <div class="values">
     <div class="v">
       <div class="key small"><span class="sw out" aria-hidden="true"></span>{outer.label}</div>
@@ -109,11 +114,19 @@
     align-items: center;
     gap: calc(var(--space) * 3.5);
   }
+  /* Місце в розкладці — під масштабований розмір; саме кільце масштабується трансформацією, тож
+     маски променя й товщини ліній лишаються пропорційними. */
+  .ring-box {
+    width: calc(208px * var(--ring-k));
+    height: calc(208px * var(--ring-k));
+    flex: 0 0 auto;
+  }
   .ring {
     position: relative;
     width: 208px;
     height: 208px;
-    flex: 0 0 208px;
+    transform: scale(var(--ring-k));
+    transform-origin: 0 0;
   }
   svg {
     position: absolute;
@@ -191,16 +204,19 @@
     text-transform: uppercase;
     color: var(--text-3);
   }
+  /* Легенда — рядки «підпис … значення» з вирівнюванням по лівому краю (по центру підписи різної
+     довжини стояли врозкид). */
   .values {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: calc(var(--space) * 3) calc(var(--space) * 6.5);
+    display: grid;
+    gap: calc(var(--space) * 1.5);
+    width: 100%;
+    max-width: 340px;
   }
   .v {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: calc(var(--space) * 4);
   }
   .key {
     display: flex;
@@ -220,8 +236,8 @@
     background: var(--accent-gradient);
   }
   .n {
-    font-size: 24px;
-    line-height: 28px;
+    font-size: 20px;
+    line-height: 24px;
     font-weight: 300;
     letter-spacing: -0.03em;
   }

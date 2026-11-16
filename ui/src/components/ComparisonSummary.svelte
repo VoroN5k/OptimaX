@@ -43,7 +43,7 @@
 {/if}
 <h3 class="section muted">{tk("ui.history.what_changed")}</h3>
 {#if changes.length}
-  <dl class="changes">
+  <dl class="changes" class:stacked={compact}>
     {#each changes as ch (ch.field)}
       <dt>{tk(`ui.history.field.${ch.field}`)}</dt>
       <dd class="mono">{stateValue(ch, ch.from)} → {stateValue(ch, ch.to)}</dd>
@@ -134,5 +134,13 @@
   .changes dd {
     margin: 0;
     word-break: break-word;
+  }
+  /* У вузькій картці — підпис над значенням: «3733 MT/s → 3600 MT/s» не ламається посередині. */
+  .changes.stacked {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .changes.stacked dd + dt {
+    margin-top: calc(var(--space) * 2);
   }
 </style>

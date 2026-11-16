@@ -151,8 +151,8 @@ class SplashRun {
 
   private async init(): Promise<void> {
     const css = getComputedStyle(document.documentElement);
-    const from = hexToRgb(css.getPropertyValue("--accent-from") || "#6E7BFF");
-    const to = hexToRgb(css.getPropertyValue("--accent-to") || "#8B5CF6");
+    const from = hexToRgb(css.getPropertyValue("--a1") || "#F3E5C3");
+    const to = hexToRgb(css.getPropertyValue("--a2") || "#C9A45E");
     for (let i = 0; i < BUCKETS; i++) {
       const k = i / (BUCKETS - 1);
       const rgb: [number, number, number] = [

@@ -30,11 +30,11 @@ OR OTHER DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------
 
-Inter (шрифт інтерфейсу)
-Джерело: npm-пакет @fontsource/inter 5.3.0 (вбудовано локально, без CDN)
+Inter Tight (шрифт інтерфейсу)
+Джерело: npm-пакет @fontsource/inter-tight 5.3.0 (вбудовано локально, без CDN)
 Ліцензія: SIL Open Font License 1.1
 
-Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter) Inter-Italic[opsz,wght].ttf: Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
+Copyright 2022 The Inter Project Authors (https://github.com/rsms/inter-tight) InterTight-Italic[wght].ttf: Copyright 2022 The Inter Project Authors (https://github.com/rsms/inter-tight)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

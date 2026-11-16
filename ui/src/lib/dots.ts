@@ -116,8 +116,8 @@ export class DotField {
   ) {
     this.ctx = canvas.getContext("2d", { alpha: true });
     const css = getComputedStyle(document.documentElement);
-    const from = hexToRgb(css.getPropertyValue("--accent-from") || "#6E7BFF");
-    const to = hexToRgb(css.getPropertyValue("--accent-to") || "#8B5CF6");
+    const from = hexToRgb(css.getPropertyValue("--a1") || "#F3E5C3");
+    const to = hexToRgb(css.getPropertyValue("--a2") || "#C9A45E");
     const px = SPRITE_PX * 2;
     for (let i = 0; i < BUCKETS; i++) {
       // Градієнт за кутом: from → to → from (без різкого шва).
@@ -129,8 +129,8 @@ export class DotField {
       ];
       this.sprites.push(makeSprite(rgb, px));
     }
-    this.warnSprite = makeSprite(hexToRgb(css.getPropertyValue("--warn") || "#F5B84B"), px);
-    this.okSprite = makeSprite(hexToRgb(css.getPropertyValue("--ok") || "#4ADE80"), px);
+    this.warnSprite = makeSprite(hexToRgb(css.getPropertyValue("--warn") || "#FFB27A"), px);
+    this.okSprite = makeSprite(hexToRgb(css.getPropertyValue("--ok") || "#62D6A5"), px);
   }
 
   setQuality(q: DotsQuality): void {

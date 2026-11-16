@@ -1,12 +1,19 @@
 // Шрифти вбудовано локально (OFL 1.1, без CDN): лише кирилиця й латиниця потрібних накреслень.
-import "@fontsource/inter/cyrillic-400.css";
-import "@fontsource/inter/cyrillic-500.css";
-import "@fontsource/inter/cyrillic-600.css";
-import "@fontsource/inter/latin-400.css";
-import "@fontsource/inter/latin-500.css";
-import "@fontsource/inter/latin-600.css";
+// Inter Tight — інтерфейс (300–700), JetBrains Mono — числа й клавіші (400, 500).
+import "@fontsource/inter-tight/cyrillic-300.css";
+import "@fontsource/inter-tight/cyrillic-400.css";
+import "@fontsource/inter-tight/cyrillic-500.css";
+import "@fontsource/inter-tight/cyrillic-600.css";
+import "@fontsource/inter-tight/cyrillic-700.css";
+import "@fontsource/inter-tight/latin-300.css";
+import "@fontsource/inter-tight/latin-400.css";
+import "@fontsource/inter-tight/latin-500.css";
+import "@fontsource/inter-tight/latin-600.css";
+import "@fontsource/inter-tight/latin-700.css";
 import "@fontsource/jetbrains-mono/cyrillic-400.css";
+import "@fontsource/jetbrains-mono/cyrillic-500.css";
 import "@fontsource/jetbrains-mono/latin-400.css";
+import "@fontsource/jetbrains-mono/latin-500.css";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import { mount } from "svelte";

@@ -1,13 +1,14 @@
-/* Базові стилі: скидання, типографіка, фокус, доступність. */
+/* Базові стилі: скидання, типографіка, фокус, доступність (docs/DESIGN.md). */
 *, *::before, *::after { box-sizing: border-box; }
 
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--bg-app);
+  background: var(--bg);
+  background-color: var(--bg-base);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
@@ -16,24 +17,44 @@ html, body {
 #app { height: 100%; }
 
 h1, h2, h3, h4, p { margin: 0; }
-h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
-h2 { font-size: 17px; font-weight: 600; }
+h1 {
+  font-size: var(--fs-page);
+  line-height: var(--lh-page);
+  font-weight: 300;
+  letter-spacing: -0.03em;
+}
+h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
 h3 { font-size: 14px; font-weight: 600; }
+p { text-wrap: pretty; }
 
 button, input, select, textarea { font: inherit; color: inherit; }
 
-a { color: var(--accent-from); }
+a { color: var(--link); }
+a:hover { filter: brightness(1.15); }
 
-code, .mono { font-family: var(--font-mono); font-size: 12.5px; }
+code, .mono {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.num { font-variant-numeric: tabular-nums; }
 
-.muted { color: var(--text-muted); }
-.dim { color: var(--text-dim); }
-.small { font-size: 12px; }
+.muted { color: var(--text-2); }
+.dim { color: var(--text-3); }
+.small { font-size: var(--fs-small); }
+/* Мікро-підпис великими літерами. */
+.micro {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: var(--ls-micro);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
 
-/* Видиме кільце фокусу лише для клавіатури. */
+/* Видиме кільце фокусу лише для клавіатури: 2px акценту з відступом 2px. */
 :focus { outline: none; }
 :focus-visible {
-  outline: 2px solid var(--accent-from);
+  outline: 2px solid var(--a1);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
@@ -45,12 +66,12 @@ code, .mono { font-family: var(--font-mono); font-size: 12.5px; }
 
 /* Прокрутка в тон темній темі. */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 10px; border: 2px solid var(--bg-app); }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 10px; border: 2px solid var(--bg-base); }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* Поява сторінки: fade + зсув на 8px (лише transform/opacity). */
+/* Поява блоку: fade + підйом на 12px (лише transform/opacity). */
 @keyframes page-in {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(12px); }
   to   { opacity: 1; transform: none; }
 }
 

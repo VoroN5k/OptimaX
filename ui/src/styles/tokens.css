@@ -1,41 +1,118 @@
-/* Дизайн-токени OptimaX — єдине джерело істини (CLAUDE.md, розд. 10.2).
-   Компоненти використовують лише ці змінні, жодних «магічних» кольорів. */
+/* Дизайн-токени OptimaX — єдине джерело істини (CLAUDE.md розд. 10, docs/DESIGN.md).
+   Стиль «Pro Premium»: темний матовий інтерфейс, шампань-акцент, теплий помаранчевий для
+   обмеження/ривка. Компоненти використовують лише ці змінні, жодних «магічних» кольорів.
+   Тема лише темна; структура дозволяє додати світлу, перевизначивши змінні. */
 :root {
-  --bg-app:        #090B12;
-  --bg-sidebar:    #0C0E16;
-  --bg-card:       #12151F;
-  --bg-card-hover: #161A26;
-  --bg-input:      #0E111A;
-  --border:        #1D2233;
-  --border-strong: #2A3150;
+  /* ---- Акцент (палітра). Змінюються лише --a1, --a2, --glow, --onA. ---- */
+  --a1:   #F3E5C3;            /* шампань: світлий кінець градієнта */
+  --a2:   #C9A45E;            /* шампань: темний кінець */
+  --glow: 233, 205, 140;      /* RGB для rgba(var(--glow), α) */
+  --onA:  #1C1507;            /* текст на акцентній кнопці */
 
-  --text:          #E8EAF2;
-  --text-muted:    #8A90A8;
-  --text-dim:      #5C6280;
+  /* ---- Поверхні ---- */
+  --bg-base: #06070A;
+  --bg:
+    radial-gradient(1100px 520px at 72% -8%, rgba(var(--glow), .12), transparent 60%),
+    radial-gradient(800px 500px at -5% 40%, rgba(var(--glow), .05), transparent 60%),
+    var(--bg-base);
+  --tile:  linear-gradient(180deg, rgba(19,21,28,.82), rgba(10,11,16,.82));
+  --tile-solid: #111319;      /* щільна плитка без розмиття (режими «Спокійні» / «Вимкнені») */
+  --hero:  linear-gradient(160deg, rgba(20,22,29,.92), rgba(11,12,17,.92) 70%);
+  --track: rgba(255,255,255,.025);
+  --hover: rgba(255,255,255,.04);
+  --line:  rgba(255,255,255,.08);
+  --line-soft: rgba(255,255,255,.06);
+  --line-strong: rgba(255,255,255,.14);
+  --glass-blur: blur(6px);
 
-  --accent-from:   #6E7BFF;   /* синьо-фіолетовий */
-  --accent-to:     #8B5CF6;
-  --accent-glow:   rgba(110,123,255,.35);
+  /* ---- Текст ---- */
+  --text:   #F3F2EE;
+  --text-2: #B2B0AA;
+  --text-3: #8F8D88;          /* ≥ 4.5:1 на --bg-base і --tile (перевірено, docs/DESIGN.md) */
+  --link:   var(--a1);
 
-  --ok:            #4ADE80;   /* безпечно / успіх */
-  --warn:          #F5B84B;   /* помірний вплив */
-  --danger:        #F0616D;   /* впливає на звичні речі / небезпечно */
-  --info:          #6E7BFF;
+  /* ---- Семантика (не залежить від палітри) ---- */
+  --warn:        #FFB27A;     /* обмеження, ривок, увага, головний потік */
+  --warn-from:   #FFC58A;
+  --warn-to:     #FF7A4D;
+  --warn-glow:   255, 138, 91;
+  --gpu:         #7FC4FF;     /* GPU, завантаження ядра */
+  --queue:       #B9A8FF;     /* черга до GPU */
+  --ok:          #62D6A5;     /* безпечно, OK */
+  --bad:         #FF7A70;     /* проблема драйвера (DPC/ISR), диск, помилка */
+  --thread-work: #6C7CFF;     /* потік працював */
+  --thread-sleep:#3A3F52;     /* потік спав */
 
-  --radius-sm: 8px;  --radius-md: 12px;  --radius-lg: 18px;
-  --space: 4px;      /* усі відступи кратні 4 */
+  /* ---- Геометрія ---- */
+  --radius-xs: 5px;           /* логотип, клавіші */
+  --radius-sm: 8px;           /* бейджі номерів */
+  --radius-ctl: 10px;         /* кнопки, пошук, групи кнопок, доріжки графіків */
+  --radius-md: 12px;          /* нижня панель, головні кнопки */
+  --radius-seg: 14px;         /* сегментований перемикач (зовні) */
+  --radius-lg: 18px;          /* плитка */
+  --radius-hero: 20px;        /* головна картка (зовні; зсередини 19px) */
+  --radius-pill: 999px;
+  --space: 4px;               /* усі відступи кратні 4 */
+  --gap: 16px;                /* проміжок сітки bento */
+  --page-pad: 28px 32px 112px;
+  --content-width: 1176px;
+  --topbar-h: 56px;
+  --ctl-h: 36px; --ctl-h-sm: 34px; --ctl-h-lg: 40px;
+
+  /* ---- Тіні ---- */
+  --shadow-tile: inset 0 1px 0 rgba(255,255,255,.07), 0 30px 70px -34px rgba(0,0,0,.95);
+  --shadow-hero: 0 40px 90px -40px rgba(0,0,0,.95), 0 0 60px -30px rgba(var(--glow), .5);
+  --shadow-lift: inset 0 1px 0 rgba(255,255,255,.07), 0 18px 44px -22px rgba(var(--glow), .45);
+  --shadow-modal: 0 24px 64px rgba(0,0,0,.6);
+
+  /* ---- Рух ---- */
   --ease: cubic-bezier(.2,.8,.2,1);
-  --dur-fast: 120ms; --dur: 200ms; --dur-slow: 400ms;
+  --dur-press: 140ms; --dur-fast: 200ms; --dur: 300ms; --dur-slow: 800ms;
 
-  /* Похідні (лише з токенів вище). */
-  --accent-gradient: linear-gradient(135deg, var(--accent-from), var(--accent-to));
-  --font-ui: "Inter", system-ui, sans-serif;
+  /* ---- Шрифти й типографіка ---- */
+  --font-ui: "Inter Tight", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --fs-page: 34px;  --lh-page: 38px;      /* заголовок сторінки, вага 300 */
+  --fs-hero: 36px;  --lh-hero: 40px;      /* заголовок знахідки */
+  --fs-section: 22px; --lh-section: 28px; /* заголовок секції */
+  --fs-tile: 16px;  --lh-tile: 22px;      /* заголовок бічної плитки, вага 600 */
+  --fs-body: 14px;  --lh-body: 22px;
+  --fs-small: 12px; --lh-small: 18px;
+  --fs-micro: 11px; --ls-micro: 0.14em;   /* мікро-підпис великими, вага 600 */
+  --fs-kpi: 32px;   --lh-kpi: 34px;       /* числа смуги показників, вага 300 */
+
+  /* ---- Похідні ---- */
+  --accent-gradient: linear-gradient(135deg, var(--a1), var(--a2));
+  --text-gradient: linear-gradient(100deg, var(--a1), var(--a2));
+  --warn-gradient: linear-gradient(135deg, var(--warn-from), var(--warn-to));
+  --scrim: rgba(5,6,10,.72);  /* затемнення під знайомством і модальними вікнами */
+
+  /* ---- Сумісність: старі імена (етап 1 редизайну). Компоненти переходять на нові імена
+     поступово; нових використань старих імен не додавати. ---- */
+  --bg-app:        var(--bg-base);
+  --bg-sidebar:    #090A0E;
+  --bg-card:       var(--tile-solid);
+  --bg-card-hover: #15171E;
+  --bg-input:      #0B0C11;
+  --border:        var(--line);
+  --border-strong: var(--line-strong);
+  --text-muted:    var(--text-2);
+  --text-dim:      var(--text-3);
+  --accent-from:   var(--a1);
+  --accent-to:     var(--a2);
+  --accent-glow:   rgba(var(--glow), .35);
+  --danger:        var(--bad);
+  --info:          var(--gpu);
+  --on-accent:     var(--onA);
+  --shadow-card:   var(--shadow-tile);
+  --card-sheen:    rgba(255,255,255,.018);
   --sidebar-width: 225px;
-  --content-width: 1200px; /* колонка вмісту сторінки, центрується на широких екранах */
-  --shadow-card: 0 1px 0 rgba(255,255,255,.02) inset, 0 8px 24px rgba(0,0,0,.25);
-  --shadow-modal: 0 24px 64px rgba(0,0,0,.5);
-  --on-accent: #FFFFFF; /* текст на градієнті акценту */
-  --card-sheen: rgba(255,255,255,.018); /* ледь помітний внутрішній градієнт картки */
-  --scrim: rgba(5,6,10,.72); /* затемнення під знайомством: підсвічений елемент лишається яскравим */
+}
+
+/* Альтернативні палітри акценту («Налаштування»): лише акцент, семантика та сама. */
+:root[data-palette="aurora"] {
+  --a1: #9A8CFF; --a2: #5CC8FF; --glow: 110, 140, 255; --onA: #07080B;
+}
+:root[data-palette="emerald"] {
+  --a1: #7BF0C4; --a2: #35C9A2; --glow: 70, 220, 170; --onA: #04130E;
 }

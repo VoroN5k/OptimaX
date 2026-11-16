@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { api, asCmdError } from "../lib/api";
   import type { CleanupCategory } from "../lib/bindings/CleanupCategory";
   import type { DriveView } from "../lib/bindings/DriveView";
@@ -206,6 +206,66 @@
     }
   }
 
+  /** «Вибрати все безпечне»: лише 🟢 (🟡 — свідомо, по одному, бо в них є ціна). */
+  const safeItems = $derived(
+    (report?.items ?? []).filter((i) => i.selectable && i.verdict === "safe" && i.eligible_bytes > 0),
+  );
+  const safeBytes = $derived(safeItems.reduce((s, i) => s + i.eligible_bytes, 0));
+  const allSafeSelected = $derived(safeItems.length > 0 && safeItems.every((i) => selected.includes(i.path)));
+  function toggleAllSafe() {
+    const paths = safeItems.map((i) => i.path);
+    selected = allSafeSelected
+      ? selected.filter((p) => !paths.includes(p))
+      : [...selected, ...paths.filter((p) => !selected.includes(p))];
+    dry = null;
+  }
+  /** Склад диска для смуги: інше зайняте / безпечно / з наслідками / вільно (лише виміряне). */
+  const bar = $derived.by(() => {
+    const total = current?.total_bytes ?? 0;
+    if (!view || !total) return null;
+    const free = current?.free_bytes ?? 0;
+    const safe = Math.min(view.safe_bytes, total);
+    const cons = Math.min(view.consequences_bytes, total - safe);
+    const other = Math.max(0, total - free - safe - cons);
+    const pct = (v: number) => (v / total) * 100;
+    return { other: pct(other), safe: pct(safe), cons: pct(cons), free: pct(free) };
+  });
+  // Перемикання вкладок, коли сторінку прокручено нижче: повернути рядок вкладок до верху плавно.
+  // Висоту панелі тримає `min-height` (з висоти області прокрутки) — сторінка не «складається»,
+  // поки вміст вантажиться, і прокрутка не стрибає на підсумок.
+  let tabsEl = $state<HTMLElement | undefined>();
+  /** Мінімальна висота панелі = видима висота області прокрутки (мінус рядок вкладок). */
+  let panelMin = $state(0);
+  $effect(() => {
+    const scroller = tabsEl?.closest(".scroll");
+    if (!tabsEl || !scroller) return;
+    const ro = new ResizeObserver(() => {
+      panelMin = Math.max(0, scroller.clientHeight - (tabsEl?.offsetHeight ?? 0) - 40);
+    });
+    ro.observe(scroller);
+    return () => ro.disconnect();
+  });
+  function onTab() {
+    const scroller = tabsEl?.closest(".scroll");
+    if (!tabsEl || !scroller) return;
+    // До оновлення DOM: де була прокрутка і де рядок вкладок. Новий вміст під час монтування може
+    // змусити браузер урізати прокрутку ще до застосування min-height — тоді миттєво (до кадру)
+    // повертаємо її й лише потім плавно підводимо до рядка вкладок.
+    const prev = scroller.scrollTop;
+    const tabsY = tabsEl.getBoundingClientRect().top - scroller.getBoundingClientRect().top + prev;
+    void tick().then(() => {
+      scroller.scrollTop = prev;
+      const target = tabsY - 8;
+      if (prev > target) {
+        const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        scroller.scrollTo({ top: target, behavior: reduced ? "auto" : "smooth" });
+      }
+    });
+  }
+
+  const filled = $derived(CATEGORIES.filter((c) => (byCategory.get(c) ?? []).length > 0));
+  const emptyCats = $derived(CATEGORIES.filter((c) => (byCategory.get(c) ?? []).length === 0));
+
   const zonesBytes = $derived((report?.protected_zones ?? []).reduce((s, i) => s + i.bytes, 0));
   const catBytes = (items: Item[]) => items.filter((i) => i.selectable).reduce((s, i) => s + i.eligible_bytes, 0);
   const share = $derived(
@@ -264,48 +324,75 @@
 {/snippet}
 
 <Page title={tk("ui.clean.title")} subtitle={tk("ui.clean.subtitle")}>
-  <Card>
-    <div class="summary">
+  <section class="tile sum" aria-labelledby="clean-sum">
+    <div class="sum-grid">
       <Ring value={usedPct} label={drive || "—"} caption={tk("ui.clean.used")} />
       <div class="sum-main">
         {#if view}
-          <h2>{tk("ui.clean.found_safe", { size: size(view.safe_bytes) })}</h2>
+          <div class="micro" id="clean-sum">{tk("ui.clean.found_label")}</div>
+          <div class="big num">{size(view.safe_bytes)}</div>
           {#if view.consequences_bytes}
-            <p class="warn-text">{tk("ui.clean.found_consequences", { size: size(view.consequences_bytes) })}</p>
+            <p class="cons small">{tk("ui.clean.found_consequences", { size: size(view.consequences_bytes) })}</p>
           {/if}
-          <p class="small muted">
-            {tk("ui.clean.free", { free: size(current?.free_bytes), total: size(current?.total_bytes) })}
+          {#if bar}
+            <div
+              class="bar"
+              role="img"
+              aria-label={tk("ui.clean.bar_aria", {
+                safe: size(view.safe_bytes),
+                cons: size(view.consequences_bytes),
+                free: size(current?.free_bytes),
+                total: size(current?.total_bytes),
+              })}
+            >
+              <i class="seg other" style:width="{bar.other}%"></i>
+              <i class="seg safe" style:width="{bar.safe}%"></i>
+              <i class="seg cons" style:width="{bar.cons}%"></i>
+            </div>
+            <div class="bar-legend small" aria-hidden="true">
+              <span><i class="sw other"></i>{tk("ui.clean.bar_other")}</span>
+              <span><i class="sw safe"></i>{tk("ui.clean.bar_safe")}</span>
+              {#if view.consequences_bytes}<span><i class="sw cons"></i>{tk("ui.clean.bar_cons")}</span>{/if}
+              <span><i class="sw free"></i>{tk("ui.clean.free", { free: size(current?.free_bytes), total: size(current?.total_bytes) })}</span>
+            </div>
+          {/if}
+          <p class="small dim">
             {#if !cl.scanning}
-              · {tk(report?.full ? "ui.clean.mode_full_done" : "ui.clean.mode_rules_done", { s: ((report?.duration_ms ?? 0) / 1000).toFixed(1) })}
+              {tk(report?.full ? "ui.clean.mode_full_done" : "ui.clean.mode_rules_done", { s: ((report?.duration_ms ?? 0) / 1000).toFixed(1) })}
             {/if}
           </p>
-          {#if report?.cancelled}<p class="small warn-text">{tk("ui.clean.cancelled")}</p>{/if}
+          {#if report?.cancelled}<p class="small cons">{tk("ui.clean.cancelled")}</p>{/if}
         {:else}
-          <h2>{tk("ui.clean.not_scanned")}</h2>
+          <h2 id="clean-sum">{tk("ui.clean.not_scanned")}</h2>
           <p class="small muted">{tk("ui.clean.not_scanned_text")}</p>
         {/if}
-        <div class="controls">
-          {#if drives.length > 1}
-            <Segmented
-              label={tk("ui.clean.drive")}
-              bind:value={drive}
-              options={drives.map((d) => ({ value: d.root, label: d.root.replace("\\", "") }))}
-            />
-          {/if}
+      </div>
+      <div class="sum-controls">
+        {#if drives.length > 1}
           <Segmented
-            label={tk("ui.clean.mode")}
-            bind:value={full}
-            options={[
-              { value: 0, label: tk("ui.clean.mode_rules") },
-              { value: 1, label: tk("ui.clean.mode_full") },
-            ]}
+            label={tk("ui.clean.drive")}
+            bind:value={drive}
+            options={drives.map((d) => ({ value: d.root, label: d.root.replace("\\", "") }))}
           />
-          {#if cl.scanning}
-            <Button variant="secondary" icon="stop" onclick={() => api.cleanupScanCancel()}>{tk("ui.clean.scan_stop")}</Button>
-          {:else}
-            <Button variant="secondary" icon="diagnosis" disabled={!drive || locked} onclick={startScan}>{tk("ui.clean.scan")}</Button>
-          {/if}
-        </div>
+        {/if}
+        <Segmented
+          label={tk("ui.clean.mode")}
+          bind:value={full}
+          options={[
+            { value: 0, label: tk("ui.clean.mode_rules") },
+            { value: 1, label: tk("ui.clean.mode_full") },
+          ]}
+        />
+        {#if cl.scanning}
+          <Button variant="secondary" icon="stop" onclick={() => api.cleanupScanCancel()}>{tk("ui.clean.scan_stop")}</Button>
+        {:else}
+          <Button variant="secondary" icon="refresh" disabled={!drive || locked} onclick={startScan}>{tk("ui.clean.scan")}</Button>
+        {/if}
+        {#if view && safeItems.length}
+          <Button variant="ghost" icon="check" disabled={locked} onclick={toggleAllSafe}>
+            {allSafeSelected ? tk("ui.clean.unselect_safe") : tk("ui.clean.select_safe", { size: size(safeBytes) })}
+          </Button>
+        {/if}
       </div>
     </div>
     {#if cl.scanning}
@@ -318,7 +405,7 @@
         <span class="small mono dim current" title={cl.progress?.current}>{cl.progress?.current ?? ""}</span>
       </div>
     {/if}
-  </Card>
+  </section>
 
   {#if running}
     <Card>
@@ -362,9 +449,12 @@
     </Card>
   {/if}
 
+  <div class="tabs-row" bind:this={tabsEl}>
   <Segmented
     label={tk("ui.clean.tabs")}
     bind:value={tab}
+    onchange={onTab}
+
     options={[
       { value: "now", label: tk("ui.clean.tab.now") },
       { value: "growth", label: tk("ui.clean.tab.growth") },
@@ -372,68 +462,94 @@
       { value: "journal", label: tk("ui.clean.tab.journal") },
     ]}
   />
+  </div>
 
-  {#if tab === "now"}
-    {#if cl.scanning && !view}
-      <Card><StateView kind="loading" title={tk("ui.clean.scanning")} /></Card>
-    {:else if !view}
-      <Card><StateView kind="empty" title={tk("ui.clean.empty_title")} text={tk("ui.clean.empty_text")} /></Card>
-    {:else}
-      {#if dry}
-        <Card title={tk("ui.clean.dry_title")} subtitle={tk("ui.clean.dry_subtitle")}>
-          {@render dryList(dry, true)}
-        </Card>
-      {/if}
-      {#each CATEGORIES as cat (cat)}
-        {@const items = byCategory.get(cat) ?? []}
-        <Card title={tk(`ui.clean.cat.${cat}`)} subtitle={items.length ? tk("ui.clean.cat_sum", { size: size(catBytes(items)), n: items.length }) : tk("ui.clean.cat_empty")}>
-          {#if items.length}<div class="rows">{@render rows(items)}</div>{/if}
-        </Card>
-      {/each}
-      <Card title={tk("ui.clean.cat.unknown")} subtitle={tk("ui.clean.unknown_subtitle")}>
-        {#if !report?.full}
-          <p class="small muted">{tk("ui.clean.unknown_need_full")}</p>
-        {:else if report.unknown.length}
-          <div class="rows">{@render rows(showAllUnknown ? report.unknown : report.unknown.slice(0, UNKNOWN_SHOWN))}</div>
-          {#if report.unknown.length > UNKNOWN_SHOWN}
-            <div class="more">
-              <Button small variant="ghost" onclick={() => (showAllUnknown = !showAllUnknown)}>
-                {showAllUnknown ? tk("ui.clean.unknown_less") : tk("ui.clean.unknown_more", { n: report.unknown.length - UNKNOWN_SHOWN })}
-              </Button>
-            </div>
-          {/if}
-        {:else}
-          <p class="small muted">{tk("ui.clean.unknown_none")}</p>
+  {#key tab}
+  <div class="panel" style:min-height="{panelMin}px">
+    {#if tab === "now"}
+      {#if cl.scanning && !view}
+        <Card><StateView kind="loading" title={tk("ui.clean.scanning")} /></Card>
+      {:else if !view}
+        <Card><StateView kind="empty" title={tk("ui.clean.empty_title")} text={tk("ui.clean.empty_text")} /></Card>
+      {:else}
+        {#if dry}
+          <Card title={tk("ui.clean.dry_title")} subtitle={tk("ui.clean.dry_subtitle")}>
+            {@render dryList(dry, true)}
+          </Card>
         {/if}
-      </Card>
-      {#if report?.full && report.protected_zones.length}
+        <!-- Одна плитка на все знайдене за правилами: категорії — підзаголовками, а не окремими
+             плитками (по одному рядку в плитці екран тягнувся на кілька прокруток). -->
         <Card
-          title={tk("ui.clean.zones_title")}
-          subtitle={tk("ui.clean.zones_subtitle", { n: report.protected_zones.length, size: size(zonesBytes) })}
+          title={tk("ui.clean.found_title")}
+          subtitle={tk("ui.clean.found_sub", { n: filled.reduce((s, c) => s + (byCategory.get(c)?.length ?? 0), 0) })}
         >
-          {#snippet actions()}
-            <Button small variant="ghost" onclick={() => (showZones = !showZones)}>
-              {tk(showZones ? "ui.clean.zones_hide" : "ui.clean.zones_show")}
-            </Button>
-          {/snippet}
-          {#if showZones}<div class="rows">{@render rows(report.protected_zones)}</div>{/if}
+          {#each filled as cat (cat)}
+            {@const items = byCategory.get(cat) ?? []}
+            <section class="cat" aria-label={tk(`ui.clean.cat.${cat}`)}>
+              <div class="cat-head">
+                <h3 class="micro">{tk(`ui.clean.cat.${cat}`)}</h3>
+                <span class="small dim">
+                  {items.some((i) => i.selectable)
+                    ? tk("ui.clean.cat_sum", { size: size(catBytes(items)), n: items.length })
+                    : tk("ui.clean.cat_info", { n: items.length })}
+                </span>
+              </div>
+              <div class="rows">{@render rows(items)}</div>
+            </section>
+          {/each}
+          {#if !filled.length}<p class="small muted">{tk("ui.clean.found_none")}</p>{/if}
+          {#if emptyCats.length && filled.length}
+            <p class="none small dim">
+              {tk("ui.clean.cat_none_list", { list: emptyCats.map((c) => tk(`ui.clean.cat.${c}`)).join(" · ") })}
+            </p>
+          {/if}
         </Card>
-      {/if}
-      {#if view.suggest_move}
-        <Card title={tk("ui.clean.move_title")}>
-          <p class="muted">{tk("ui.clean.move_text")}</p>
+        <Card title={tk("ui.clean.cat.unknown")} subtitle={tk("ui.clean.unknown_subtitle")}>
+          {#if !report?.full}
+            <p class="small muted">{tk("ui.clean.unknown_need_full")}</p>
+          {:else if report.unknown.length}
+            <div class="rows">{@render rows(showAllUnknown ? report.unknown : report.unknown.slice(0, UNKNOWN_SHOWN))}</div>
+            {#if report.unknown.length > UNKNOWN_SHOWN}
+              <div class="more">
+                <Button small variant="ghost" onclick={() => (showAllUnknown = !showAllUnknown)}>
+                  {showAllUnknown ? tk("ui.clean.unknown_less") : tk("ui.clean.unknown_more", { n: report.unknown.length - UNKNOWN_SHOWN })}
+                </Button>
+              </div>
+            {/if}
+          {:else}
+            <p class="small muted">{tk("ui.clean.unknown_none")}</p>
+          {/if}
         </Card>
+        {#if report?.full && report.protected_zones.length}
+          <Card
+            title={tk("ui.clean.zones_title")}
+            subtitle={tk("ui.clean.zones_subtitle", { n: report.protected_zones.length, size: size(zonesBytes) })}
+          >
+            {#snippet actions()}
+              <Button small variant="ghost" onclick={() => (showZones = !showZones)}>
+                {tk(showZones ? "ui.clean.zones_hide" : "ui.clean.zones_show")}
+              </Button>
+            {/snippet}
+            {#if showZones}<div class="rows">{@render rows(report.protected_zones)}</div>{/if}
+          </Card>
+        {/if}
+        {#if view.suggest_move}
+          <Card title={tk("ui.clean.move_title")}>
+            <p class="muted">{tk("ui.clean.move_text")}</p>
+          </Card>
+        {/if}
       {/if}
+    {:else if tab === "growth"}
+      {#key drive + (cl.view?.report.started_unix ?? 0)}
+        <CleanupGrowth {drive} onreveal={reveal} />
+      {/key}
+    {:else if tab === "quarantine"}
+      {#key journalKey}<CleanupQuarantine onchange={() => journalKey++} />{/key}
+    {:else}
+      {#key journalKey}<CleanupJournal onchange={() => journalKey++} />{/key}
     {/if}
-  {:else if tab === "growth"}
-    {#key drive + (cl.view?.report.started_unix ?? 0)}
-      <CleanupGrowth {drive} onreveal={reveal} />
-    {/key}
-  {:else if tab === "quarantine"}
-    {#key journalKey}<CleanupQuarantine onchange={() => journalKey++} />{/key}
-  {:else}
-    {#key journalKey}<CleanupJournal onchange={() => journalKey++} />{/key}
-  {/if}
+  </div>
+  {/key}
 
   {#snippet secondary()}
     {#if cl.executing}
@@ -522,13 +638,18 @@
 {/if}
 
 <style>
-  .summary {
-    display: flex;
+  /* Підсумок (docs/DESIGN.md розд. 7, HeroCard): кільце заповнення диска, головне число «можна
+     звільнити безпечно», смуга складу диска (лише виміряне), керування сканом. */
+  .sum {
+    padding: calc(var(--space) * 6) calc(var(--space) * 7);
+  }
+  .sum-grid {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: calc(var(--space) * 8);
     align-items: center;
   }
   .sum-main {
-    flex: 1;
     min-width: 0;
     display: grid;
     gap: calc(var(--space) * 2);
@@ -536,12 +657,109 @@
   .sum-main h2 {
     font-size: 20px;
   }
-  .controls {
+  .big {
+    font-size: 40px;
+    line-height: 44px;
+    font-weight: 300;
+    letter-spacing: -0.03em;
+    background: var(--text-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .cons {
+    margin: 0;
+    color: var(--warn);
+  }
+  .bar {
+    display: flex;
+    height: 8px;
+    margin-top: calc(var(--space) * 2);
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--fill-2);
+  }
+  .seg {
+    height: 100%;
+  }
+  .other {
+    background: var(--text-3);
+    opacity: 0.45;
+  }
+  .safe {
+    background: var(--ok);
+  }
+  .cons.seg,
+  .sw.cons {
+    background: var(--warn);
+  }
+  .bar-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: calc(var(--space) * 3);
+    gap: calc(var(--space) * 1) calc(var(--space) * 4);
+    color: var(--text-2);
+  }
+  .bar-legend span {
+    display: inline-flex;
     align-items: center;
-    margin-top: calc(var(--space) * 2);
+    gap: calc(var(--space) * 1.5);
+  }
+  .sw {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+  }
+  .sw.free {
+    background: var(--fill-2);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+  }
+  .sum-controls {
+    display: grid;
+    gap: calc(var(--space) * 2.5);
+    justify-items: stretch;
+    align-content: center;
+  }
+  @media (max-width: 1100px) {
+    .sum-grid {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+    .sum-controls {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-wrap: wrap;
+    }
+  }
+  /* Панель вкладки: не нижча за екран, щоб перемикання не зсувало прокрутку; вміст проявляється. */
+  .panel {
+    display: grid;
+    gap: calc(var(--space) * 5);
+    align-content: start;
+    animation: panel-in var(--dur) var(--ease);
+  }
+  @keyframes panel-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+  }
+  .tabs-row {
+    justify-self: start;
+  }
+  .none {
+    margin: calc(var(--space) * 4) 0 0;
+  }
+  .cat + .cat {
+    margin-top: calc(var(--space) * 5);
+  }
+  .cat-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: calc(var(--space) * 3);
+    margin-bottom: calc(var(--space) * 1);
+  }
+  .cat-head h3 {
+    margin: 0;
   }
   .progress {
     display: flex;
@@ -575,7 +793,6 @@
   }
   .rows {
     display: grid;
-    gap: calc(var(--space) * 2);
   }
   .more {
     display: flex;

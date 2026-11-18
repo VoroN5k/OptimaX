@@ -13,3 +13,6 @@ has = ["gpu_bound", "upscale.helps"]
 absent = ["cpu_bound"]
 avg_fps = [108.0, 164.0]
 low_1pct_fps = [70.0, 112.0]
+# Розповідь: 5 коротких піків правило мікрофризів не рахує — «помітних ривків не було».
+smoothness = "smooth"
+outcome = "fine"

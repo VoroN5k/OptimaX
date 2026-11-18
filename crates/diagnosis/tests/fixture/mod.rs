@@ -66,6 +66,18 @@ pub struct Expect {
     pub avg_fps: Option<[f64; 2]>,
     /// 1% low у межах `[від, до]`.
     pub low_1pct_fps: Option<[f64; 2]>,
+    /// Плавність у розповіді (`smooth`, `isolated`, `noticeable`, `severe`).
+    pub smoothness: Option<String>,
+    /// Підсумок розповіді (`fine`, `fixable`, `unexplained`, `insufficient`).
+    pub outcome: Option<String>,
+}
+
+/// Значення enum так, як його серіалізує serde (`noticeable`, `fine`…).
+fn serde_name<T: serde::Serialize>(v: &T) -> String {
+    serde_json::to_value(v)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 /// Тека з записами.
@@ -183,6 +195,24 @@ pub fn check(d: &Diagnosis, e: &Expect) -> Vec<String> {
         e.low_1pct_fps,
         &mut fails,
     );
+    if e.smoothness.is_some() || e.outcome.is_some() {
+        match &d.story {
+            None => fails.push("немає розповіді".into()),
+            Some(s) => {
+                let pairs = [
+                    ("плавність", &e.smoothness, serde_name(&s.smoothness)),
+                    ("підсумок розповіді", &e.outcome, serde_name(&s.outcome)),
+                ];
+                for (name, want, got) in pairs {
+                    if let Some(want) = want {
+                        if *want != got {
+                            fails.push(format!("{name}: очікувалось {want}, вийшло {got}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
     if !fails.is_empty() {
         fails.push(format!("усі вердикти: {}", ids.join(", ")));
     }

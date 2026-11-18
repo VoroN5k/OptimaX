@@ -85,6 +85,7 @@ fn harness_roundtrip_and_check() -> anyhow::Result<()> {
     let d = diagnose(&back, &optimax_diagnosis::Context::default());
     let ok = fixture::Expect {
         bottleneck: Some("insufficient_data".into()),
+        outcome: Some("insufficient".into()),
         ..Default::default()
     };
     assert!(fixture::check(&d, &ok).is_empty());
@@ -92,10 +93,12 @@ fn harness_roundtrip_and_check() -> anyhow::Result<()> {
         bottleneck: Some("gpu".into()),
         has: vec!["gpu_bound".into()],
         avg_fps: Some([100.0, 200.0]),
+        outcome: Some("fine".into()),
         ..Default::default()
     };
     let fails = fixture::check(&d, &wrong);
-    // Вузьке місце, відсутній вердикт, немає статистики + рядок з усіма вердиктами.
-    assert_eq!(fails.len(), 4, "{fails:?}");
+    // Вузьке місце, відсутній вердикт, немає статистики, підсумок розповіді + рядок з усіма
+    // вердиктами.
+    assert_eq!(fails.len(), 5, "{fails:?}");
     Ok(())
 }

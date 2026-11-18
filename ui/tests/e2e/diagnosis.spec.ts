@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { abDone, expDone, gpuResult, resMid } from "./fixtures";
+import { abDone, classicResult, expDone, gpuResult, resMid } from "./fixtures";
 import { calls, emit, mockBackend } from "./mock";
 import { tk } from "./text";
 import { go } from "./nav";
@@ -17,7 +17,7 @@ async function openExpert(page: Page) {
 
 test.describe("Діагностика", () => {
   test("результат: вердикт зверху, знахідки компактні, без позначки прикладу", async ({ page }) => {
-    await mockBackend(page, { diag_state: { recording: false, last: gpuResult } });
+    await mockBackend(page, { diag_state: { recording: false, last: classicResult } });
     await openDiagnosis(page);
     await expect(page.getByRole("heading", { name: tk("diag.summary.gpu.title", { game: "re9.exe" }) })).toBeVisible();
     await expect(page.locator("[data-tour=diag-stats]")).toContainText("125.0");
@@ -34,7 +34,7 @@ test.describe("Діагностика", () => {
   });
 
   test("запис: команда старту, хід і результат з подій бекенду", async ({ page }) => {
-    await mockBackend(page, { diag_state: { recording: false, last: gpuResult } });
+    await mockBackend(page, { diag_state: { recording: false, last: classicResult } });
     await openDiagnosis(page);
     await page.getByRole("button", { name: tk("ui.diag.start") }).click();
     await expect
@@ -42,7 +42,7 @@ test.describe("Діагностика", () => {
       .toEqual({ exe: "re9.exe", seconds: 60, scene: null });
     await emit(page, "diag-progress", { phase: "recording", counted_s: 12, target_s: 60, elapsed_s: 14 });
     await expect(page.getByRole("button", { name: tk("ui.diag.stop") })).toBeVisible();
-    const done = structuredClone(gpuResult);
+    const done = structuredClone(classicResult);
     done.diagnosis.verdicts = done.diagnosis.verdicts.slice(0, 1);
     await emit(page, "diag-done", done);
     await expect(page.getByText(tk("ui.diag.no_more"))).toBeVisible();
@@ -198,7 +198,7 @@ test.describe("Діагностика", () => {
   });
 
   test("затримка: PC Latency у заголовку і підказка про Reflex без обіцянки приросту", async ({ page }) => {
-    const last = structuredClone(gpuResult);
+    const last = structuredClone(classicResult);
     last.diagnosis.latency!.pc_latency = { median_ms: 47.1, p95_ms: 52.6, samples: 3700 };
     const hint = structuredClone(last.diagnosis.verdicts.at(-1)!);
     hint.finding.id = "latency_queue";

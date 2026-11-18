@@ -42,6 +42,8 @@ has = ["gpu_bound"]                         # ці вердикти мають �
 absent = ["cpu_bound"]                      # цих не має бути
 avg_fps = [110.0, 170.0]                    # середній FPS у межах
 low_1pct_fps = [70.0, 130.0]
+smoothness = "smooth"                       # розповідь: smooth | isolated | noticeable | severe
+outcome = "fine"                            # розповідь: fine | fixable | unexplained | insufficient
 ```
 
 Аудит конфігурації й кеш шейдерів залежать від ПК, тому в цих тестах їх немає.

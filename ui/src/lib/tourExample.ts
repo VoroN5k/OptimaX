@@ -67,6 +67,20 @@ export const EXAMPLE_RESULT: DiagnosisResult = {
     anatomy: null,
     latency: null,
     view: null,
+    // Так склав би бекенд (story.rs): поодинокі ривки, межа відеокарти, виправляти нічого.
+    story: {
+      smoothness: "isolated",
+      outcome: "fine",
+      how: [
+        { key: "diag.story.how.fps_hz", args: { avg: "140", hz: "144" } },
+        { key: "diag.story.how.isolated", args: { spikes: "3", first: "2.1" } },
+        { key: "diag.story.how.gpu", args: {} },
+      ],
+      why: [],
+      why_unknown: false,
+      action: null,
+      others: [1],
+    },
   },
   display_hz: 144,
   presentmon_messages: [],

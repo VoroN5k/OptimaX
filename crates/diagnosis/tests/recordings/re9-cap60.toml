@@ -11,3 +11,5 @@ has = ["cap.limiter"]
 absent = ["gpu_bound", "cpu_bound", "upscale.helps"]
 avg_fps = [58.0, 62.0]
 low_1pct_fps = [42.0, 60.0]
+smoothness = "smooth"
+outcome = "fine"

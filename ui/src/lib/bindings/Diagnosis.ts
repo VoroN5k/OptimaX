@@ -5,6 +5,7 @@ import type { FrameGenInfo } from "./FrameGenInfo";
 import type { FrameStats } from "./FrameStats";
 import type { FrametimeChart } from "./FrametimeChart";
 import type { LatencySummary } from "./LatencySummary";
+import type { Story } from "./Story";
 import type { TimelineView } from "./TimelineView";
 import type { Verdict } from "./Verdict";
 
@@ -47,4 +48,8 @@ latency: LatencySummary | null,
 /**
  * Усе виміряне на одній шкалі часу для інтерактивного перегляду.
  */
-view: TimelineView | null, };
+view: TimelineView | null, 
+/**
+ * Розповідь простими словами (немає в старих JSON).
+ */
+story: Story | null, };

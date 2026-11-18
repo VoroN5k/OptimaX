@@ -12,3 +12,6 @@ has = ["gpu_bound", "upscale.helps"]
 absent = ["cpu_bound"]
 avg_fps = [88.0, 134.0]
 low_1pct_fps = [60.0, 96.0]
+# Розповідь: 4 поодинокі ривки (stutter.isolated), виправляти нічого — межа відеокарти.
+smoothness = "isolated"
+outcome = "fine"

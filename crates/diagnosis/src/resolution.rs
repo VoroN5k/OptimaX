@@ -339,6 +339,7 @@ pub fn apply(d: &mut Diagnosis, report: &ResolutionReport) {
     }
     let at = d.verdicts.len().min(1);
     d.verdicts.insert(at, Verdict::from(report.finding.clone()));
+    crate::story::refresh(d);
 }
 
 #[cfg(test)]
@@ -504,7 +505,63 @@ mod tests {
             anatomy: None,
             latency: None,
             view: None,
+            story: None,
         }
+    }
+
+    /// Діагноз з розповіддю «межа відеокарти, виправляти нічого», апскейл — серед інших варіантів.
+    fn with_story() -> Diagnosis {
+        let mut d = diagnosis_with(&["summary.gpu", "gpu_bound", "upscale.helps"]);
+        d.verdicts[2].finding.advice = Some(Text::new("diag.upscale.helps.advice"));
+        d.story = Some(crate::Story {
+            smoothness: crate::Smoothness::Smooth,
+            outcome: crate::StoryOutcome::Fine,
+            how: vec![Text::new("diag.story.how.gpu")],
+            why: vec![],
+            why_unknown: false,
+            action: None,
+            others: vec![2],
+        });
+        d
+    }
+
+    /// Кожен індекс розповіді — знахідка з порадою, без повторів.
+    fn story_indices_valid(d: &Diagnosis) -> bool {
+        let s = d.story.as_ref().unwrap();
+        let all: Vec<u32> = s.action.iter().chain(&s.others).copied().collect();
+        let mut uniq = all.clone();
+        uniq.dedup();
+        uniq.len() == all.len()
+            && all.iter().all(|i| {
+                d.verdicts
+                    .get(*i as usize)
+                    .is_some_and(|v| v.finding.advice.is_some())
+            })
+    }
+
+    #[test]
+    fn story_follows_resolution_test() {
+        let mut d = with_story();
+        apply(&mut d, &report_for(100.0, 140.0, (Some(99.0), Some(80.0))));
+        let s = d.story.as_ref().unwrap();
+        assert_eq!(s.outcome, crate::StoryOutcome::Fixable);
+        assert_eq!(
+            d.verdicts[s.action.unwrap() as usize].finding.id,
+            "res.helps"
+        );
+        let up = d
+            .verdicts
+            .iter()
+            .position(|v| v.finding.id == "upscale.helps")
+            .unwrap() as u32;
+        assert!(s.others.contains(&up));
+        assert!(story_indices_valid(&d));
+
+        let mut d = with_story();
+        apply(&mut d, &report_for(100.0, 100.5, (Some(99.0), Some(70.0))));
+        let s = d.story.as_ref().unwrap();
+        assert_eq!(s.how[0].key, "diag.story.how.gpu_unconfirmed");
+        assert!(story_indices_valid(&d));
     }
 
     #[test]

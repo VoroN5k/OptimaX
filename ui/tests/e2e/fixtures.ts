@@ -318,6 +318,20 @@ export const gpuResult: DiagnosisResult = {
       main_counts: [0, 0, 0, 1, 0, 0],
     },
     view: syntheticView(),
+    // Як складає бекенд (story.rs): 4 короткі піки без мікрофризів, межа відеокарти.
+    story: {
+      smoothness: "smooth",
+      outcome: "fine",
+      how: [
+        { key: "diag.story.how.fps_hz", args: { avg: "125", hz: "200" } },
+        { key: "diag.story.how.smooth_minor", args: { spikes: "4" } },
+        { key: "diag.story.how.gpu", args: {} },
+      ],
+      why: [],
+      why_unknown: false,
+      action: null,
+      others: [1, 2],
+    },
   },
   display_hz: 200,
   presentmon_messages: [],
@@ -361,6 +375,10 @@ export function historyEntry(at: number, avg: number, driver: string, game = "re
 
 const older = historyEntry(1_793_000_000_000, 125, "566.36");
 const newer = historyEntry(1_793_500_000_000, 108, "572.16");
+
+/** Той самий результат без розповіді (старі записи): звичний вигляд — смуга показників, вердикт із
+ *  кільцем і «Що робити далі» вгорі. На ньому перевіряються ці блоки. */
+export const classicResult: DiagnosisResult = { ...gpuResult, diagnosis: { ...gpuResult.diagnosis, story: null } };
 
 export const history: HistoryView = {
   rows: [

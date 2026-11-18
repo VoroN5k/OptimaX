@@ -13,11 +13,13 @@ pub mod framegen;
 pub mod latency;
 pub mod resolution;
 pub mod rules;
+pub mod story;
 pub mod timeline;
 pub mod view;
 
 pub use chart::{ChartPoint, FrametimeChart, SpikeMark};
 pub use framegen::{FrameGenInfo, FrameGenSeries};
+pub use story::{insufficient_story, Smoothness, Story, StoryCause, StoryOutcome};
 pub use timeline::{
     DpcPoint, DpcTimeline, FramePoint, GpuPoint, IoProcess, SamplePoint, ShaderWrite, Timeline,
 };
@@ -115,6 +117,9 @@ pub struct Diagnosis {
     /// Усе виміряне на одній шкалі часу для інтерактивного перегляду.
     #[serde(default)]
     pub view: Option<view::TimelineView>,
+    /// Розповідь простими словами (немає в старих JSON).
+    #[serde(default)]
+    pub story: Option<Story>,
 }
 
 /// Файл кешу шейдерів, змінений під час запису (за годинником, бо так його бачить ФС).
@@ -217,6 +222,7 @@ pub fn diagnose_timeline(tl: &Timeline, ctx: &Context) -> Diagnosis {
     let at = d.verdicts.len().min(1);
     d.verdicts.insert(at, finding.into());
     d.frame_gen = Some(fg);
+    story::refresh(&mut d);
     d
 }
 
@@ -248,6 +254,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
             anatomy: None,
             latency: None,
             view,
+            story: Some(insufficient_story()),
         };
     };
 
@@ -346,6 +353,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
     let mut verdicts: Vec<Verdict> = vec![head.into()];
     verdicts.extend(found.into_iter().map(Verdict::from));
     let anatomy = anatomy::frame_anatomy(&a);
+    let story = story::compose(&a, bottleneck, primary_conf, &verdicts);
     Diagnosis {
         game: tl.game_name.clone(),
         stats: Some(a.stats),
@@ -356,6 +364,7 @@ fn diagnose_frames(tl: &Timeline, ctx: &Context) -> Diagnosis {
         anatomy,
         latency,
         view,
+        story: Some(story),
     }
 }
 
@@ -438,6 +447,7 @@ pub fn diagnose(rec: &Recording, ctx: &Context) -> Diagnosis {
             anatomy: None,
             latency: None,
             view: None,
+            story: Some(insufficient_story()),
         },
     }
 }

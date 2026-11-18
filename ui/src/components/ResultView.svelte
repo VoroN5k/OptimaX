@@ -20,6 +20,7 @@
   import ImpactBadge from "./ImpactBadge.svelte";
   import KpiStrip from "./KpiStrip.svelte";
   import LatencyCard from "./LatencyCard.svelte";
+  import StoryCard from "./StoryCard.svelte";
   import TimelineExplorer from "./TimelineExplorer.svelte";
 
   // Результат запису «Pro Premium» (docs/DESIGN.md розд. 6): смуга показників, головна знахідка
@@ -68,8 +69,12 @@
   type Review = "chart" | "anatomy" | "latency" | "timeline";
   let open = $state<Record<Review, boolean>>({ chart: false, anatomy: false, latency: false, timeline: false });
   let expertOpen = $state(false);
+  let detailsOpen = $state(false);
+
 
   const stats = $derived(result.diagnosis.stats);
+  /** Розповідь простими словами (бекенд); немає — у старих результатах, тоді звичний вигляд. */
+  const story = $derived(result.diagnosis.story ?? null);
   const summary = $derived(result.diagnosis.verdicts[0]?.finding ?? null);
   /** Цифри, що вже стоять у смузі показників, — у доказах головної знахідки не повторюємо. */
   const KPI_KEYS = new Set(["diag.ev.avg_fps", "diag.ev.low1", "diag.ev.low01", "diag.ev.p99"]);
@@ -77,9 +82,10 @@
   const rest = $derived(
     result.diagnosis.verdicts.slice(1).filter((v) => !(hideResFindings && v.finding.id.startsWith("res."))),
   );
-  /** «Що робити далі»: знахідки з порадою в порядку діагностики (до трьох). */
+  /** «Що робити далі»: знахідки з порадою в порядку діагностики (до трьох). З розповіддю дії вже
+   *  стоять угорі в ній — тоді в «Детальніше» поради лишаються в картках знахідок, без повтору. */
   const steps = $derived(
-    [summary, ...rest.map((v) => v.finding)].filter((f): f is Finding => !!f?.advice).slice(0, 3),
+    story ? [] : [summary, ...rest.map((v) => v.finding)].filter((f): f is Finding => !!f?.advice).slice(0, 3),
   );
   /** Знахідки, чия порада вже стоїть угорі, — у картках без повтору (копія, дані бекенду не чіпаємо).
    *  За самим об'єктом, не за id: id може повторюватися (кілька фонових процесів — `background`). */
@@ -133,15 +139,9 @@
   {/if}
 {/snippet}
 
-{#if summary}
-  {#if example}
-    <div class="example" role="note">
-      <strong>{tk("ui.tour.example_title")}</strong>
-      <span>{tk("ui.tour.example_text")}</span>
-    </div>
-  {/if}
-
-  <div data-tour="diag-stats">
+{#snippet classic()}
+  {#if summary}
+  <div data-tour={story ? undefined : "diag-stats"}>
     <KpiStrip
       label={tk("ui.diag.kpi.label")}
       items={[
@@ -161,7 +161,7 @@
   </div>
 
   <div class="bento">
-    <div class="main" data-tour="diag-summary">
+    <div class="main" data-tour={story ? undefined : "diag-summary"}>
       <HeroCard label={tk("ui.diag.hero")}>
         <div class="status">
           <ImpactBadge impact={summary.impact} pulse />
@@ -198,7 +198,7 @@
                 </CheckRow>
               {/each}
             </ul>
-            {#if live && !example}<p class="small muted rerecord">{tk("ui.diag.next.rerecord")}</p>{/if}
+            {#if live && !example && !story}<p class="small muted rerecord">{tk("ui.diag.next.rerecord")}</p>{/if}
           </div>
         {/if}
         {#if evidence.length}
@@ -215,7 +215,7 @@
     </div>
 
     <div class="side">
-      {#if previous}
+      {#if previous && !story}
         <section class="tile prev" aria-label={tk("ui.prev.title")}>
           <div class="micro">{tk("ui.prev.title")}</div>
           <ComparisonSummary cmp={previous} compact />
@@ -225,7 +225,7 @@
     </div>
   </div>
 
-  <section class="findings" data-tour="diag-findings" aria-label={tk("ui.diag.findings")} >
+  <section class="findings" data-tour={story ? undefined : "diag-findings"} aria-label={tk("ui.diag.findings")}>
     <h2 class="micro">{tk("ui.diag.findings_n", { n: rest.length })}</h2>
     {#if rest.length}
       <div class="list">
@@ -243,6 +243,41 @@
       <p class="none small muted">{tk("ui.diag.no_more")}</p>
     {/if}
   </section>
+  {/if}
+{/snippet}
+
+{#if summary}
+  {#if example}
+    <div class="example" role="note">
+      <strong>{tk("ui.tour.example_title")}</strong>
+      <span>{tk("ui.tour.example_text")}</span>
+    </div>
+  {/if}
+
+  {#if story}
+    <StoryCard {story} verdicts={result.diagnosis.verdicts}>
+      {#snippet action(f)}{@render stepAction(f)}{/snippet}
+      {#snippet meta()}
+        <span>{tk("ui.rec.counted_total", { s: Math.round(result.counted_s) })}</span>
+        {#if result.end_reason !== "completed"}<span>{tk(`ui.rec.end.${result.end_reason}`)}</span>{/if}
+      {/snippet}
+    </StoryCard>
+    {#if live && !example && story.outcome !== "insufficient"}<p class="small muted rerecord">{tk("ui.diag.next.rerecord")}</p>{/if}
+    {#if previous}
+      <section class="tile prev" aria-label={tk("ui.prev.title")}>
+        <div class="micro">{tk("ui.prev.title")}</div>
+        <ComparisonSummary cmp={previous} compact />
+        <p class="small muted prev-note">{tk("ui.prev.note")}</p>
+      </section>
+    {/if}
+    <div class="anchor" data-tour="diag-findings">
+      <Fold title={tk("ui.diag.details")} summary={tk("ui.diag.details_summary")} bind:open={detailsOpen}>
+        <div class="details">{@render classic()}</div>
+      </Fold>
+    </div>
+  {:else}
+    {@render classic()}
+  {/if}
 
   {#if expertSummary}
     <Fold title={tk("ui.diag.expert")} summary={expertSummary} bind:open={expertOpen}>
@@ -420,6 +455,10 @@
   }
   .rerecord {
     margin: calc(var(--space) * 3) 0 0;
+  }
+  .details {
+    display: grid;
+    gap: var(--gap);
   }
   .expert {
     display: grid;

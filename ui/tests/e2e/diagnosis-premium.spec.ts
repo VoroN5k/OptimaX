@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { comparison, gpuResult } from "./fixtures";
+import { classicResult, comparison, gpuResult } from "./fixtures";
 import { calls, emit, mockBackend } from "./mock";
 import { go } from "./nav";
 import { tk } from "./text";
@@ -21,7 +21,7 @@ test.describe("Діагностика: Pro Premium", () => {
   });
 
   test("результат: смуга показників, головна знахідка, кільце з доказів, розбори", async ({ page }) => {
-    await mockBackend(page, { diag_state: { recording: false, last: gpuResult } });
+    await mockBackend(page, { diag_state: { recording: false, last: classicResult } });
     await open(page);
     const strip = page.getByRole("region", { name: tk("ui.diag.kpi.label") });
     await expect(strip).toContainText("125.0");
@@ -38,7 +38,7 @@ test.describe("Діагностика: Pro Premium", () => {
   });
 
   test("порада gpu_bound має «Перевірити A/B» і веде в «Порівняння» з грою й варіантами", async ({ page }) => {
-    await mockBackend(page, { diag_state: { recording: false, last: gpuResult } });
+    await mockBackend(page, { diag_state: { recording: false, last: classicResult } });
     await open(page);
     const row = page.locator("ul li").filter({ hasText: tk("diag.gpu_bound.advice") });
     await row.getByRole("button", { name: "Перевірити A/B" }).click();
@@ -51,7 +51,7 @@ test.describe("Діагностика: Pro Premium", () => {
   });
 
   test("апскейл — кнопка в «Що робити далі»", async ({ page }) => {
-    await mockBackend(page, { diag_state: { recording: false, last: gpuResult } });
+    await mockBackend(page, { diag_state: { recording: false, last: classicResult } });
     await open(page);
     const row = page.locator("ul li").filter({ hasText: tk("diag.upscale.helps.advice") });
     await expect(row.getByRole("button", { name: tk("ui.up.open") })).toBeVisible();
@@ -79,7 +79,7 @@ test.describe("Діагностика: Pro Premium", () => {
   });
 
   test("A/B з «Історії» відкриває «Порівняння» з грою запису", async ({ page }) => {
-    await mockBackend(page);
+    await mockBackend(page, { history_open: structuredClone(classicResult) });
     await open(page);
     await page.getByRole("tab", { name: tk("ui.history.tab") }).click();
     await page.getByRole("button", { name: tk("ui.history.open") }).first().click();
@@ -144,7 +144,7 @@ test.describe("Діагностика: Pro Premium", () => {
   });
 
   test("два фонові процеси (однаковий id знахідки) — результат рендериться, обидві поради видно", async ({ page }) => {
-    const r = structuredClone(gpuResult);
+    const r = structuredClone(classicResult);
     const bg = (name: string) => ({
       finding: {
         id: "background",
@@ -173,7 +173,7 @@ test.describe("Діагностика: Pro Premium", () => {
   });
 
   test("апскейл поза трійкою порад — кнопка лишається в картці знахідки", async ({ page }) => {
-    const r = structuredClone(gpuResult);
+    const r = structuredClone(classicResult);
     const extra = (id: string, key: string) => ({
       finding: {
         id,
@@ -206,7 +206,7 @@ test.describe("Діагностика: Pro Premium", () => {
   });
 
   test("без чисел у доказах кільця немає — лише текст знахідки", async ({ page }) => {
-    const r = structuredClone(gpuResult);
+    const r = structuredClone(classicResult);
     for (const v of r.diagnosis.verdicts) v.finding.evidence = [];
     await mockBackend(page, { diag_state: { recording: false, last: r } });
     await open(page);

@@ -1083,11 +1083,56 @@ impl CauseContext {
 }
 
 /// Причина, що стабільно збігається з піками.
-struct Cause {
-    kind: CauseKind,
-    at_spikes: f64,
+pub(crate) struct Cause {
+    /// Ознака.
+    pub(crate) kind: CauseKind,
+    /// Частка піків, біля яких була ознака.
+    pub(crate) at_spikes: f64,
     /// Частка звичайних моментів з цією ознакою.
-    usual: f64,
+    pub(crate) usual: f64,
+}
+
+/// Класифікація причин ривків — одна для знахідки мікрофризів і для розповіді.
+pub(crate) struct StutterCauses {
+    /// Головні: щонайменше половина піків і вдвічі частіше за звичайне.
+    pub(crate) main: Vec<Cause>,
+    /// Часткові: помітна частка піків, вдвічі частіше за звичайне.
+    pub(crate) partial: Vec<Cause>,
+    /// Тло: біля піків не частіше, ніж зазвичай.
+    pub(crate) usual: Vec<Cause>,
+    /// Кількість піків, за якими рахувалися збіги.
+    pub(crate) spikes: usize,
+    /// Драйвер, що найчастіше довго виконувався біля піків (лише коли DPC — серед причин):
+    /// (індекс, піків, частка, найдовше, мкс).
+    pub(crate) driver: Option<(u16, usize, f64, f64)>,
+    /// Назва цього драйвера, якщо відома.
+    pub(crate) driver_name: Option<String>,
+}
+
+/// Причини ривків за збігами у вікні навколо піків (див. [`stutter`]).
+pub(crate) fn stutter_causes(a: &Analysis<'_>) -> StutterCauses {
+    let ctx = CauseContext::new(a);
+    let (main, partial, usual) = correlated_causes(a, &ctx);
+    let dpc_cause = main
+        .iter()
+        .chain(&partial)
+        .any(|c| c.kind == CauseKind::Dpc);
+    let driver = spike_driver(a).filter(|_| dpc_cause);
+    let driver_name = driver.and_then(|(i, ..)| {
+        a.timeline
+            .dpc
+            .as_ref()
+            .and_then(|d| d.drivers.get(usize::from(i)))
+            .and_then(|x| x.name.clone())
+    });
+    StutterCauses {
+        main,
+        partial,
+        usual,
+        spikes: a.spike_times.len(),
+        driver,
+        driver_name,
+    }
 }
 
 /// Ознака біля піків вважається причиною, лише якщо там вона трапляється щонайменше
@@ -1174,8 +1219,15 @@ pub fn stutter(a: &Analysis<'_>) -> Option<Finding> {
         return isolated_hitches(a);
     }
 
-    let ctx = CauseContext::new(a);
-    let (causes, partial, usual) = correlated_causes(a, &ctx);
+    let StutterCauses {
+        main: causes,
+        partial,
+        usual,
+        driver,
+        driver_name,
+        ..
+    } = stutter_causes(a);
+    let driver_name = driver_name.as_deref();
 
     let impact = if ratio < 0.35 {
         Impact::High
@@ -1206,17 +1258,8 @@ pub fn stutter(a: &Analysis<'_>) -> Option<Finding> {
         );
     // Сам факт фризів виміряний (90 %); впевненість у причині — за частотою збігів.
     // Кеш шейдерів — непряма ознака (час зміни файлу), тож для неї стеля нижча.
-    // Драйвер, що найчастіше довго виконувався біля піків (трасування ETW).
-    let dpc_cause = causes
-        .iter()
-        .chain(&partial)
-        .any(|c| c.kind == CauseKind::Dpc);
-    let driver = spike_driver(a).filter(|_| dpc_cause);
+    // Драйвер, що найчастіше довго виконувався біля піків (трасування ETW), — у `stutter_causes`.
     let dpc = a.timeline.dpc.as_ref();
-    let driver_name = driver.and_then(|(i, ..)| {
-        dpc.and_then(|d| d.drivers.get(usize::from(i)))
-            .and_then(|x| x.name.as_deref())
-    });
     if let Some(top) = causes.first() {
         // DPC за лічильником — непряма ознака: не каже, чи заблокований саме потік гри і який
         // драйвер. Коли трасування називає один драйвер біля більшості таких піків — пряма.

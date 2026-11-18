@@ -1937,3 +1937,479 @@ fn view_keeps_every_frame_marks_gaps_and_carries_thread_lanes() {
     assert_eq!(v.render.map(|r| r.tid), Some(2));
     assert!((v.median_ms - 8.0).abs() < 1.0);
 }
+
+// --- Розповідь простими словами (story.rs) ---
+
+fn story(d: &Diagnosis) -> &Story {
+    d.story.as_ref().expect("розповідь")
+}
+
+fn how_keys(s: &Story) -> Vec<&str> {
+    s.how.iter().map(|t| t.key.as_str()).collect()
+}
+
+/// Кожна дія розповіді вказує на знахідку з порадою, без повторів.
+fn assert_actions_valid(d: &Diagnosis) {
+    let s = story(d);
+    let mut seen = std::collections::HashSet::new();
+    for i in s.action.iter().chain(&s.others) {
+        let v = d.verdicts.get(*i as usize).expect("індекс у межах");
+        assert!(*i > 0, "підсумок — не дія");
+        assert!(v.finding.advice.is_some(), "{} без поради", v.finding.id);
+        assert!(seen.insert(*i), "повтор індексу {i}");
+    }
+}
+
+fn gpu_timeline() -> Timeline {
+    timeline(&jittery(8.0, 3000), |_, _| {
+        let mut s = base_sample();
+        if let Some(g) = s.gpu.as_mut() {
+            g.util = Some(99);
+            g.throttle = vec![ThrottleReason::SwPowerCap];
+        }
+        s
+    })
+}
+
+#[test]
+fn story_smooth_gpu_is_fine() {
+    let ctx = Context {
+        display_hz: Some(144),
+        ..Context::default()
+    };
+    let d = diagnose_timeline(&gpu_timeline(), &ctx);
+    let s = story(&d);
+    assert_eq!(s.smoothness, Smoothness::Smooth);
+    assert_eq!(s.outcome, StoryOutcome::Fine);
+    assert_eq!(s.action, None);
+    assert_eq!(
+        how_keys(s),
+        vec![
+            "diag.story.how.fps_hz",
+            "diag.story.how.smooth",
+            "diag.story.how.gpu"
+        ]
+    );
+    assert_eq!(s.how[0].args["hz"], "144");
+    assert!(s.why.is_empty() && !s.why_unknown);
+    let up = d
+        .verdicts
+        .iter()
+        .position(|v| v.finding.id == "upscale.helps")
+        .unwrap() as u32;
+    assert!(s.others.contains(&up));
+    assert_actions_valid(&d);
+}
+
+#[test]
+fn story_without_display_hz_omits_monitor() {
+    let d = diagnose_timeline(&gpu_timeline(), &Context::default());
+    let s = story(&d);
+    assert_eq!(s.how[0].key, "diag.story.how.fps");
+    assert!(!s.how[0].args.contains_key("hz"));
+    // Те саме для частоти 0 (невідомо).
+    let ctx = Context {
+        display_hz: Some(0),
+        ..Context::default()
+    };
+    let d = diagnose_timeline(&gpu_timeline(), &ctx);
+    assert_eq!(story(&d).how[0].key, "diag.story.how.fps");
+}
+
+#[test]
+fn story_isolated_hitches() {
+    let d = diagnose_timeline(
+        &timeline(&hitches_at_start(), |_, _| base_sample()),
+        &Context::default(),
+    );
+    let s = story(&d);
+    assert_eq!(s.smoothness, Smoothness::Isolated);
+    assert_eq!(s.how[1].key, "diag.story.how.isolated");
+    assert_eq!(s.how[1].args["spikes"], "3");
+    assert!(!s.why_unknown);
+}
+
+#[test]
+fn story_stutter_without_cause_is_unexplained() {
+    let d = diagnose_timeline(
+        &timeline(&spiky(), |_, _| base_sample()),
+        &Context::default(),
+    );
+    let s = story(&d);
+    let f = find(&d, "stutter.unknown").unwrap();
+    let want = if f.impact == Impact::High {
+        Smoothness::Severe
+    } else {
+        Smoothness::Noticeable
+    };
+    assert_eq!(s.smoothness, want);
+    assert!(s.why_unknown);
+    assert_eq!(s.outcome, StoryOutcome::Unexplained);
+    let a = s.action.expect("головна дія") as usize;
+    assert_eq!(d.verdicts[a].finding.id, "stutter.unknown");
+    assert_actions_valid(&d);
+}
+
+#[test]
+fn story_frame_cap() {
+    let ft: Vec<f64> = (0..3000)
+        .map(|i| 6.944 + if i % 2 == 0 { 0.05 } else { -0.05 })
+        .collect();
+    let tl = timeline(&ft, |_, _| base_sample());
+    let ctx = Context {
+        display_hz: Some(144),
+        ..Context::default()
+    };
+    let d = diagnose_timeline(&tl, &ctx);
+    assert_eq!(d.bottleneck, Bottleneck::FrameCap);
+    let s = story(&d);
+    assert_eq!(s.how[0].key, "diag.story.how.cap");
+    assert_eq!(s.how.last().unwrap().key, "diag.story.how.cap_reason");
+}
+
+#[test]
+fn story_fixable_points_at_advice() {
+    let d = throttled(2300, 60, 220.0, 2);
+    let s = story(&d);
+    assert_eq!(s.outcome, StoryOutcome::Fixable);
+    let a = s.action.expect("головна дія");
+    let f = &d.verdicts[a as usize].finding;
+    assert!(f.impact >= Impact::Moderate);
+    assert_ne!(f.id, "stutter.unknown");
+    assert!(!s.others.contains(&a));
+    assert_actions_valid(&d);
+}
+
+#[test]
+fn story_two_background_findings_get_distinct_indices() {
+    let tl = timeline(&jittery(8.0, 3000), |_, _| {
+        let mut s = base_sample();
+        s.background.insert("chrome.exe".into(), 13.0);
+        s.background.insert("obs64.exe".into(), 11.0);
+        s
+    });
+    let d = diagnose_timeline(&tl, &Context::default());
+    let bg: Vec<u32> = d
+        .verdicts
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.finding.id == "background")
+        .map(|(i, _)| i as u32)
+        .collect();
+    assert_eq!(bg.len(), 2);
+    let s = story(&d);
+    assert_eq!(s.outcome, StoryOutcome::Fixable);
+    let picked: Vec<u32> = s.action.iter().chain(&s.others).copied().collect();
+    assert!(bg.iter().all(|i| picked.contains(i)));
+    assert_actions_valid(&d);
+}
+
+#[test]
+fn story_insufficient() {
+    let d = diagnose_timeline(
+        &timeline(&[8.0; 50], |_, _| base_sample()),
+        &Context::default(),
+    );
+    let s = story(&d);
+    assert_eq!(s.outcome, StoryOutcome::Insufficient);
+    assert_eq!(how_keys(s), vec!["diag.story.how.insufficient"]);
+    assert!(s.why.is_empty() && s.action.is_none() && s.others.is_empty());
+    // Без кадрів зовсім — те саме.
+    assert_eq!(insufficient_story().outcome, StoryOutcome::Insufficient);
+}
+
+#[test]
+fn story_keys_exist_in_catalog() {
+    let cat = Catalog::ukrainian().unwrap();
+    let hz = Context {
+        display_hz: Some(144),
+        ..Context::default()
+    };
+    let ds = [
+        diagnose_timeline(&gpu_timeline(), &hz),
+        diagnose_timeline(&gpu_timeline(), &Context::default()),
+        diagnose_timeline(&timeline(&hitches_at_start(), |_, _| base_sample()), &hz),
+        diagnose_timeline(&timeline(&spiky(), |_, _| base_sample()), &hz),
+        diagnose_timeline(&timeline(&[8.0; 50], |_, _| base_sample()), &hz),
+        throttled(2300, 60, 220.0, 2),
+    ];
+    for d in &ds {
+        let s = story(d);
+        for t in s.how.iter().chain(s.why.iter().map(|c| &c.text)) {
+            assert!(cat.contains(&t.key), "немає ключа {}", t.key);
+        }
+    }
+    for k in ["smooth", "isolated", "noticeable", "severe"] {
+        assert!(cat.contains(&format!("diag.story.smooth.{k}")));
+    }
+    for k in ["fine", "fixable", "unexplained", "insufficient"] {
+        assert!(cat.contains(&format!("diag.story.outcome.{k}")));
+    }
+    for k in [
+        "gpu",
+        "gpu_borderline",
+        "gpu_unconfirmed",
+        "cpu",
+        "cap_reason",
+        "unclear",
+        "severe",
+        "noticeable",
+    ] {
+        assert!(cat.contains(&format!("diag.story.how.{k}")), "how.{k}");
+    }
+}
+
+#[test]
+fn diagnosis_without_story_deserializes() {
+    let d = diagnose_timeline(&gpu_timeline(), &Context::default());
+    let mut v = serde_json::to_value(&d).unwrap();
+    v.as_object_mut().unwrap().remove("story");
+    let back: Diagnosis = serde_json::from_value(v).unwrap();
+    assert_eq!(back.story, None);
+}
+
+/// Причини з доказів знахідки `stutter.*`: (головні, часткові) коди.
+fn stutter_codes(d: &Diagnosis) -> (Vec<String>, Vec<String>) {
+    let Some(f) = d
+        .verdicts
+        .iter()
+        .map(|v| &v.finding)
+        .find(|f| f.id.starts_with("stutter."))
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut main = Vec::new();
+    let mut partial = Vec::new();
+    for e in &f.evidence {
+        if let Some(c) = e.label.key.strip_prefix("diag.cause.") {
+            main.push(c.to_string());
+        }
+        if let Some(c) = e.label.key.strip_prefix("diag.cause_name.") {
+            if e.value.key == "diag.ev.partial_share" {
+                partial.push(c.to_string());
+            }
+        }
+    }
+    (main, partial)
+}
+
+/// Розповідь каже про причини те саме, що знахідка мікрофризів, і не мовчить про ривки.
+fn assert_story_agrees(d: &Diagnosis) {
+    let s = story(d);
+    let (main, partial) = stutter_codes(d);
+    let likely: Vec<String> = s
+        .why
+        .iter()
+        .filter(|c| c.likely)
+        .map(|c| c.code.clone())
+        .collect();
+    let part: Vec<String> = s
+        .why
+        .iter()
+        .filter(|c| !c.likely)
+        .map(|c| c.code.clone())
+        .collect();
+    let n = main.len().min(3);
+    assert_eq!(likely, main[..n].to_vec(), "головні причини");
+    assert_eq!(
+        part,
+        partial[..partial.len().min(3 - n)].to_vec(),
+        "часткові причини"
+    );
+    if matches!(s.smoothness, Smoothness::Noticeable | Smoothness::Severe) {
+        assert_eq!(s.why_unknown, s.why.is_empty(), "ривки без пояснення");
+    } else {
+        assert!(s.why.is_empty() && !s.why_unknown);
+    }
+    for c in &s.why {
+        assert!(c.hits <= c.of && c.hits > 0);
+        assert_eq!(c.text.args["hits"], c.hits.to_string());
+        assert_eq!(c.text.args["of"], c.of.to_string());
+    }
+}
+
+fn disk_stutter(every: usize) -> (Diagnosis, usize) {
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    let tl = timeline(&ft, |t, _| {
+        let mut s = base_sample();
+        if spikes
+            .iter()
+            .enumerate()
+            .any(|(i, st)| i % every == 0 && (st - t).abs() <= 150.0)
+        {
+            s.disk_bytes_per_sec = 150 << 20;
+        }
+        s
+    });
+    (diagnose_timeline(&tl, &Context::default()), spikes.len())
+}
+
+#[test]
+fn story_names_disk_as_likely_cause() {
+    let (d, n) = disk_stutter(1);
+    let s = story(&d);
+    assert_eq!(s.why[0].code, "disk");
+    assert!(s.why[0].likely);
+    assert_eq!(s.why[0].text.key, "diag.story.why.likely.disk");
+    assert_eq!(s.why[0].of as usize, n);
+    assert!(s.why[0].hits >= s.why[0].of / 2);
+    assert!(!s.why_unknown);
+    assert!(s.why.iter().all(|c| c.code != "background"));
+    assert_story_agrees(&d);
+}
+
+#[test]
+fn story_partial_cause_is_not_likely() {
+    let (d, _) = disk_stutter(3);
+    assert!(find(&d, "stutter.partial").is_some());
+    let s = story(&d);
+    assert_eq!(s.why[0].code, "disk");
+    assert!(!s.why[0].likely);
+    assert_eq!(s.why[0].text.key, "diag.story.why.partial.disk");
+    assert_eq!(s.outcome, StoryOutcome::Fixable);
+    assert_story_agrees(&d);
+}
+
+#[test]
+fn story_names_traced_driver() {
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    let mut tl = timeline(&ft, |_, _| base_sample());
+    let mut long: Vec<_> = spikes.iter().map(|t| stall(t - 20.0, 1500.0, 0)).collect();
+    long.sort_by(|a, b| a.t_ms.total_cmp(&b.t_ms));
+    tl.dpc = Some(dpc_trace(long));
+    let d = diagnose_timeline(&tl, &Context::default());
+    let s = story(&d);
+    assert_eq!(s.why[0].code, "dpc");
+    assert_eq!(s.why[0].text.key, "diag.story.why.likely.dpc_driver");
+    assert_eq!(s.why[0].text.args["name"], "nvlddmkm.sys");
+    assert_story_agrees(&d);
+}
+
+#[test]
+fn story_and_stutter_agree() {
+    // Defender біля кожного ривка.
+    let ft = spiky();
+    let spikes = spike_times(&ft);
+    let defender = timeline(&ft, |t, _| {
+        let mut s = base_sample();
+        if near_spike(&spikes, t) {
+            s.background.insert("MsMpEng.exe".into(), 6.0);
+        }
+        s
+    });
+    // Компіляція шейдерів згустками.
+    let mut ft2 = jittery(8.0, 5000);
+    for cluster in (400..5000).step_by(1200) {
+        for k in 0..15 {
+            ft2[cluster + k * 6] = 40.0;
+        }
+    }
+    let spikes2 = spike_times(&ft2);
+    let mut shader = timeline(&ft2, |_, _| base_sample());
+    shader.shader_writes = spikes2
+        .iter()
+        .map(|t| ShaderWrite {
+            t_ms: t + 300.0,
+            bytes: 64 << 10,
+        })
+        .collect();
+    let ds = [
+        disk_stutter(1).0,
+        disk_stutter(3).0,
+        diagnose_timeline(&defender, &Context::default()),
+        diagnose_timeline(&shader, &Context::default()),
+        diagnose_timeline(
+            &timeline(&spiky(), |_, _| base_sample()),
+            &Context::default(),
+        ),
+        diagnose_timeline(
+            &timeline(&hitches_at_start(), |_, _| base_sample()),
+            &Context::default(),
+        ),
+        diagnose_timeline(&gpu_timeline(), &Context::default()),
+    ];
+    for d in &ds {
+        assert_story_agrees(d);
+    }
+    assert_eq!(story(&ds[2]).why[0].code, "defender");
+    assert_eq!(story(&ds[3]).why[0].code, "shader");
+}
+
+#[test]
+fn story_few_spikes_never_silent() {
+    // Два довгі ривки на тлі рівних кадрів: 1% low падає, але для збігів ривків замало.
+    let mut ft = jittery(8.0, 3000);
+    ft[1000] = 200.0;
+    ft[2000] = 200.0;
+    let d = diagnose_timeline(&timeline(&ft, |_, _| base_sample()), &Context::default());
+    assert_story_agrees(&d);
+}
+
+#[test]
+fn story_why_keys_exist_in_catalog() {
+    let cat = Catalog::ukrainian().unwrap();
+    for kind in rules::CauseKind::ALL {
+        for k in ["likely", "partial"] {
+            let key = format!("diag.story.why.{k}.{}", kind.code());
+            assert!(cat.contains(&key), "немає {key}");
+        }
+    }
+    for key in [
+        "diag.story.why.likely.dpc_driver",
+        "diag.story.why.partial.dpc_driver",
+        "diag.story.why.unknown",
+    ] {
+        assert!(cat.contains(key), "немає {key}");
+    }
+}
+
+#[test]
+fn story_smooth_with_minor_spikes_mentions_them() {
+    // Два піки на 10 000 кадрів: 0.1% low їх не помічає, правило мікрофризів мовчить, але на
+    // шкалі піки видно — розповідь не каже «ривків не було».
+    let mut ft = jittery(8.0, 10_000);
+    ft[3000] = 40.0;
+    ft[7000] = 40.0;
+    let d = diagnose_timeline(&timeline(&ft, |_, _| base_sample()), &Context::default());
+    assert!(d
+        .verdicts
+        .iter()
+        .all(|v| !v.finding.id.starts_with("stutter.")));
+    let s = story(&d);
+    assert_eq!(s.smoothness, Smoothness::Smooth);
+    assert_eq!(s.how[1].key, "diag.story.how.smooth_minor");
+    assert_eq!(
+        s.how[1].args["spikes"],
+        d.stats.as_ref().unwrap().spikes.to_string()
+    );
+    assert!(Catalog::ukrainian()
+        .unwrap()
+        .contains("diag.story.how.smooth_minor"));
+}
+
+#[test]
+fn story_indices_survive_frame_generation() {
+    // Генерація кадрів вставляє свою знахідку після підсумку — дії розповіді мають і далі
+    // вказувати на знахідки з порадою (фоновий процес).
+    let mut tl = framegen_timeline(true);
+    for s in &mut tl.samples {
+        s.background.insert("chrome.exe".into(), 13.0);
+    }
+    let d = diagnose_timeline(&tl, &Context::default());
+    assert!(find(&d, "framegen.display").is_some());
+    let s = story(&d);
+    assert_eq!(s.outcome, StoryOutcome::Fixable);
+    let a = s.action.expect("головна дія") as usize;
+    assert_eq!(d.verdicts[a].finding.id, "background");
+    assert_actions_valid(&d);
+}
+
+#[test]
+fn story_fine_title_does_not_blame_hardware_under_cap() {
+    let cat = Catalog::ukrainian().unwrap();
+    let fine = cat.render(&Text::new("diag.story.outcome.fine"));
+    // Для ліміту FPS картка каже «обмежує ліміт, а не залізо» — заголовок не може казати протилежне.
+    assert!(!fine.contains("заліз"), "{fine}");
+}

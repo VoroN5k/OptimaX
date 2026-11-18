@@ -398,6 +398,7 @@ mod tests {
                 anatomy: None,
                 latency: None,
                 view: None,
+                story: None,
             },
             display_hz: Some(200),
             presentmon_messages: vec![],

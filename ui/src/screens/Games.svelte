@@ -9,7 +9,9 @@
   import Card from "../components/Card.svelte";
   import Modal from "../components/Modal.svelte";
   import Page from "../components/Page.svelte";
-  import ProcessPicker from "../components/ProcessPicker.svelte";
+  import GamePicker from "../components/GamePicker.svelte";
+  import type { GameEntry } from "../lib/bindings/GameEntry";
+  import { detectGame } from "../lib/detect";
   import Segmented from "../components/Segmented.svelte";
   import StateView from "../components/StateView.svelte";
   import Toggle from "../components/Toggle.svelte";
@@ -44,7 +46,57 @@
       loading = false;
     }
   }
-  onMount(load);
+  onMount(() => {
+    void load();
+    return () => cancelDetect?.();
+  });
+
+  /** Гра з бібліотеки для профілю; без exe — його визначить запуск гри. */
+  let pickedGame = $state<GameEntry | null>(null);
+  let detecting = $state(false);
+  let detectingId: string | null = null;
+  let slow = $state(false);
+  let cancelDetect: (() => void) | null = null;
+
+  function stopDetect() {
+    cancelDetect?.();
+    cancelDetect = null;
+    detecting = false;
+    detectingId = null;
+    slow = false;
+  }
+
+  function startDetect(g: GameEntry) {
+    error = null;
+    detecting = true;
+    detectingId = g.id;
+    slow = false;
+    cancelDetect = detectGame(g.id, {
+      onFound: (found) => {
+        cancelDetect = null;
+        stopDetect();
+        if (editing) editing.exe = found;
+        logLocal("info", tk("ui.lib.detected_log", { game: g.name, exe: found }));
+      },
+      onError: (e) => {
+        cancelDetect = null;
+        stopDetect();
+        error = asCmdError(e).message;
+      },
+      onSlow: () => (slow = true),
+    });
+  }
+
+  // Інша гра в редакторі — очікування попередньої більше не потрібне.
+  $effect(() => {
+    if (detecting && pickedGame?.id !== detectingId) stopDetect();
+  });
+
+  function closeEditor() {
+    stopDetect();
+    pickedGame = null;
+    editing = null;
+  }
 
   function newProfile() {
     editing = {
@@ -129,7 +181,7 @@
       await api.profileSave(preview.profile);
       logLocal("info", tk("ui.games.saved_log", { exe: preview.profile.exe }));
       preview = null;
-      editing = null;
+      closeEditor();
       await restartWatcher();
       await load();
     } catch (e) {
@@ -248,7 +300,19 @@
   {#if editing}
     <Card title={editing.exe ? tk("ui.games.edit_title", { exe: editing.exe }) : tk("ui.games.new_title")}>
       <div class="form">
-        <ProcessPicker bind:value={editing.exe} label={tk("ui.diag.game")} />
+        <GamePicker bind:value={editing.exe} bind:game={pickedGame} label={tk("ui.diag.game")} />
+        {#if pickedGame && !pickedGame.exe && pickedGame.install_dir}
+          <div class="detect">
+            {#if detecting}
+              <StateView kind="loading" title={tk("ui.lib.detect_title")} text={tk("ui.lib.detect_text_profile", { game: pickedGame.name })} />
+              {#if slow}<p class="small muted">{tk("ui.lib.detect_slow")}</p>{/if}
+              <Button small variant="secondary" icon="close" onclick={stopDetect}>{tk("ui.common.cancel")}</Button>
+            {:else}
+              <p class="small muted">{tk("ui.lib.detect_needed", { game: pickedGame.name })}</p>
+              <Button small variant="primary" icon="play" onclick={() => pickedGame && startDetect(pickedGame)}>{tk("ui.lib.detect_start")}</Button>
+            {/if}
+          </div>
+        {/if}
         <div class="field">
           <span class="small muted">{tk("ui.games.priority")}</span>
           <Segmented
@@ -330,7 +394,7 @@
           {#if editing.exe_path}<p class="small dim mono path">{editing.exe_path}</p>{/if}
         </div>
         <div class="form-actions">
-          <Button variant="ghost" onclick={() => (editing = null)}>{tk("ui.common.cancel")}</Button>
+          <Button variant="ghost" onclick={closeEditor}>{tk("ui.common.cancel")}</Button>
           <Button variant="primary" disabled={!editing.exe.trim()} onclick={review}>{tk("ui.games.review")}</Button>
         </div>
       </div>
@@ -454,6 +518,11 @@
   .form {
     display: grid;
     gap: calc(var(--space) * 5);
+  }
+  .detect {
+    display: grid;
+    gap: calc(var(--space) * 2);
+    justify-items: start;
   }
   .field {
     display: grid;

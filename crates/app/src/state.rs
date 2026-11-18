@@ -111,6 +111,8 @@ pub struct AppState {
     /// Знімок процесів для вибору гри: CPU рахується за час від попереднього запиту
     /// (UI питає раз на кілька секунд), а не за коротке вікно — цифри стабільні.
     pub processes: Mutex<Option<sysinfo::System>>,
+    /// Бібліотека ігор: кеш скану й поточне визначення процесу гри.
+    pub library: Mutex<crate::commands::library::LibraryState>,
     /// Шлях до привілейованих даних: служба або сам процес (спільний для потоків).
     pub link: Arc<crate::link::Link>,
 }
@@ -149,6 +151,7 @@ impl AppState {
             last_diagnosis: Mutex::new(None),
             log_tail: Mutex::new(VecDeque::with_capacity(LOG_TAIL)),
             processes: Mutex::new(None),
+            library: Mutex::new(Default::default()),
             link,
         })
     }

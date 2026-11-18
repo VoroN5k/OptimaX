@@ -7,8 +7,10 @@ use crate::error::{CmdError, CmdResult};
 use crate::state::{lock, AppState};
 use optimax_audit::{SystemProbe, WindowsProbe};
 use optimax_core::{Catalog, Impact};
-use optimax_diagnosis::{diagnose, CacheFile, Context};
+use optimax_diagnosis::{diagnose, Bottleneck, CacheFile, Context};
+use optimax_frametime::EndReason;
 use optimax_frametime::{CancelToken, RecordNotices, RecordOptions, Target};
+use optimax_gamemode::library::detect::RecordingOutcome;
 use std::collections::HashMap;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -161,7 +163,7 @@ pub fn diag_start(
     scene: Option<String>,
 ) -> CmdResult<()> {
     let scene = optimax_history::clean_scene(scene.as_deref());
-    let target = Target::ProcessName(exe);
+    let target = Target::ProcessName(exe.clone());
     target.validate()?;
     if super::lag::is_watching(&state) {
         return Err(super::lag::busy_error());
@@ -242,6 +244,18 @@ pub fn diag_start(
                 Ok(result)
             })();
             *lock(&app.state::<AppState>().recording) = None;
+            // Бібліотека ігор: щойно визначений exe підтверджується лише записом, що дійшов до кінця.
+            let outcome = match &result {
+                Ok(r) if r.end_reason == EndReason::GameExited => RecordingOutcome::Exited,
+                Ok(r)
+                    if matches!(r.end_reason, EndReason::Completed | EndReason::Hotkey)
+                        && r.diagnosis.bottleneck != Bottleneck::InsufficientData =>
+                {
+                    RecordingOutcome::Finished
+                }
+                _ => RecordingOutcome::Other,
+            };
+            super::library::after_record(&app.state::<AppState>(), &exe, outcome);
             let _ = match result {
                 Ok(r) => {
                     super::dashboard::remember_last_game(&r);

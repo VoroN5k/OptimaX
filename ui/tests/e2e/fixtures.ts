@@ -4,7 +4,9 @@ import type { AppInfo } from "../../src/lib/bindings/AppInfo";
 import type { ConfigSummary } from "../../src/lib/bindings/ConfigSummary";
 import type { DiagnosisResult } from "../../src/lib/bindings/DiagnosisResult";
 import type { DiagnosisState } from "../../src/lib/bindings/DiagnosisState";
+import type { DetectState } from "../../src/lib/bindings/DetectState";
 import type { DiskSummary } from "../../src/lib/bindings/DiskSummary";
+import type { LibraryReport } from "../../src/lib/bindings/LibraryReport";
 import type { ExpRecord } from "../../src/lib/bindings/ExpRecord";
 import type { ExpView } from "../../src/lib/bindings/ExpView";
 import type { StabInfo } from "../../src/lib/bindings/StabInfo";
@@ -56,6 +58,12 @@ export interface Responses {
   lag_state: LagView | null;
   res_state: ResView | null;
   list_processes: ProcessEntry[];
+  library_scan: LibraryReport;
+  library_detect_start: DetectState;
+  library_detect_cancel: null;
+  library_set_hidden: null;
+  library_forget_exe: null;
+  library_cover: string | null;
   cleanup_last_scan: ScanView | null;
   metrics_start: null;
   hardware_info: HardwareInfo;
@@ -663,6 +671,12 @@ export function defaults(): Responses {
     lag_state: null,
     res_state: null,
     list_processes: [{ name: "re9.exe", cpu_percent: 31, memory_mib: 9000 }],
+    library_scan: { games: [], problems: [] },
+    library_detect_start: { state: "waiting", skipped: [] },
+    library_detect_cancel: null,
+    library_set_hidden: null,
+    library_forget_exe: null,
+    library_cover: null,
     cleanup_last_scan: null,
     metrics_start: null,
     hardware_info: structuredClone(hwInfo),
@@ -727,4 +741,41 @@ export const serviceRunning: ServiceView = {
   from_service_exe: true,
   ping: { version: "0.2.0", uptime_s: 12 },
   same_version: true,
+};
+
+/** Бібліотека ігор: гра з визначеним процесом, гра без нього, прихована гра. */
+export const library: LibraryReport = {
+  games: [
+    {
+      id: "steam:292030",
+      name: "The Witcher 3",
+      launcher: "steam",
+      install_dir: String.raw`E:\SteamLibrary\steamapps\common\The Witcher 3`,
+      exe: "witcher3.exe",
+      exe_hint: null,
+      has_cover: false,
+      hidden: false,
+    },
+    {
+      id: "epic:Heather",
+      name: "Red Dead Redemption 2",
+      launcher: "epic",
+      install_dir: String.raw`F:\EpicGames\RDR2`,
+      exe: null,
+      exe_hint: "RDR2.exe",
+      has_cover: false,
+      hidden: false,
+    },
+    {
+      id: "steam:431960",
+      name: "Wallpaper Engine",
+      launcher: "steam",
+      install_dir: String.raw`D:\Steam\steamapps\common\wallpaper_engine`,
+      exe: null,
+      exe_hint: null,
+      has_cover: false,
+      hidden: true,
+    },
+  ],
+  problems: [],
 };

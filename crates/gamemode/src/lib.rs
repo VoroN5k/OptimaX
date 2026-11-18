@@ -10,10 +10,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod library;
 pub mod profile;
 pub mod session;
 pub mod watcher;
 
+pub use library::{GameEntry, Launcher, LibraryProblem, LibraryReport};
 pub use profile::{GamePriority, GameProfile, ProfileStore, ProfileTest};
 pub use session::{
     end_session, preview_changes, restore_leftovers, session_plan, start_session, SessionPlan,

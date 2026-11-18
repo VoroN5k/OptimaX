@@ -9,6 +9,7 @@ mod agent;
 mod agent_link;
 #[cfg(windows)]
 mod applog;
+mod b64;
 #[cfg(windows)]
 mod changes;
 #[cfg(windows)]
@@ -56,8 +57,8 @@ pub fn run_agent() -> anyhow::Result<()> {
 mod app {
     use crate::commands::{
         ab, agent, audit, blackbox, cleanup, dashboard, diagnosis, driver_online, experiment,
-        feedback, gamemode, history, lag, laptop, metrics, network, overlay, resolution, sensors,
-        service, stability, startup, system, tweaks, update, upscale,
+        feedback, gamemode, history, lag, laptop, library, metrics, network, overlay, resolution,
+        sensors, service, stability, startup, system, tweaks, update, upscale,
     };
     use crate::dto::StartupReport;
     use crate::log_layer::UiLogLayer;
@@ -391,6 +392,13 @@ mod app {
                 cleanup::cleanup_hibernate,
                 cleanup::cleanup_reveal,
                 dashboard::dashboard_last_game,
+                library::library_scan,
+                library::library_set_hidden,
+                library::library_forget_exe,
+                library::library_cover,
+                library::library_add_manual,
+                library::library_detect_start,
+                library::library_detect_cancel,
                 dashboard::dashboard_config,
                 dashboard::dashboard_disk,
                 history::history_list,

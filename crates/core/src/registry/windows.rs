@@ -10,9 +10,9 @@ use windows::Win32::Foundation::{
     ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, WIN32_ERROR,
 };
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegDeleteValueW, RegEnumValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
-    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, HKEY_USERS, KEY_QUERY_VALUE, KEY_READ,
-    KEY_SET_VALUE, KEY_WOW64_64KEY, REG_SAM_FLAGS, REG_VALUE_TYPE,
+    RegCloseKey, RegDeleteValueW, RegEnumKeyExW, RegEnumValueW, RegOpenKeyExW, RegQueryValueExW,
+    RegSetValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, HKEY_USERS, KEY_QUERY_VALUE,
+    KEY_READ, KEY_SET_VALUE, KEY_WOW64_64KEY, REG_SAM_FLAGS, REG_VALUE_TYPE,
 };
 
 /// Реєстр Windows (64-бітне представлення).
@@ -114,6 +114,43 @@ fn open_existing(root: HKEY, path: &str, access: REG_SAM_FLAGS) -> Result<KeyGua
 
 fn is_missing(e: &CoreError) -> bool {
     matches!(e, CoreError::Os { code, .. } if *code == ERROR_FILE_NOT_FOUND.0)
+}
+
+/// Найдовше ім'я ключа реєстру — 255 символів (+ нуль).
+const MAX_KEY_NAME: usize = 256;
+
+fn subkeys_at(root: HKEY, path: &str) -> Result<Vec<String>, CoreError> {
+    let key = match open_existing(root, path, KEY_READ) {
+        Ok(k) => k,
+        Err(e) if is_missing(&e) => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut names = Vec::new();
+    let mut buf = vec![0u16; MAX_KEY_NAME];
+    for index in 0u32.. {
+        let mut len = u32::try_from(buf.len())
+            .map_err(|_| CoreError::InvalidData("буфер завеликий".into()))?;
+        // SAFETY: `buf` має `len` u16-елементів; клас і час зміни не запитуємо (None).
+        let status = unsafe {
+            RegEnumKeyExW(
+                key.0,
+                index,
+                Some(PWSTR(buf.as_mut_ptr())),
+                &mut len,
+                None,
+                None,
+                None,
+                None,
+            )
+        };
+        if status == ERROR_NO_MORE_ITEMS {
+            break;
+        }
+        check(status, "RegEnumKeyExW")?;
+        let end = usize::try_from(len).unwrap_or(0).min(buf.len());
+        names.push(String::from_utf16_lossy(&buf[..end]));
+    }
+    Ok(names)
 }
 
 fn names_at(root: HKEY, path: &str) -> Result<Vec<String>, CoreError> {
@@ -223,6 +260,11 @@ macro_rules! impl_registry {
                 names_at(root, &path)
             }
 
+            fn subkey_names(&self, hive: RegHive, path: &str) -> Result<Vec<String>, CoreError> {
+                let (root, path) = self.resolve(hive, path);
+                subkeys_at(root, &path)
+            }
+
             fn read_value(
                 &self,
                 hive: RegHive,
@@ -269,6 +311,20 @@ mod tests {
         assert!(names.iter().any(|n| n == "ProductName"), "{names:?}");
         assert!(WinRegistry
             .value_names(RegHive::LocalMachine, r"SOFTWARE\OptimaX-no-such-key")
+            .unwrap()
+            .is_empty());
+    }
+
+    /// Підключі справжнього ключа: `Uninstall` є в `CurrentVersion` на кожній системі.
+    #[test]
+    fn subkey_names_lists_real_key() {
+        let key = r"SOFTWARE\Microsoft\Windows\CurrentVersion";
+        let names = WinRegistry
+            .subkey_names(RegHive::LocalMachine, key)
+            .unwrap();
+        assert!(names.iter().any(|n| n == "Uninstall"), "{names:?}");
+        assert!(WinRegistry
+            .subkey_names(RegHive::LocalMachine, r"SOFTWARE\OptimaX-no-such-key")
             .unwrap()
             .is_empty());
     }

@@ -164,6 +164,9 @@ pub trait RegistryApi: Send + Sync {
 
     /// Імена всіх значень ключа (порожньо, якщо ключа немає). Порядок — як віддає система.
     fn value_names(&self, hive: RegHive, path: &str) -> Result<Vec<String>, CoreError>;
+
+    /// Імена безпосередніх підключів (порожньо, якщо ключа немає). Порядок — як віддає система.
+    fn subkey_names(&self, hive: RegHive, path: &str) -> Result<Vec<String>, CoreError>;
 }
 
 /// Запис у реєстр. Ключ має вже існувати — інакше помилка, ключі не створюються.
@@ -246,6 +249,23 @@ impl RegistryApi for MemRegistry {
             .map(|(_, _, n)| n.clone())
             .collect();
         names.sort();
+        Ok(names)
+    }
+
+    fn subkey_names(&self, hive: RegHive, path: &str) -> Result<Vec<String>, CoreError> {
+        let prefix = format!("{}\\", path.to_ascii_lowercase().trim_end_matches('\\'));
+        let st = self.lock();
+        let mut names: Vec<String> = st
+            .keys
+            .iter()
+            .filter(|(h, _)| *h == hive)
+            .filter_map(|(_, p)| p.strip_prefix(&prefix))
+            .filter_map(|rest| rest.split('\\').next())
+            .filter(|n| !n.is_empty())
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names.dedup();
         Ok(names)
     }
 }
@@ -387,5 +407,25 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn mem_subkeys_lists_direct_children() {
+        let mut reg = MemRegistry::new();
+        reg.set(RegHive::LocalMachine, r"A\B", "x", RegValue::Dword(1));
+        reg.set(RegHive::LocalMachine, r"A\C\D", "y", RegValue::Dword(1));
+        reg.set(RegHive::LocalMachine, r"AB\E", "z", RegValue::Dword(1));
+        reg.set(RegHive::CurrentUser, r"A\F", "w", RegValue::Dword(1));
+        let names = reg.subkey_names(RegHive::LocalMachine, "a").unwrap();
+        assert_eq!(names, vec!["b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn mem_subkeys_missing_key_is_empty() {
+        let reg = MemRegistry::new();
+        assert!(reg
+            .subkey_names(RegHive::LocalMachine, r"NoSuch\Key")
+            .unwrap()
+            .is_empty());
     }
 }

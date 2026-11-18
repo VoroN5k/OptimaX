@@ -311,6 +311,9 @@ impl RegistryApi for IgnoringRegistry {
     fn value_names(&self, h: RegHive, p: &str) -> Result<Vec<String>, CoreError> {
         self.0.value_names(h, p)
     }
+    fn subkey_names(&self, h: RegHive, p: &str) -> Result<Vec<String>, CoreError> {
+        self.0.subkey_names(h, p)
+    }
 }
 
 impl RegistryWriteApi for IgnoringRegistry {

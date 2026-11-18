@@ -7,6 +7,9 @@ import type { AbView } from "./bindings/AbView";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { ApplyResult } from "./bindings/ApplyResult";
 import type { AuditReport } from "./bindings/AuditReport";
+import type { DetectState } from "./bindings/DetectState";
+import type { GameEntry } from "./bindings/GameEntry";
+import type { LibraryReport } from "./bindings/LibraryReport";
 import type { CmdError } from "./bindings/CmdError";
 import type { ConfigSummary } from "./bindings/ConfigSummary";
 import type { DiskSummary } from "./bindings/DiskSummary";
@@ -121,6 +124,13 @@ export const api = {
   metricsStop: () => invoke<void>("metrics_stop"),
 
   listProcesses: () => invoke<ProcessEntry[]>("list_processes"),
+  libraryScan: (refresh: boolean) => invoke<LibraryReport>("library_scan", { refresh }),
+  librarySetHidden: (id: string, hidden: boolean) => invoke<void>("library_set_hidden", { id, hidden }),
+  libraryForgetExe: (id: string) => invoke<void>("library_forget_exe", { id }),
+  libraryCover: (id: string) => invoke<string | null>("library_cover", { id }),
+  libraryAddManual: (name: string, exe: string) => invoke<GameEntry>("library_add_manual", { name, exe }),
+  libraryDetectStart: (id: string) => invoke<DetectState>("library_detect_start", { id }),
+  libraryDetectCancel: () => invoke<void>("library_detect_cancel"),
   diagStart: (exe: string, seconds: number, scene: string | null) =>
     invoke<void>("diag_start", { exe, seconds, scene }),
   diagCancel: () => invoke<void>("diag_cancel"),
@@ -220,6 +230,7 @@ type Events = {
   "lag-status": WatchStatus;
   "lag-update": LagView;
   "diag-done": DiagnosisResult;
+  "library-detect": DetectState;
   /** Запис збережено в історію (id) — після `diag-done`, окремим потоком. */
   "history-saved": string;
   "diag-error": CmdError;

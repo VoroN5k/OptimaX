@@ -68,6 +68,8 @@ fn export_typescript_bindings() {
         HardwareInfo,
         optimax_metrics::Snapshot,
         ProcessEntry,
+        optimax_gamemode::LibraryReport,
+        optimax_gamemode::library::detect::DetectState,
         optimax_frametime::RecordProgress,
         DiagnosisResult,
         DiagnosisState,

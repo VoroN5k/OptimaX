@@ -33,6 +33,7 @@ for (const k of ["system", "unknown_flag"]) {
 for (const k of ["power_scheme", "process_priority", "service", "standby_list"]) used.add(`ui.target.${k}`);
 for (const k of ["pending", "applied", "performed", "rolled_back", "failed"]) used.add(`ui.backups.state.${k}`);
 for (const k of ["WSearch", "SysMain"]) used.add(`ui.games.service.${k}`);
+for (const k of ["steam", "epic", "gog", "battlenet", "manual"]) used.add(`ui.lib.launcher.${k}`);
 for (const k of ["waiting_for_game", "waiting_for_hotkey", "warmup", "recording", "paused", "done"]) {
   used.add(`ui.rec.phase.${k}`);
   used.add(`ui.rec.hint.${k}`);

@@ -13,7 +13,9 @@
   import CrashView from "../components/CrashView.svelte";
   import Experiment from "../components/Experiment.svelte";
   import Page from "../components/Page.svelte";
+  import GamePicker from "../components/GamePicker.svelte";
   import ProcessPicker from "../components/ProcessPicker.svelte";
+  import type { GameEntry } from "../lib/bindings/GameEntry";
   import RecordHistory from "../components/RecordHistory.svelte";
   import RecordStatus from "../components/RecordStatus.svelte";
   import ResultView from "../components/ResultView.svelte";
@@ -26,6 +28,7 @@
   import VerdictGuide from "../components/VerdictGuide.svelte";
   import { currentStep, wantsExample } from "../lib/tour.svelte";
   import { EXAMPLE_RESULT } from "../lib/tourExample";
+  import { detectGame } from "../lib/detect";
 
   /** Вкладка: «Чому лагає?» (запис гри), «Щойно лагнуло?» (стеження з буфером) чи «Чому вилітає?». */
   let tab = $state<"lag" | "watch" | "compare" | "history" | "crash">("lag");
@@ -38,6 +41,10 @@
     if (resActive) resOpen = true;
   });
   let exe = $state("");
+  /** Гра з бібліотеки; без exe — його визначає бекенд, поки людина запускає гру. */
+  let game = $state<GameEntry | null>(null);
+  /** Чекаємо, поки гра з бібліотеки з'явиться на екрані. */
+  let detecting = $state(false);
   let expPreset = $state<string[] | null>(null);
   let seconds = $state(60);
   let recording = $state(false);
@@ -75,6 +82,7 @@
         result = r;
         setupOpen = false;
         recording = false;
+        afterDetectedRecording(r);
         ui.measuring = false;
         const actionable = r.diagnosis.verdicts.some((v) => v.finding.impact !== "info");
         flashBg(actionable ? "warn" : "ok");
@@ -96,6 +104,88 @@
     ];
     return () => subs.forEach((p) => void p.then((u) => u()));
   });
+
+  /** Скасування поточного визначення процесу гри. */
+  let cancelDetect: (() => void) | null = null;
+  /** Гра, яку зараз чекаємо. */
+  let detectingId = $state<string | null>(null);
+  /** Exe, які бекенд пропускає в цій сесії (закрились посеред минулого запису). */
+  let skipped = $state<string[]>([]);
+  /** Чекаємо вже хвилину — підказка про ручний вибір. */
+  let slow = $state(false);
+  /** Гра, чий щойно визначений exe ще не підтверджено записом до кінця. */
+  let justDetected: GameEntry | null = null;
+
+  function stopDetect() {
+    cancelDetect?.();
+    cancelDetect = null;
+    detecting = false;
+    detectingId = null;
+    slow = false;
+  }
+
+  function detectThenStart(g: GameEntry) {
+    error = null;
+    result = null;
+    detecting = true;
+    detectingId = g.id;
+    skipped = [];
+    slow = false;
+    cancelDetect = detectGame(g.id, {
+      onFound: (found) => {
+        cancelDetect = null;
+        stopDetect();
+        justDetected = g;
+        exe = found;
+        logLocal("info", tk("ui.lib.detected_log", { game: g.name, exe: found }));
+        void start();
+      },
+      onError: (e) => {
+        cancelDetect = null;
+        stopDetect();
+        error = asCmdError(e);
+      },
+      onWaiting: (s) => (skipped = s),
+      onSlow: () => (slow = true),
+    });
+  }
+
+  /** «Це все ж гра»: бекенд перестає пропускати exe цієї гри. */
+  async function unskip() {
+    if (!detectingId) return;
+    try {
+      await api.libraryForgetExe(detectingId);
+      skipped = [];
+    } catch (e) {
+      error = asCmdError(e);
+    }
+  }
+
+  // Людина вибрала іншу гру чи перейшла на іншу вкладку — очікування цієї гри більше не потрібне.
+  $effect(() => {
+    if (detecting && (tab !== "lag" || game?.id !== detectingId)) stopDetect();
+  });
+
+  /** Після запису щойно визначеної гри: закрився посеред запису — наступного разу знову чекаємо. */
+  function afterDetectedRecording(r: DiagnosisResult) {
+    const g = justDetected;
+    justDetected = null;
+    if (!g) return;
+    if (r.end_reason === "game_exited") {
+      logLocal("warn", tk("ui.lib.exited_log", { exe: exe, game: g.name }));
+      game = g;
+      exe = "";
+    } else if (r.end_reason === "completed" || r.end_reason === "hotkey") {
+      g.exe = exe;
+    }
+  }
+
+  onMount(() => () => stopDetect());
+
+  function begin() {
+    if (game && !game.exe && game.install_dir) detectThenStart(game);
+    else void start();
+  }
 
   async function start() {
     error = null;
@@ -146,7 +236,7 @@
 
   const modeLabel = $derived(tk(ui.settings.record_start === "hotkey" ? "ui.rec.mode.hotkey" : "ui.rec.mode.auto"));
   const setupSummary = $derived(
-    [exe.trim() || tk("ui.diag.no_game"), `${seconds} с`, modeLabel, ui.scene.trim()].filter(Boolean).join(" · "),
+    [game?.name || exe.trim() || tk("ui.diag.no_game"), `${seconds} с`, modeLabel, ui.scene.trim()].filter(Boolean).join(" · "),
   );
   const resTestable = $derived(
     !recording && !!result && (result.diagnosis.bottleneck === "gpu" || result.diagnosis.bottleneck === "cpu"),
@@ -192,7 +282,7 @@
     <div class="stack">
       <Fold title={tk("ui.diag.setup")} summary={setupOpen ? tk("ui.diag.setup_hint") : setupSummary} bind:open={setupOpen}>
         <div class="setup">
-          <div data-tour="diag-game"><ProcessPicker bind:value={exe} label={tk("ui.diag.game")} /></div>
+          <div data-tour="diag-game"><GamePicker bind:value={exe} bind:game label={tk("ui.diag.game")} /></div>
           <div class="duration" data-tour="diag-duration">
             <span class="small muted">{tk("ui.diag.duration")}</span>
             <Segmented
@@ -220,7 +310,18 @@
         </div>
       </Fold>
 
-      {#if recording}
+      {#if detecting && game}
+        <Card>
+          <StateView kind="loading" title={tk("ui.lib.detect_title")} text={tk("ui.lib.detect_text", { game: game.name })} />
+          {#if skipped.length}
+            <div class="detect-note">
+              <p class="small muted">{tk("ui.lib.skipped", { exe: skipped.join(", ") })}</p>
+              <Button small variant="secondary" onclick={unskip}>{tk("ui.lib.skipped_undo")}</Button>
+            </div>
+          {/if}
+          {#if slow}<p class="small muted detect-note">{tk("ui.lib.detect_slow")}</p>{/if}
+        </Card>
+      {:else if recording}
         <Card><RecordStatus {progress} game={exe} /></Card>
       {:else if error?.kind === "no_frames"}
         <Card>
@@ -278,11 +379,13 @@
   {#snippet secondary()}
     {#if recording && tab === "lag"}
       <Button variant="secondary" icon="stop" onclick={() => api.diagCancel()}>{tk("ui.diag.stop")}</Button>
+    {:else if detecting && tab === "lag"}
+      <Button variant="secondary" icon="close" onclick={stopDetect}>{tk("ui.common.cancel")}</Button>
     {/if}
   {/snippet}
   {#snippet primary()}
     {#if tab === "lag"}
-      <span data-tour="diag-start"><Button variant="primary" icon="play" disabled={!exe.trim() || recording} loading={recording} onclick={start}>
+      <span data-tour="diag-start"><Button variant="primary" icon="play" disabled={!(exe.trim() || game) || recording} loading={recording || detecting} onclick={begin}>
         {tk("ui.diag.start")}
       </Button></span>
     {/if}
@@ -294,6 +397,13 @@
 {/if}
 
 <style>
+  .detect-note {
+    display: grid;
+    justify-items: center;
+    gap: calc(var(--space) * 2);
+    margin-top: calc(var(--space) * 2);
+    text-align: center;
+  }
   .help {
     margin-left: calc(var(--space) * 2);
   }

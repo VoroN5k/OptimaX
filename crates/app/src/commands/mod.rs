@@ -14,6 +14,7 @@ pub mod gamemode;
 pub mod history;
 pub mod lag;
 pub mod laptop;
+pub mod library;
 pub mod metrics;
 pub mod network;
 pub mod overlay;

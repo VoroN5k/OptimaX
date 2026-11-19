@@ -2389,7 +2389,7 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
 name = "optimax-app"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -2423,7 +2423,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-audit"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "nvml-wrapper",
@@ -2438,7 +2438,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-backend"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "optimax-cleanup",
  "optimax-core",
@@ -2456,7 +2456,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-cleanup"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "optimax-core",
@@ -2470,7 +2470,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2483,7 +2483,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-diagnosis"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -2501,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-experiment"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "optimax-core",
  "optimax-frametime",
@@ -2511,7 +2511,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-frametime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "optimax-core",
@@ -2528,7 +2528,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-gamemode"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "optimax-core",
@@ -2544,7 +2544,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-history"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "optimax-core",
  "optimax-diagnosis",
@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-metrics"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "nvml-wrapper",
@@ -2571,7 +2571,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-network"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "optimax-core",
@@ -2585,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-service"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "optimax-core",
  "serde",
@@ -2600,7 +2600,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-stability"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2610,7 +2610,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-trace"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "optimax-core",
@@ -2625,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-tweaks"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "optimax-core",
@@ -2643,7 +2643,7 @@ dependencies = [
 
 [[package]]
 name = "optimax-upscale"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "optimax-core",

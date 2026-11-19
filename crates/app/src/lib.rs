@@ -404,6 +404,8 @@ mod app {
                 history::history_list,
                 history::history_compare,
                 history::history_vs_previous,
+                history::check_result,
+                history::check_last,
                 history::history_open,
                 history::history_delete,
                 history::history_clear,

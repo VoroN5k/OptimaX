@@ -1,15 +1,19 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { api, asCmdError, on } from "../lib/api";
+  import type { CheckChoice } from "../lib/bindings/CheckChoice";
   import type { CmdError } from "../lib/bindings/CmdError";
   import type { DiagnosisResult } from "../lib/bindings/DiagnosisResult";
   import type { RecordProgress } from "../lib/bindings/RecordProgress";
-  import { tk } from "../lib/i18n";
+  import { sameText, t, tk } from "../lib/i18n";
   import { flashBg, logLocal, ui } from "../lib/state.svelte";
   import Button from "../components/Button.svelte";
+  import type { Finding } from "../lib/bindings/Finding";
+  import Icon from "../components/Icon.svelte";
   import Card from "../components/Card.svelte";
   import Fold from "../components/Fold.svelte";
   import KpiStrip from "../components/KpiStrip.svelte";
+  import CheckSteps from "../components/CheckSteps.svelte";
   import CrashView from "../components/CrashView.svelte";
   import Experiment from "../components/Experiment.svelte";
   import Page from "../components/Page.svelte";
@@ -55,6 +59,11 @@
   onMount(() => {
     // З «Головної» попросили порівняти записи — одразу вкладка історії.
     if (ui.pendingCompare) tab = "history";
+    // Сценарій «Перевірити мою гру»: запис гри, 120 с, вибір гри розгорнуто.
+    if (ui.check) {
+      tab = "lag";
+      seconds = ui.check.seconds;
+    }
     void api
       .expState()
       .then((v) => {
@@ -69,7 +78,8 @@
           recording = true;
           ui.measuring = true;
         }
-        if (s.last && !result) {
+        // Сценарій лише почався — старий результат не видаємо за його перший крок.
+        if (s.last && !result && !(ui.check && !ui.check.baseline)) {
           result = s.last;
           setupOpen = false;
           if (!exe) exe = s.last.diagnosis.game;
@@ -87,9 +97,14 @@
         const actionable = r.diagnosis.verdicts.some((v) => v.finding.impact !== "info");
         flashBg(actionable ? "warn" : "ok");
         logLocal("info", tk("ui.diag.done_log", { game: r.diagnosis.game }));
-        // Результат — одразу на екрані: показники зверху, головна картка під ними.
+        // Результат — одразу на екрані: смужка кроків сценарію чи верх розповіді. Не блок усередині
+        // картки: `scrollIntoView` прокрутив би й її `overflow: hidden` (верх ховався під рамку).
         void tick().then(() =>
-          document.querySelector("[data-tour=diag-stats]")?.scrollIntoView({
+          (
+            document.querySelector("[data-check-steps]") ??
+            document.querySelector("section.story") ??
+            document.querySelector("[data-tour=diag-stats]")
+          )?.scrollIntoView({
             block: "start",
             behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
           }),
@@ -97,6 +112,7 @@
       }),
       on("diag-error", (e) => {
         error = e;
+        if (checking && e.kind === "not_found") checkFailed = true;
         recording = false;
         ui.measuring = false;
         flashBg("warn");
@@ -187,18 +203,136 @@
     else void start();
   }
 
-  async function start() {
+  async function start(checkOf: string | null = null, checkFinding: CheckChoice | null = null) {
     error = null;
     result = null;
+    checkFailed = false;
+    const c = ui.check;
+    if (c && checkOf) {
+      c.rechecking = true;
+    } else if (c) {
+      // Запис «було» сценарію (перший чи заново): умови запам'ятовуються для повторного.
+      Object.assign(c, {
+        armed: true,
+        rechecking: false,
+        baseline: null,
+        outcome: null,
+        afterId: null,
+        choice: null,
+        mainAdvice: null,
+        exe: exe.trim(),
+        seconds,
+        scene: ui.scene.trim(),
+      });
+    }
+    checking = !!checkOf;
     try {
-      await api.diagStart(exe.trim(), seconds, ui.scene.trim() || null);
+      await api.diagStart(exe.trim(), seconds, ui.scene.trim() || null, checkOf, checkFinding);
       recording = true;
       ui.measuring = true;
       progress = null;
     } catch (e) {
       error = asCmdError(e);
+      if (checkOf && error.kind === "not_found") checkFailed = true;
     }
   }
+
+  /** «Я зробив — записати ще раз»: та сама гра, тривалість і сцена, порівняння з «було». */
+  function recheck() {
+    const c = ui.check;
+    if (!c?.baseline) return;
+    exe = c.exe;
+    seconds = c.seconds;
+    ui.scene = c.scene;
+    void start(c.baseline, c.choice);
+  }
+
+  /** «Спробувати» пораду: вона стає дією сценарію (крок ④). */
+  function tryOption(f: Finding) {
+    if (!ui.check) return;
+    ui.check.choice = { id: f.id, advice: f.advice };
+    // Фокус — на «Я зробив» (кнопка «Спробувати» зникає, клавіатура не має губитися).
+    void tick().then(() => {
+      document.querySelector(".check-do")?.scrollIntoView({
+        block: "nearest",
+        behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      });
+      document.querySelector<HTMLButtonElement>("[data-recheck] button")?.focus();
+    });
+  }
+
+  /** Порада серед дій розповіді результату (головна чи «Інші варіанти»). */
+  function inStory(r: DiagnosisResult, c: CheckChoice): boolean {
+    const s = r.diagnosis.story;
+    if (!s) return false;
+    return [...(s.action == null ? [] : [s.action]), ...s.others].some((i) => {
+      const f = r.diagnosis.verdicts[i]?.finding;
+      return !!f && f.id === c.id && sameText(f.advice, c.advice);
+    });
+  }
+
+  // Поки показано «було» (зокрема після тесту роздільності, що міг змінити розповідь): запам'ятати
+  // його головну пораду для «стало» і скинути вибір, якого в розповіді вже немає.
+  $effect(() => {
+    const c = ui.check;
+    const r = result;
+    if (!c || !r || !c.baseline || c.rechecking || isAfter) return;
+    const s = r.diagnosis.story;
+    const main = s?.action == null ? null : (r.diagnosis.verdicts[s.action]?.finding.advice ?? null);
+    if (!sameText(c.mainAdvice, main)) c.mainAdvice = main;
+    if (c.choice && !inStory(r, c.choice)) c.choice = null;
+  });
+
+  /** Повторний запис «стало» іде (чи це останній запуск) — помилка «було» показується зрозуміло. */
+  let checking = false;
+  /** Запис «було» недоступний (видалено з «Історії» або без повного запису). */
+  let checkFailed = $state(false);
+
+  const scenario = $derived(ui.check);
+  /** Показаний результат — збережений повторний запис («стало»), а не «було». */
+  const isAfter = $derived(!!scenario?.afterId && ui.lastRecordId === scenario.afterId);
+  /** Підсумок «було»: поки показано саме «було» — з нього (тест роздільності міг його уточнити). */
+  const baseOutcome = $derived(!isAfter && result && !scenario?.rechecking ? (result.diagnosis.story?.outcome ?? null) : (scenario?.outcome ?? null));
+  const checkable = $derived(baseOutcome === "fixable" || baseOutcome === "unexplained");
+  /** Поради показаного результату з «Інших варіантів» (для «Усе гаразд»: чи є що спробувати). */
+  const hasOptions = $derived(
+    !!result?.diagnosis.story?.others.some((i) => !!result?.diagnosis.verdicts[i]?.finding.advice),
+  );
+  /** Порада, яку перевіряємо: обрана або головна дія «було» (не «стало»). */
+  const chosenAdvice = $derived(scenario?.choice?.advice ?? scenario?.mainAdvice ?? null);
+  /** Сценарій закінчився: «Усе гаразд» без порад і без вибору. */
+  const finished = $derived(
+    !!scenario && !!result && !recording && baseOutcome === "fine" && !hasOptions && !scenario.choice,
+  );
+  /** Є що перевіряти: головна дія чи обрана порада. */
+  const hasAction = $derived(checkable || !!scenario?.choice);
+  /** «Я зробив» доступне: є «було» і дія. */
+  const canRecheck = $derived(!!scenario?.baseline && hasAction && !recording && !detecting);
+
+  function restartCheck() {
+    ui.check = { armed: false, exe: "", seconds: 120, scene: "", baseline: null, outcome: null, rechecking: false, afterId: null, choice: null, mainAdvice: null };
+    result = null;
+    error = null;
+    checkFailed = false;
+    setupOpen = true;
+  }
+
+  // Сценарій стосується однієї гри й вкладки «Чому лагає?»: інша гра чи вкладка — кінець.
+  $effect(() => {
+    const c = ui.check;
+    if (!c) return;
+    if (tab !== "lag") ui.check = null;
+    else if (c.armed && c.exe && !recording && !detecting && exe.trim() && exe.trim().toLowerCase() !== c.exe.toLowerCase())
+      ui.check = null;
+  });
+  const checkStep = $derived.by(() => {
+    if (!scenario) return 0;
+    if (detecting || recording) return scenario.baseline ? 5 : 2;
+    if (!result) return 1;
+    if (isAfter) return 5;
+    if (scenario.baseline && hasAction) return 4;
+    return 3;
+  });
 
   /** Підсумок тесту роздільності вже показано в його картці — у списку не дублюємо. */
   let resShown = $state(false);
@@ -280,6 +414,9 @@
     </div>
   {:else}
     <div class="stack">
+      {#if scenario}
+        <CheckSteps step={checkStep} final={finished} onfinish={() => (ui.check = null)} />
+      {/if}
       <Fold title={tk("ui.diag.setup")} summary={setupOpen ? tk("ui.diag.setup_hint") : setupSummary} bind:open={setupOpen}>
         <div class="setup">
           <div data-tour="diag-game"><GamePicker bind:value={exe} bind:game label={tk("ui.diag.game")} /></div>
@@ -323,6 +460,12 @@
         </Card>
       {:else if recording}
         <Card><RecordStatus {progress} game={exe} /></Card>
+      {:else if checkFailed}
+        <Card>
+          <StateView kind="error" title={tk("ui.check.unavailable")} text={error?.message ?? ""}>
+            {#snippet action()}<Button onclick={restartCheck}>{tk("ui.check.restart")}</Button>{/snippet}
+          </StateView>
+        </Card>
       {:else if error?.kind === "no_frames"}
         <Card>
           <StateView kind="error" title={tk("ui.diag.no_frames_title")} text={tk("ui.diag.no_frames_text")} />
@@ -358,6 +501,9 @@
           onCompare={example ? undefined : openCompare}
           historyId={example ? null : ui.lastRecordId}
           live={!example}
+          next={scenario && result && !example ? checkNext : undefined}
+          onTry={scenario && result && !example && !isAfter && scenario.baseline ? tryOption : undefined}
+          tried={scenario?.choice ?? null}
         >
           {#snippet after()}
             {#if resTestable && result}
@@ -384,7 +530,9 @@
     {/if}
   {/snippet}
   {#snippet primary()}
-    {#if tab === "lag"}
+    {#if tab === "lag" && canRecheck}
+      <span data-recheck><Button variant="primary" icon="play" onclick={recheck}>{tk("ui.check.recheck")}</Button></span>
+    {:else if tab === "lag" && !finished}
       <span data-tour="diag-start"><Button variant="primary" icon="play" disabled={!(exe.trim() || game) || recording} loading={recording || detecting} onclick={begin}>
         {tk("ui.diag.start")}
       </Button></span>
@@ -392,11 +540,84 @@
   {/snippet}
 </Page>
 
+{#snippet checkNext()}
+  {#if finished}
+    <section class="tile check-done" aria-label={tk("ui.check.done_title")}>
+      <span class="done-icon" aria-hidden="true"><Icon name="check" size={20} /></span>
+      <div class="done-text">
+        <h3>{tk("ui.check.done_title")}</h3>
+        <p class="small muted">{tk("ui.check.done_text")}</p>
+      </div>
+      <div class="done-actions">
+        <Button variant="primary" icon="play" onclick={restartCheck}>{tk("ui.check.another")}</Button>
+      </div>
+    </section>
+  {:else if scenario?.baseline && hasAction}
+    <section class="tile check-do" aria-label={tk("ui.check.do_title")}>
+      <div class="micro">{tk("ui.check.do_title")}</div>
+      {#if chosenAdvice}<p class="chosen">{t(chosenAdvice)}</p>{/if}
+      <p class="small muted">{tk("ui.check.same_scene")} {tk("ui.check.press_below")}</p>
+    </section>
+  {:else if baseOutcome === "fine" && hasOptions}
+    <section class="tile check-do" aria-label={tk("ui.check.do_title")}>
+      <p class="small muted">{tk("ui.check.pick_hint")}</p>
+    </section>
+  {:else if baseOutcome !== "fine" && !checkable}
+    <section class="tile check-do" aria-label={tk("ui.check.do_title")}>
+      <p class="small muted">{tk("ui.check.again_text")}</p>
+      <div><Button variant="secondary" icon="play" onclick={begin}>{tk("ui.check.again")}</Button></div>
+    </section>
+  {/if}
+{/snippet}
+
 {#if guideOpen}
   <VerdictGuide onclose={() => (guideOpen = false)} />
 {/if}
 
 <style>
+  .check-do {
+    display: grid;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 5);
+  }
+  .chosen {
+    margin: 0;
+    color: var(--text);
+  }
+  .check-done {
+    padding: calc(var(--space) * 5);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(var(--space) * 4);
+  }
+  .done-icon {
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 1px solid var(--ok);
+    color: var(--ok);
+  }
+  .done-text {
+    flex: 1;
+    min-width: 220px;
+    display: grid;
+    gap: calc(var(--space) * 1);
+  }
+  .done-text h3 {
+    margin: 0;
+    font-size: var(--fs-section);
+    font-weight: 400;
+  }
+  .done-text p {
+    margin: 0;
+  }
+  .done-actions {
+    display: flex;
+    gap: calc(var(--space) * 2);
+  }
   .detect-note {
     display: grid;
     justify-items: center;

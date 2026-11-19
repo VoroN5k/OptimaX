@@ -111,6 +111,8 @@ fn export_typescript_bindings() {
         crate::commands::history::HistoryView,
         crate::commands::history::HistoryRow,
         optimax_history::RecordComparison,
+        optimax_history::CheckResult,
+        optimax_diagnosis::CheckChoice,
         optimax_history::Regression,
         optimax_history::DriverEffect,
         crate::commands::driver_online::DriverCheck,

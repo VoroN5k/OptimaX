@@ -47,3 +47,11 @@ export function tk(key: string, args: Record<string, string | number> = {}): str
   for (const [k, v] of Object.entries(args)) strArgs[k] = String(v);
   return renderKey(key, strArgs);
 }
+
+/** Той самий текст (ключ і аргументи) — напр. щоб розрізнити поради знахідок з однаковим id. */
+export function sameText(a: Text | null | undefined, b: Text | null | undefined): boolean {
+  if (!a || !b) return !a && !b;
+  const ka = Object.keys(a.args ?? {});
+  const kb = Object.keys(b.args ?? {});
+  return a.key === b.key && ka.length === kb.length && ka.every((k) => a.args?.[k] === b.args?.[k]);
+}

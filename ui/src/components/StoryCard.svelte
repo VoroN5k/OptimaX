@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import type { CheckChoice } from "../lib/bindings/CheckChoice";
   import type { Finding } from "../lib/bindings/Finding";
   import type { Story } from "../lib/bindings/Story";
   import type { Verdict } from "../lib/bindings/Verdict";
-  import { t, tk } from "../lib/i18n";
+  import { sameText, t, tk } from "../lib/i18n";
+  import Button from "./Button.svelte";
   import CheckRow from "./CheckRow.svelte";
   import Disclosure from "./Disclosure.svelte";
   import HeroCard from "./HeroCard.svelte";
@@ -17,6 +19,8 @@
     verdicts,
     action,
     meta,
+    onTry,
+    tried = null,
   }: {
     story: Story;
     verdicts: Verdict[];
@@ -24,6 +28,10 @@
     action?: Snippet<[Finding]>;
     /** Рядок під карткою: зарахований час, причина завершення. */
     meta?: Snippet;
+    /** Сценарій «Перевірити мою гру»: «Спробувати» біля кожної поради. */
+    onTry?: (f: Finding) => void;
+    /** Обрана в сценарії порада. */
+    tried?: CheckChoice | null;
   } = $props();
 
   const pick = (i: number | null): Finding | null => (i == null ? null : (verdicts[i]?.finding ?? null));
@@ -77,10 +85,21 @@
               {#snippet action()}{@render actionFor(main)}{/snippet}
             </CheckRow>
           </ul>
+        {:else if others.length}
+          <!-- «Усе гаразд», але поради є: це не «нічого робити», а необов'язкові варіанти. -->
+          <p>{tk("ui.story.try_title")}</p>
+          <ul class="checks">
+            {#each others as f, i (i)}
+              <CheckRow n={i + 1}>
+                {#if f.advice}{t(f.advice)}{/if}
+                {#snippet action()}{@render actionFor(f)}{/snippet}
+              </CheckRow>
+            {/each}
+          </ul>
         {:else}
           <p>{tk("ui.story.nothing")}</p>
         {/if}
-        {#if others.length}
+        {#if main?.advice && others.length}
           <Disclosure title={tk("ui.story.others")} count={others.length}>
             <ul class="checks">
               {#each others as f, i (i)}
@@ -101,6 +120,13 @@
 
 {#snippet actionFor(f: Finding)}
   {#if action}{@render action(f)}{/if}
+  {#if onTry}
+    {#if tried && tried.id === f.id && sameText(tried.advice, f.advice)}
+      <span class="tried small">{tk("ui.story.tried")}</span>
+    {:else}
+      <Button small variant="secondary" onclick={() => onTry(f)}>{tk("ui.story.try")}</Button>
+    {/if}
+  {/if}
 {/snippet}
 
 <style>
@@ -131,6 +157,11 @@
   }
   .block p.likely {
     color: var(--text);
+  }
+  .tried {
+    align-self: center;
+    color: var(--accent-from);
+    font-weight: 600;
   }
   .checks {
     margin: 0;

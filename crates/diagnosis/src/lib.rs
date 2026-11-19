@@ -8,6 +8,7 @@
 
 pub mod anatomy;
 pub mod chart;
+pub mod check;
 pub mod drivers;
 pub mod framegen;
 pub mod latency;
@@ -18,6 +19,7 @@ pub mod timeline;
 pub mod view;
 
 pub use chart::{ChartPoint, FrametimeChart, SpikeMark};
+pub use check::{check_plan, CheckChoice, CheckFocus, CheckPlan};
 pub use framegen::{FrameGenInfo, FrameGenSeries};
 pub use story::{insufficient_story, Smoothness, Story, StoryCause, StoryOutcome};
 pub use timeline::{

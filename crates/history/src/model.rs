@@ -1,7 +1,7 @@
 //! Модель запису історії.
 
 use optimax_core::Text;
-use optimax_diagnosis::Bottleneck;
+use optimax_diagnosis::{Bottleneck, CheckPlan};
 use serde::{Deserialize, Serialize};
 
 /// Режим монітора, на якому йшла гра.
@@ -135,6 +135,19 @@ pub struct HistoryEntry {
     /// Мітка сцени, яку користувач вказав перед записом (`None` — не вказано).
     #[serde(default)]
     pub scene: Option<String>,
+    /// Запис зроблено як перевірку дії («стало»): з яким записом «було» порівнювати й як.
+    #[serde(default)]
+    pub check: Option<CheckLink>,
+}
+
+/// Зв'язок запису «стало» із записом «було» в сценарії «Перевірити мою гру».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct CheckLink {
+    /// Id запису «було».
+    pub baseline: String,
+    /// За чим судити й варіанти A/B (з головної дії розповіді «було»).
+    pub plan: CheckPlan,
 }
 
 /// Чи з однієї сцени два записи (за мітками користувача).

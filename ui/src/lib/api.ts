@@ -5,6 +5,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AbFinal } from "./bindings/AbFinal";
 import type { AbView } from "./bindings/AbView";
 import type { AppInfo } from "./bindings/AppInfo";
+import type { CheckChoice } from "./bindings/CheckChoice";
+import type { CheckResult } from "./bindings/CheckResult";
 import type { ApplyResult } from "./bindings/ApplyResult";
 import type { AuditReport } from "./bindings/AuditReport";
 import type { DetectState } from "./bindings/DetectState";
@@ -101,6 +103,10 @@ export const api = {
   historyCompare: (a: string, b: string) => invoke<RecordComparison>("history_compare", { a, b }),
   /** Порівняння запису з попереднім записом тієї ж гри (`null` — перший запис гри). */
   historyVsPrevious: (id: string) => invoke<RecordComparison | null>("history_vs_previous", { id }),
+  /** «Було / стало» для запису-перевірки (`null` — це не перевірка або «було» вже видалено). */
+  checkResult: (id: string) => invoke<CheckResult | null>("check_result", { id }),
+  /** Найновіша перевірка «було / стало» (для «Огляду»). */
+  checkLast: () => invoke<CheckResult | null>("check_last"),
   historyOpen: (id: string) => invoke<DiagnosisResult>("history_open", { id }),
   historyDelete: (id: string) => invoke<void>("history_delete", { id }),
   historyClear: () => invoke<number>("history_clear"),
@@ -131,8 +137,16 @@ export const api = {
   libraryAddManual: (name: string, exe: string) => invoke<GameEntry>("library_add_manual", { name, exe }),
   libraryDetectStart: (id: string) => invoke<DetectState>("library_detect_start", { id }),
   libraryDetectCancel: () => invoke<void>("library_detect_cancel"),
-  diagStart: (exe: string, seconds: number, scene: string | null) =>
-    invoke<void>("diag_start", { exe, seconds, scene }),
+  /** `checkOf` — id запису «було»: цей запис — перевірка дії («стало»); `checkFinding` — id
+   * обраної поради («Спробувати»), без неї — головна дія. */
+  diagStart: (exe: string, seconds: number, scene: string | null, checkOf: string | null = null, checkFinding: CheckChoice | null = null) =>
+    invoke<void>("diag_start", {
+      exe,
+      seconds,
+      scene,
+      ...(checkOf ? { checkOf } : {}),
+      ...(checkFinding ? { checkFinding } : {}),
+    }),
   diagCancel: () => invoke<void>("diag_cancel"),
   diagState: () => invoke<DiagnosisState>("diag_state"),
   resStart: (exe: string, seconds: number) => invoke<ResView>("res_start", { exe, seconds }),

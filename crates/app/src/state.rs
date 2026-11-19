@@ -106,6 +106,17 @@ pub struct AppState {
     pub dashboard: Mutex<crate::commands::dashboard::DashCache>,
     /// Останній результат діагностики (для звіту для відгуку).
     pub last_diagnosis: Mutex<Option<crate::dto::DiagnosisResult>>,
+    /// Id останнього результату в «Історії» (`last_diagnosis` збережено під ним) — для «було».
+    pub last_record_id: Mutex<Option<String>>,
+    /// Остання перевірка «було / стало» (гра й зв'язок): повторні «Я зробив» з тим самим «було».
+    /// (гра, обрана порада, зв'язок).
+    pub last_check: Mutex<
+        Option<(
+            String,
+            Option<optimax_diagnosis::CheckChoice>,
+            optimax_history::CheckLink,
+        )>,
+    >,
     /// Останні рядки журналу дій (для звіту для відгуку), не більше [`LOG_TAIL`].
     pub log_tail: Mutex<VecDeque<crate::log_layer::LogLine>>,
     /// Знімок процесів для вибору гри: CPU рахується за час від попереднього запиту
@@ -149,6 +160,8 @@ impl AppState {
             cleanup: Mutex::new(Default::default()),
             dashboard: Mutex::new(Default::default()),
             last_diagnosis: Mutex::new(None),
+            last_record_id: Mutex::new(None),
+            last_check: Mutex::new(None),
             log_tail: Mutex::new(VecDeque::with_capacity(LOG_TAIL)),
             processes: Mutex::new(None),
             library: Mutex::new(Default::default()),

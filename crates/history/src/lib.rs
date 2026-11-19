@@ -13,12 +13,13 @@ mod session;
 mod store;
 
 pub use compare::{
-    compare, diff, driver_effects, fps_noise_pct, previous_of, regressions, DriverEffect,
-    RecordComparison, Regression, Trend, MIN_SIGNIFICANT_PCT,
+    check, check_of, compare, diff, driver_effects, fps_noise_pct, latest_check, previous_of,
+    regressions, CheckResult, DriverEffect, RecordComparison, Regression, Trend,
+    MIN_SIGNIFICANT_PCT,
 };
 pub use model::{
-    clean_scene, scene_match, DisplayState, FileStamp, HistoryEntry, SceneMatch, StateChange,
-    StateField, SystemState,
+    clean_scene, scene_match, CheckLink, DisplayState, FileStamp, HistoryEntry, SceneMatch,
+    StateChange, StateField, SystemState,
 };
 pub use session::{
     cause_summary, keep_worst, FreezeCauseCount, FreezeEntry, SessionEntry, SessionStore,

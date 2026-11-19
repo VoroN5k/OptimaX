@@ -66,8 +66,18 @@
       on("diag-done", (r) => {
         ui.lastRecord = r;
         ui.lastRecordId = null;
+        // Сценарій «Перевірити мою гру»: запис «було» вирішує, чи є що перевіряти (події
+        // `diag-done` і `history-saved` можуть прийти в будь-якому порядку).
+        if (ui.check?.armed && !ui.check.rechecking) ui.check.outcome = r.diagnosis.story?.outcome ?? null;
       }),
-      on("history-saved", (id) => (ui.lastRecordId = id)),
+      on("history-saved", (id) => {
+        ui.lastRecordId = id;
+        // «Було» — запис сценарію до дії; повторні («стало») порівнюються з ним.
+        if (ui.check?.armed) {
+          if (ui.check.rechecking) ui.check.afterId = id;
+          else if (!ui.check.baseline) ui.check.baseline = id;
+        }
+      }),
       on("upscale", (v) => {
         up.view = v;
       }),

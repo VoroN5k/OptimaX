@@ -6,7 +6,9 @@
   // Порівняння двох записів (старіший → новіший): дельти, висновок з порогом похибки, попередження
   // про різні умови й що змінилося в ПК. Усе рахує бекенд (`history::compare`). Спільне для
   // «Історії» й картки «Проти попереднього запису» в результаті; `compact` — до трьох змін.
-  let { cmp, compact = false }: { cmp: RecordComparison; compact?: boolean } = $props();
+  // `trend = false` — висновок за середнім FPS не показуємо (у «Було / стало» свій висновок за
+  // метрикою дії, щоб два рядки не суперечили).
+  let { cmp, compact = false, trend = true }: { cmp: RecordComparison; compact?: boolean; trend?: boolean } = $props();
 
   const changes = $derived(compact ? cmp.changes.slice(0, 3) : cmp.changes);
 </script>
@@ -22,10 +24,12 @@
     <strong class="mono">{fps(cmp.older.low_1pct_fps)} → {fps(cmp.newer.low_1pct_fps)}</strong>
     <span class="mono">{pct(cmp.low_1pct_change_pct)}</span>
   </div>
-  <p class="trend {cmp.trend}" role="status">
-    <i class="dot" aria-hidden="true"></i>
-    {tk(`ui.history.trend.${cmp.trend}`, { t: cmp.threshold_pct.toFixed(0) })}
-  </p>
+  {#if trend}
+    <p class="trend {cmp.trend}" role="status">
+      <i class="dot" aria-hidden="true"></i>
+      {tk(`ui.history.trend.${cmp.trend}`, { t: cmp.threshold_pct.toFixed(0) })}
+    </p>
+  {/if}
 </div>
 {#if !cmp.same_game}
   <p class="warn small">{tk("ui.history.warn_game")}</p>

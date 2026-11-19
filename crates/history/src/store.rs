@@ -343,4 +343,12 @@ mod tests {
         assert!(d.read("a.json").unwrap().is_none());
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    #[test]
+    fn entry_without_check_deserializes() {
+        let mut v = serde_json::to_value(game_entry("re9.exe", 1)).unwrap();
+        v.as_object_mut().unwrap().remove("check");
+        let e: HistoryEntry = serde_json::from_value(v).unwrap();
+        assert_eq!(e.check, None);
+    }
 }

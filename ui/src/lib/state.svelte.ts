@@ -2,6 +2,8 @@
 import type { UpdateStatus } from "./bindings/UpdateStatus";
 import type { DriverCheck } from "./bindings/DriverCheck";
 import type { DiagnosisResult } from "./bindings/DiagnosisResult";
+import type { StoryOutcome } from "./bindings/StoryOutcome";
+import type { CheckChoice } from "./bindings/CheckChoice";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { ExecProgress } from "./bindings/ExecProgress";
 import type { ExecView } from "./bindings/ExecView";
@@ -24,6 +26,28 @@ export type BgMode = "idle" | "scanning" | "warn" | "ok";
 
 /** Не більше рядків журналу в DOM. */
 export const LOG_LIMIT = 500;
+
+/** Стан сценарію «Перевірити мою гру». */
+export interface CheckSession {
+  /** Запис сценарію почато (наступний `history-saved` — «було», якщо «було» ще немає). */
+  armed: boolean;
+  /** Гра, тривалість і сцена першого запису — для повторного. */
+  exe: string;
+  seconds: number;
+  scene: string;
+  /** Id запису «було» в «Історії». */
+  baseline: string | null;
+  /** Підсумок розповіді першого запису (чи є що перевіряти). */
+  outcome: StoryOutcome | null;
+  /** Іде (чи йшов останнім) повторний запис «стало». */
+  rechecking: boolean;
+  /** Id останнього збереженого запису «стало». */
+  afterId: string | null;
+  /** Обрана порада («Спробувати»); `null` — головна дія. */
+  choice: CheckChoice | null;
+  /** Порада головної дії «було» (щоб на «стало» показати, що саме перевіряємо). */
+  mainAdvice: Text | null;
+}
 
 export const ui = $state({
   screen: "analysis" as ScreenId,
@@ -52,6 +76,8 @@ export const ui = $state({
   lastRecord: null as DiagnosisResult | null,
   /** Id останнього запису в історії (приходить після `diag-done`); `null` — ще не збережено. */
   lastRecordId: null as string | null,
+  /** Сценарій «Перевірити мою гру» (з «Огляду»); `null` — звичайна «Діагностика». Лише сесія. */
+  check: null as CheckSession | null,
   /** Відкрита висувна панель журналу дій (кнопка «Журнал» у верхній панелі). */
   logOpen: false,
 });

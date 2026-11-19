@@ -1,5 +1,6 @@
 // Відповіді підробленого бекенду. Типи — ті самі згенеровані прив'язки, що й у інтерфейсі:
 // зміна Rust-типу без оновлення тут ламає `npm run check:e2e`.
+import type { CheckResult } from "../../src/lib/bindings/CheckResult";
 import type { AppInfo } from "../../src/lib/bindings/AppInfo";
 import type { ConfigSummary } from "../../src/lib/bindings/ConfigSummary";
 import type { DiagnosisResult } from "../../src/lib/bindings/DiagnosisResult";
@@ -71,6 +72,8 @@ export interface Responses {
   history_list: HistoryView;
   history_compare: RecordComparison;
   history_vs_previous: RecordComparison | null;
+  check_result: CheckResult | null;
+  check_last: CheckResult | null;
   history_open: DiagnosisResult;
   history_delete: null;
   history_clear: number;
@@ -702,6 +705,8 @@ export function defaults(): Responses {
     history_list: structuredClone(history),
     history_compare: structuredClone(comparison),
     history_vs_previous: null,
+    check_result: null,
+    check_last: null,
     history_open: structuredClone(gpuResult),
     history_delete: null,
     history_clear: 3,

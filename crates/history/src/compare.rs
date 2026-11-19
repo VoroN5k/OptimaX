@@ -1,6 +1,10 @@
 //! Порівняння записів: зміна FPS проти похибки й що змінилося в стані ПК.
 
-use crate::model::{scene_match, HistoryEntry, SceneMatch, StateChange, StateField, SystemState};
+use crate::model::{
+    scene_match, CheckLink, HistoryEntry, SceneMatch, StateChange, StateField, SystemState,
+};
+use optimax_core::Text;
+use optimax_diagnosis::{CheckFocus, CheckPlan};
 use serde::Serialize;
 
 /// Менша зміна FPS не вважається значущою навіть за малого розкиду: різні моменти гри в одній
@@ -144,6 +148,16 @@ fn change_pct(from: Option<f64>, to: Option<f64>) -> Option<f64> {
     }
 }
 
+/// Висновок за зміною метрики: не менше порогу — краще/гірше, менше — у межах похибки.
+fn trend_of(change_pct: Option<f64>, threshold_pct: f64) -> Trend {
+    match change_pct {
+        None => Trend::Unknown,
+        Some(d) if d >= threshold_pct => Trend::Better,
+        Some(d) if d <= -threshold_pct => Trend::Worse,
+        Some(_) => Trend::Same,
+    }
+}
+
 /// Порівнює два записи; порядок аргументів не важливий — старіший визначається за часом.
 /// Поріг значущості: не менше [`MIN_SIGNIFICANT_PCT`] і не менше подвоєної сумарної похибки
 /// обох записів; без оцінки похибки береться мінімальний поріг.
@@ -159,12 +173,7 @@ pub fn compare(a: &HistoryEntry, b: &HistoryEntry) -> RecordComparison {
     };
     let threshold_pct = noise.max(MIN_SIGNIFICANT_PCT);
     let avg = change_pct(older.avg_fps, newer.avg_fps);
-    let trend = match avg {
-        None => Trend::Unknown,
-        Some(d) if d >= threshold_pct => Trend::Better,
-        Some(d) if d <= -threshold_pct => Trend::Worse,
-        Some(_) => Trend::Same,
-    };
+    let trend = trend_of(avg, threshold_pct);
     RecordComparison {
         avg_fps_change_pct: avg,
         low_1pct_change_pct: change_pct(older.low_1pct_fps, newer.low_1pct_fps),
@@ -178,6 +187,62 @@ pub fn compare(a: &HistoryEntry, b: &HistoryEntry) -> RecordComparison {
         older: older.clone(),
         newer: newer.clone(),
     }
+}
+
+/// Висновок «було / стало» за метрикою дії.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct CheckResult {
+    /// Повне порівняння записів (дельти, умови, що змінилося в ПК).
+    pub comparison: RecordComparison,
+    /// Метрика висновку.
+    pub focus: CheckFocus,
+    /// Висновок за метрикою з порогом `comparison.threshold_pct`.
+    pub trend: Trend,
+    /// Зміна метрики, %.
+    pub change_pct: Option<f64>,
+    /// Варіанти точної перевірки A/B — лише коли один запис нічого не довів.
+    pub ab: Option<[Text; 2]>,
+    /// Що змінено: порада, яку перевіряли.
+    pub advice: Option<Text>,
+}
+
+/// Висновок «було / стало»: наявне порівняння записів, а висновок — за метрикою дії (`Fps` —
+/// середній FPS, `Lows` — 1% low) з тим самим порогом похибки. Варіанти A/B пропонуються лише
+/// тоді, коли різниця в межах похибки чи не порівнюється.
+pub fn check(baseline: &HistoryEntry, after: &HistoryEntry, plan: &CheckPlan) -> CheckResult {
+    let comparison = compare(baseline, after);
+    let change_pct = match plan.focus {
+        CheckFocus::Fps => comparison.avg_fps_change_pct,
+        CheckFocus::Lows => comparison.low_1pct_change_pct,
+    };
+    let trend = trend_of(change_pct, comparison.threshold_pct);
+    let ab = matches!(trend, Trend::Same | Trend::Unknown)
+        .then(|| plan.ab.clone())
+        .flatten();
+    CheckResult {
+        comparison,
+        focus: plan.focus,
+        trend,
+        change_pct,
+        ab,
+        advice: plan.advice.clone(),
+    }
+}
+
+/// «Було / стало» для запису `id`, якщо це перевірка і запис «було» ще є.
+pub fn check_of(entries: &[HistoryEntry], id: &str) -> Option<CheckResult> {
+    let after = entries.iter().find(|e| e.id == id)?;
+    let link: &CheckLink = after.check.as_ref()?;
+    let baseline = entries.iter().find(|e| e.id == link.baseline)?;
+    Some(check(baseline, after, &link.plan))
+}
+
+/// Найновіша перевірка, чий запис «було» ще є (для «Огляду»).
+pub fn latest_check(entries: &[HistoryEntry]) -> Option<CheckResult> {
+    let mut checks: Vec<&HistoryEntry> = entries.iter().filter(|e| e.check.is_some()).collect();
+    checks.sort_by_key(|e| std::cmp::Reverse(e.at_unix_ms));
+    checks.into_iter().find_map(|e| check_of(entries, &e.id))
 }
 
 /// Попередній запис тієї самої гри (назва без урахування регістру) для запису `id`: найновіший
@@ -326,6 +391,7 @@ pub(crate) mod tests {
             },
             has_recording: true,
             scene: None,
+            check: None,
         }
     }
 
@@ -552,5 +618,119 @@ pub(crate) mod tests {
         assert_eq!(c.changes[2].from, "100.0 МБ");
         assert!(!c.same_display);
         assert!(diff(&a.state, &a.state).is_empty());
+    }
+
+    fn plan(focus: CheckFocus) -> CheckPlan {
+        CheckPlan {
+            focus,
+            ab: Some([Text::new("a"), Text::new("b")]),
+            advice: Some(Text::new("diag.gpu_bound.advice")),
+        }
+    }
+
+    /// «Було» (час 1) і «стало» (час 2) з `avg` FPS і `low` 1% low; «стало» пов'язане з «було».
+    fn pair(
+        avg: (f64, f64),
+        low: (Option<f64>, Option<f64>),
+        focus: CheckFocus,
+    ) -> Vec<HistoryEntry> {
+        let mut a = entry(1, avg.0, None);
+        a.low_1pct_fps = low.0;
+        let mut b = entry(2, avg.1, None);
+        b.low_1pct_fps = low.1;
+        b.check = Some(CheckLink {
+            baseline: a.id.clone(),
+            plan: plan(focus),
+        });
+        vec![b, a]
+    }
+
+    #[test]
+    fn check_fps_better_at_threshold() {
+        let e = pair((100.0, 108.0), (Some(70.0), Some(70.0)), CheckFocus::Fps);
+        let r = check(&e[1], &e[0], &plan(CheckFocus::Fps));
+        assert_eq!(r.trend, Trend::Better);
+        assert_eq!(r.focus, CheckFocus::Fps);
+        assert!((r.change_pct.unwrap() - 8.0).abs() < 1e-9);
+        assert_eq!(r.ab, None);
+    }
+
+    #[test]
+    fn check_lows_uses_low_1pct() {
+        let e = pair((100.0, 100.0), (Some(50.0), Some(65.0)), CheckFocus::Lows);
+        let r = check(&e[1], &e[0], &plan(CheckFocus::Lows));
+        assert_eq!(r.trend, Trend::Better);
+        assert_eq!(r.comparison.trend, Trend::Same);
+        assert!((r.change_pct.unwrap() - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn check_same_offers_ab() {
+        let e = pair((100.0, 103.0), (Some(70.0), Some(70.0)), CheckFocus::Fps);
+        let r = check(&e[1], &e[0], &plan(CheckFocus::Fps));
+        assert_eq!(r.trend, Trend::Same);
+        assert_eq!(r.ab, plan(CheckFocus::Fps).ab);
+    }
+
+    #[test]
+    fn check_lows_missing_is_unknown_with_ab() {
+        let e = pair((100.0, 120.0), (Some(70.0), None), CheckFocus::Lows);
+        let r = check(&e[1], &e[0], &plan(CheckFocus::Lows));
+        assert_eq!(r.trend, Trend::Unknown);
+        assert_eq!(r.ab, plan(CheckFocus::Lows).ab);
+    }
+
+    #[test]
+    fn check_worse_has_no_ab() {
+        let e = pair((100.0, 80.0), (Some(70.0), Some(70.0)), CheckFocus::Fps);
+        let r = check(&e[1], &e[0], &plan(CheckFocus::Fps));
+        assert_eq!(r.trend, Trend::Worse);
+        assert_eq!(r.ab, None);
+    }
+
+    #[test]
+    fn check_of_links_baseline() {
+        let e = pair((100.0, 120.0), (Some(70.0), Some(70.0)), CheckFocus::Fps);
+        let r = check_of(&e, &e[0].id).unwrap();
+        assert_eq!(r.comparison.older.id, e[1].id);
+        assert_eq!(r.trend, Trend::Better);
+    }
+
+    #[test]
+    fn check_of_missing_baseline_is_none() {
+        let e = pair((100.0, 120.0), (Some(70.0), Some(70.0)), CheckFocus::Fps);
+        let only_after = vec![e[0].clone()];
+        assert!(check_of(&only_after, &e[0].id).is_none());
+    }
+
+    #[test]
+    fn check_of_plain_entry_is_none() {
+        let e = pair((100.0, 120.0), (Some(70.0), Some(70.0)), CheckFocus::Fps);
+        assert!(check_of(&e, &e[1].id).is_none());
+        assert!(check_of(&e, "nope").is_none());
+    }
+
+    #[test]
+    fn latest_check_picks_newest() {
+        let mut e = pair((100.0, 120.0), (Some(70.0), Some(70.0)), CheckFocus::Fps);
+        let mut newer = entry(5, 90.0, None);
+        newer.check = Some(CheckLink {
+            baseline: e[1].id.clone(),
+            plan: plan(CheckFocus::Fps),
+        });
+        // Найновіший — без зв'язку: його пропускаємо.
+        e.insert(0, entry(9, 50.0, None));
+        e.insert(1, newer);
+        let r = latest_check(&e).unwrap();
+        assert_eq!(r.comparison.newer.at_unix_ms, 5);
+        assert_eq!(r.trend, Trend::Worse);
+        assert!(latest_check(&[entry(1, 1.0, None)]).is_none());
+    }
+
+    #[test]
+    fn check_carries_advice() {
+        let e = pair((100.0, 120.0), (Some(70.0), Some(70.0)), CheckFocus::Fps);
+        let r = check(&e[1], &e[0], &plan(CheckFocus::Fps));
+        assert_eq!(r.advice, Some(Text::new("diag.gpu_bound.advice")));
     }
 }

@@ -49,7 +49,12 @@ test.describe("Розповідь простими словами", () => {
     await expect(card(page)).toContainText(tk("diag.story.how.fps_hz", { avg: "125", hz: "200" }));
     await expect(card(page)).toContainText(tk("diag.story.outcome.fine"));
     await expect(card(page)).toContainText(tk("diag.story.smooth.smooth"));
-    await expect(card(page)).toContainText(tk("ui.story.nothing"));
+    // «Усе гаразд», але поради є — одразу список «Спробуй», без «Нічого не треба» і без згортки.
+    await expect(card(page)).toContainText(tk("ui.story.try_title"));
+    await expect(card(page).getByText(tk("diag.upscale.helps.advice"))).toBeVisible();
+    await expect(card(page).getByText(tk("ui.story.others"), { exact: false })).toHaveCount(0);
+    // Поза сценарієм «Перевірити мою гру» кнопки «Спробувати» немає.
+    await expect(card(page).getByRole("button", { name: tk("ui.story.try") })).toHaveCount(0);
     // Ривків немає — блоку «Чому» немає.
     await expect(card(page).getByText(tk("ui.story.why"))).toHaveCount(0);
     await expect(page.getByRole("region", { name: tk("ui.diag.kpi.label") })).toHaveCount(0);

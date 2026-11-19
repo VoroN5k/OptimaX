@@ -11,6 +11,7 @@ use optimax_diagnosis::{diagnose, Bottleneck, CacheFile, Context};
 use optimax_frametime::EndReason;
 use optimax_frametime::{CancelToken, RecordNotices, RecordOptions, Target};
 use optimax_gamemode::library::detect::RecordingOutcome;
+use optimax_history::CheckLink;
 use std::collections::HashMap;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -153,7 +154,8 @@ pub(crate) fn context(link: Option<&crate::link::Link>) -> (Context, Option<u32>
     )
 }
 
-/// Починає запис гри у фоні. Результат прийде подією `diag-done`.
+/// Починає запис гри у фоні. Результат прийде подією `diag-done`. `check_of` — id запису «було»:
+/// цей запис — перевірка дії («стало»), в «Історії» він пов'язується з «було».
 #[tauri::command]
 pub fn diag_start(
     app: AppHandle,
@@ -161,6 +163,8 @@ pub fn diag_start(
     exe: String,
     seconds: u32,
     scene: Option<String>,
+    check_of: Option<String>,
+    check_finding: Option<optimax_diagnosis::CheckChoice>,
 ) -> CmdResult<()> {
     let scene = optimax_history::clean_scene(scene.as_deref());
     let target = Target::ProcessName(exe.clone());
@@ -185,9 +189,39 @@ pub fn diag_start(
     if slot.is_some() {
         return Err(CmdError::Failed("запис уже йде".into()));
     }
+    // «Було» з пам'яті, якщо це останній результат (інакше — з «Історії» у фоновому потоці).
+    // Ланцюжок: той самий «було», що й у попередній перевірці, — той самий план.
+    let live_plan = match check_of.as_deref() {
+        Some(id) => {
+            let finding = check_finding.as_ref();
+            let cached = lock(&state.last_check).clone();
+            let reuse = cached.as_ref().and_then(|(game, f, link)| {
+                super::history::cached_plan(id, finding, Some((f.as_ref(), link)))
+                    .map(|p| (game.clone(), p))
+            });
+            match reuse {
+                Some((game, plan)) => {
+                    if !game.eq_ignore_ascii_case(&exe) {
+                        return Err(CmdError::Failed("запис «було» — інша гра".into()));
+                    }
+                    Some(plan)
+                }
+                None => {
+                    let last_id = lock(&state.last_record_id).clone();
+                    let last = lock(&state.last_diagnosis);
+                    super::history::live_baseline(id, last_id.as_deref(), last.as_ref())
+                        .map(|b| super::history::plan_for_check(b, &exe, finding))
+                        .transpose()?
+                }
+            }
+        }
+        None => None,
+    };
     let cancel = CancelToken::new();
     *slot = Some(cancel.clone());
     drop(slot);
+    // Новий запис: id попереднього більше не описує `last_diagnosis`, коли той зміниться.
+    *lock(&state.last_record_id) = None;
     let total = seconds.clamp(10, 300);
 
     let (start_mode, sound) = {
@@ -200,6 +234,20 @@ pub fn diag_start(
         .spawn(move || {
             let result = (|| -> CmdResult<DiagnosisResult> {
                 let state = app.state::<AppState>();
+                let check = match (check_of, live_plan) {
+                    (Some(baseline), Some(plan)) => Some(CheckLink { baseline, plan }),
+                    (Some(baseline), None) => {
+                        let b = super::history::open_result(&baseline)?;
+                        let plan =
+                            super::history::plan_for_check(&b, &exe, check_finding.as_ref())?;
+                        Some(CheckLink { baseline, plan })
+                    }
+                    (None, _) => None,
+                };
+                if let Some(link) = &check {
+                    *lock(&state.last_check) =
+                        Some((exe.clone(), check_finding.clone(), link.clone()));
+                }
                 // Чорна скринька чекає до кінця запису (одна сесія PresentMon і DPC).
                 let _pause = super::blackbox::Pause::new(&app);
                 let mut options = RecordOptions::new(target, Duration::from_secs(u64::from(total)))
@@ -234,7 +282,9 @@ pub fn diag_start(
                     .name("optimax-history".into())
                     .spawn(move || {
                         // Після збереження UI просить порівняння з попереднім записом гри.
-                        if let Some(id) = super::history::remember(&for_history, &rec, scene) {
+                        if let Some(id) = super::history::remember(&for_history, &rec, scene, check)
+                        {
+                            *lock(&notify.state::<AppState>().last_record_id) = Some(id.clone());
                             let _ = notify.emit("history-saved", id);
                         }
                     });

@@ -8,6 +8,9 @@
   import Button from "./Button.svelte";
   import { api } from "../lib/api";
   import type { RecordComparison } from "../lib/bindings/RecordComparison";
+  import type { CheckChoice } from "../lib/bindings/CheckChoice";
+  import type { CheckResult } from "../lib/bindings/CheckResult";
+  import CheckCard from "./CheckCard.svelte";
   import CheckRow from "./CheckRow.svelte";
   import ComparisonSummary from "./ComparisonSummary.svelte";
   import Disclosure from "./Disclosure.svelte";
@@ -35,6 +38,9 @@
     onCompare,
     historyId = null,
     live = false,
+    next,
+    onTry,
+    tried = null,
   }: {
     result: DiagnosisResult;
     /** Позначений приклад знайомства (не виміряні дані). */
@@ -47,16 +53,28 @@
     onCompare?: (game: string, variants: string[]) => void;
     /** Id запису в історії: є — показати порівняння з попереднім записом гри (вибирає бекенд). */
     historyId?: string | null;
+    /** Під розповіддю замість підказки «запиши ще раз» (крок сценарію «Перевірити мою гру»). */
+    next?: Snippet;
+    /** Сценарій: «Спробувати» пораду розповіді та id обраної. */
+    onTry?: (f: Finding) => void;
+    tried?: CheckChoice | null;
     /** Щойно записаний результат (не з «Історії» й не приклад): лише тоді підказка «запиши ще раз». */
     live?: boolean;
   } = $props();
 
   let previous = $state<RecordComparison | null>(null);
+  /** Запис — перевірка дії: «Було / стало» замість «Проти попереднього запису». */
+  let check = $state<CheckResult | null>(null);
   $effect(() => {
     const id = historyId;
     previous = null;
+    check = null;
     if (!id) return;
     let alive = true;
+    api
+      .checkResult(id)
+      .then((c) => alive && (check = c))
+      .catch((e: unknown) => console.warn("було / стало:", e));
     api
       .historyVsPrevious(id)
       .then((c) => alive && (previous = c))
@@ -215,7 +233,9 @@
     </div>
 
     <div class="side">
-      {#if previous && !story}
+      {#if check && !story}
+        <CheckCard res={check} {onCompare} />
+      {:else if previous && !story}
         <section class="tile prev" aria-label={tk("ui.prev.title")}>
           <div class="micro">{tk("ui.prev.title")}</div>
           <ComparisonSummary cmp={previous} compact />
@@ -255,21 +275,27 @@
   {/if}
 
   {#if story}
-    <StoryCard {story} verdicts={result.diagnosis.verdicts}>
+    <StoryCard {story} verdicts={result.diagnosis.verdicts} {onTry} {tried}>
       {#snippet action(f)}{@render stepAction(f)}{/snippet}
       {#snippet meta()}
         <span>{tk("ui.rec.counted_total", { s: Math.round(result.counted_s) })}</span>
         {#if result.end_reason !== "completed"}<span>{tk(`ui.rec.end.${result.end_reason}`)}</span>{/if}
       {/snippet}
     </StoryCard>
-    {#if live && !example && story.outcome !== "insufficient"}<p class="small muted rerecord">{tk("ui.diag.next.rerecord")}</p>{/if}
-    {#if previous}
+    {#if !next && live && !example && story.outcome !== "insufficient"}
+      <p class="small muted rerecord">{tk("ui.diag.next.rerecord")}</p>
+    {/if}
+    {#if check}
+      <CheckCard res={check} {onCompare} />
+    {:else if previous}
       <section class="tile prev" aria-label={tk("ui.prev.title")}>
         <div class="micro">{tk("ui.prev.title")}</div>
         <ComparisonSummary cmp={previous} compact />
         <p class="small muted prev-note">{tk("ui.prev.note")}</p>
       </section>
     {/if}
+    <!-- Сценарій «Перевірити мою гру»: після висновку «було / стало» — наступний крок. -->
+    {@render next?.()}
     <div class="anchor" data-tour="diag-findings">
       <Fold title={tk("ui.diag.details")} summary={tk("ui.diag.details_summary")} bind:open={detailsOpen}>
         <div class="details">{@render classic()}</div>

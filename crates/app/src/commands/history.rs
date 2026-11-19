@@ -11,12 +11,12 @@ use flate2::Compression;
 use optimax_audit::model::GpuVendor;
 use optimax_audit::{SystemProbe, WindowsProbe};
 use optimax_diagnosis::timeline::Timeline;
-use optimax_diagnosis::{diagnose, Bottleneck, Context};
+use optimax_diagnosis::{check_plan, diagnose, Bottleneck, CheckChoice, CheckPlan, Context};
 use optimax_frametime::Recording;
 use optimax_history::{
-    compare, diff, driver_effects, entry_id, fps_noise_pct, regressions, DisplayState,
-    DriverEffect, FileStamp, HistoryEntry, RecordComparison, Regression, StateChange, StdDir,
-    Store, SystemState, KEEP_RECORDINGS_PER_GAME,
+    compare, diff, driver_effects, entry_id, fps_noise_pct, regressions, CheckLink, CheckResult,
+    DisplayState, DriverEffect, FileStamp, HistoryEntry, RecordComparison, Regression, StateChange,
+    StdDir, Store, SystemState, KEEP_RECORDINGS_PER_GAME,
 };
 use serde::Serialize;
 use std::io::{Read, Write};
@@ -143,6 +143,7 @@ pub fn entry_from(
     rec: &Recording,
     state: SystemState,
     scene: Option<String>,
+    check: Option<CheckLink>,
     at_unix_ms: i64,
 ) -> Option<HistoryEntry> {
     let d = &r.diagnosis;
@@ -170,6 +171,7 @@ pub fn entry_from(
         state,
         has_recording: true,
         scene,
+        check,
     })
 }
 
@@ -183,10 +185,15 @@ pub(crate) fn compress(rec: &Recording) -> CmdResult<Vec<u8>> {
 /// Зберігає завершений запис «Діагностики» в історію (блокує: стан ПК і стиснення).
 /// Помилка лише логується — діагностика від історії не залежить.
 /// Повертає id збереженого запису (`None` — не збережено).
-pub fn remember(r: &DiagnosisResult, rec: &Recording, scene: Option<String>) -> Option<String> {
+pub fn remember(
+    r: &DiagnosisResult,
+    rec: &Recording,
+    scene: Option<String>,
+    check: Option<CheckLink>,
+) -> Option<String> {
     let run = || -> CmdResult<Option<String>> {
         let state = system_state(&r.diagnosis.game);
-        let Some(entry) = entry_from(r, rec, state, scene, now_ms()) else {
+        let Some(entry) = entry_from(r, rec, state, scene, check, now_ms()) else {
             return Ok(None);
         };
         let files = dir()?;
@@ -277,32 +284,95 @@ pub async fn history_vs_previous(id: String) -> CmdResult<Option<RecordCompariso
 /// конфігурації не підставляється — він описував би сьогоднішній ПК, а не тодішній.
 #[tauri::command]
 pub async fn history_open(id: String) -> CmdResult<DiagnosisResult> {
+    blocking(move || open_result(&id)).await
+}
+
+/// Старий запис, проаналізований заново (тіло `history_open`; також — запис «було» перевірки).
+pub fn open_result(id: &str) -> CmdResult<DiagnosisResult> {
+    let files = dir()?;
+    let store = Store::new(&files);
+    let entry = get(&store, id)?;
+    let bytes = store
+        .recording(id)
+        .map_err(failed)?
+        .ok_or_else(|| CmdError::NotFound("повний запис уже не зберігається".into()))?;
+    let mut json = Vec::new();
+    GzDecoder::new(bytes.as_slice())
+        .read_to_end(&mut json)
+        .map_err(failed)?;
+    let rec: Recording = serde_json::from_slice(&json).map_err(failed)?;
+    let display_hz = entry.state.display.map(|d| d.hz);
+    let ctx = Context {
+        display_hz,
+        ..Context::default()
+    };
+    Ok(DiagnosisResult {
+        diagnosis: diagnose(&rec, &ctx),
+        display_hz,
+        presentmon_messages: rec.presentmon_messages.clone(),
+        cancelled: rec.cancelled,
+        counted_s: rec.counted_seconds(),
+        end_reason: rec.end_reason,
+    })
+}
+
+/// Як перевіряти дію із запису «було» для повторного запису гри `exe`: та сама гра і є що
+/// перевіряти (`diagnosis::check_plan`), інакше — помилка й запис не починається.
+/// `finding` — id обраної поради («Спробувати»), `None` — головна дія.
+pub(crate) fn plan_for_check(
+    baseline: &DiagnosisResult,
+    exe: &str,
+    finding: Option<&CheckChoice>,
+) -> CmdResult<CheckPlan> {
+    if !baseline.diagnosis.game.eq_ignore_ascii_case(exe) {
+        return Err(CmdError::Failed("запис «було» — інша гра".into()));
+    }
+    check_plan(&baseline.diagnosis, finding)
+        .ok_or_else(|| CmdError::Failed("у записі «було» немає дії для перевірки".into()))
+}
+
+/// Діагноз «було» з пам'яті: останній результат, якщо саме він збережений під id `check_of`
+/// (у ньому вже враховано тест роздільності й контекст запису, якого немає в «Історії»).
+pub(crate) fn live_baseline<'a>(
+    check_of: &str,
+    last_id: Option<&str>,
+    last: Option<&'a DiagnosisResult>,
+) -> Option<&'a DiagnosisResult> {
+    (last_id == Some(check_of)).then_some(last).flatten()
+}
+
+/// План уже обчисленої перевірки з тим самим «було» (ланцюжок «Я зробив» у сценарії): той самий
+/// план, що й для першого повторного запису, а не новий аналіз запису з «Історії».
+/// `cached` — (обрана порада, зв'язок) попередньої перевірки; план береться, лише коли збігаються і
+/// «було», і обрана порада.
+pub(crate) fn cached_plan(
+    check_of: &str,
+    finding: Option<&CheckChoice>,
+    cached: Option<(Option<&CheckChoice>, &CheckLink)>,
+) -> Option<CheckPlan> {
+    cached
+        .filter(|(f, c)| c.baseline == check_of && *f == finding)
+        .map(|(_, c)| c.plan.clone())
+}
+
+/// «Було / стало» для запису `id` (`None` — це не перевірка або запису «було» вже немає).
+#[tauri::command]
+pub async fn check_result(id: String) -> CmdResult<Option<CheckResult>> {
     blocking(move || {
         let files = dir()?;
-        let store = Store::new(&files);
-        let entry = get(&store, &id)?;
-        let bytes = store
-            .recording(&id)
-            .map_err(failed)?
-            .ok_or_else(|| CmdError::NotFound("повний запис уже не зберігається".into()))?;
-        let mut json = Vec::new();
-        GzDecoder::new(bytes.as_slice())
-            .read_to_end(&mut json)
-            .map_err(failed)?;
-        let rec: Recording = serde_json::from_slice(&json).map_err(failed)?;
-        let display_hz = entry.state.display.map(|d| d.hz);
-        let ctx = Context {
-            display_hz,
-            ..Context::default()
-        };
-        Ok(DiagnosisResult {
-            diagnosis: diagnose(&rec, &ctx),
-            display_hz,
-            presentmon_messages: rec.presentmon_messages.clone(),
-            cancelled: rec.cancelled,
-            counted_s: rec.counted_seconds(),
-            end_reason: rec.end_reason,
-        })
+        let (entries, _) = Store::new(&files).list().map_err(failed)?;
+        Ok(optimax_history::check_of(&entries, &id))
+    })
+    .await
+}
+
+/// Найновіша перевірка «було / стало» (для «Огляду»).
+#[tauri::command]
+pub async fn check_last() -> CmdResult<Option<CheckResult>> {
+    blocking(|| {
+        let files = dir()?;
+        let (entries, _) = Store::new(&files).list().map_err(failed)?;
+        Ok(optimax_history::latest_check(&entries))
     })
     .await
 }
@@ -415,6 +485,7 @@ mod tests {
             &rec(),
             SystemState::default(),
             None,
+            None,
             42,
         )
         .unwrap();
@@ -426,6 +497,7 @@ mod tests {
             &result(Bottleneck::InsufficientData),
             &rec(),
             SystemState::default(),
+            None,
             None,
             42
         )
@@ -439,6 +511,7 @@ mod tests {
                 &result(Bottleneck::Gpu),
                 &rec(),
                 SystemState::default(),
+                None,
                 None,
                 at,
             )
@@ -468,5 +541,121 @@ mod tests {
             .unwrap();
         let back: Recording = serde_json::from_slice(&json).unwrap();
         assert_eq!(back.target, rec().target);
+    }
+
+    /// Результат із розповіддю «є що покращити»: головна дія — знахідка `gpu_bound` (FPS).
+    fn fixable() -> DiagnosisResult {
+        let mut r = result(Bottleneck::Gpu);
+        let mut f =
+            FindingBuilder::new("diag", "gpu_bound", Category::Gpu, Impact::Moderate, 80).build();
+        f.advice = Some(optimax_core::Text::new("diag.gpu_bound.advice"));
+        r.diagnosis.verdicts.push(f.into());
+        r.diagnosis.story = Some(optimax_diagnosis::Story {
+            smoothness: optimax_diagnosis::Smoothness::Smooth,
+            outcome: optimax_diagnosis::StoryOutcome::Fixable,
+            how: vec![],
+            why: vec![],
+            why_unknown: false,
+            action: Some(1),
+            others: vec![],
+        });
+        r
+    }
+
+    #[test]
+    fn plan_for_check_ok() {
+        let p = plan_for_check(&fixable(), "RE9.exe", None).unwrap();
+        assert_eq!(p.focus, optimax_diagnosis::CheckFocus::Fps);
+    }
+
+    #[test]
+    fn plan_for_check_rejects_other_game() {
+        assert!(plan_for_check(&fixable(), "cs2.exe", None).is_err());
+    }
+
+    #[test]
+    fn plan_for_check_rejects_fine() {
+        let mut r = fixable();
+        if let Some(s) = r.diagnosis.story.as_mut() {
+            s.outcome = optimax_diagnosis::StoryOutcome::Fine;
+        }
+        assert!(plan_for_check(&r, "re9.exe", None).is_err());
+    }
+
+    #[test]
+    fn entry_from_keeps_check_link() {
+        let link = CheckLink {
+            baseline: "1-re9.exe".into(),
+            plan: plan_for_check(&fixable(), "re9.exe", None).unwrap(),
+        };
+        let e = entry_from(
+            &result(Bottleneck::Gpu),
+            &rec(),
+            SystemState::default(),
+            None,
+            Some(link.clone()),
+            42,
+        )
+        .unwrap();
+        assert_eq!(e.check, Some(link));
+    }
+
+    #[test]
+    fn live_baseline_used_only_when_id_matches() {
+        let live = fixable();
+        assert!(live_baseline("1-re9.exe", Some("1-re9.exe"), Some(&live)).is_some());
+        assert!(live_baseline("1-re9.exe", Some("2-re9.exe"), Some(&live)).is_none());
+        assert!(live_baseline("1-re9.exe", None, Some(&live)).is_none());
+        assert!(live_baseline("1-re9.exe", Some("1-re9.exe"), None).is_none());
+    }
+
+    #[test]
+    fn cached_plan_reused_for_same_baseline() {
+        let link = CheckLink {
+            baseline: "1-re9.exe".into(),
+            plan: plan_for_check(&fixable(), "re9.exe", None).unwrap(),
+        };
+        assert_eq!(
+            cached_plan("1-re9.exe", None, Some((None, &link))),
+            Some(link.plan.clone())
+        );
+        assert_eq!(cached_plan("2-re9.exe", None, Some((None, &link))), None);
+        assert_eq!(cached_plan("1-re9.exe", None, None), None);
+    }
+
+    fn pick(id: &str) -> CheckChoice {
+        CheckChoice {
+            id: id.into(),
+            advice: None,
+        }
+    }
+
+    #[test]
+    fn plan_for_check_chosen_finding() {
+        let mut r = fixable();
+        if let Some(s) = r.diagnosis.story.as_mut() {
+            s.outcome = optimax_diagnosis::StoryOutcome::Fine;
+            s.action = None;
+            s.others = vec![1];
+        }
+        let p = plan_for_check(&r, "re9.exe", Some(&pick("gpu_bound"))).unwrap();
+        assert_eq!(
+            p.advice,
+            Some(optimax_core::Text::new("diag.gpu_bound.advice"))
+        );
+        assert!(plan_for_check(&r, "re9.exe", None).is_err());
+    }
+
+    #[test]
+    fn cached_plan_needs_same_finding() {
+        let link = CheckLink {
+            baseline: "1-re9.exe".into(),
+            plan: plan_for_check(&fixable(), "re9.exe", None).unwrap(),
+        };
+        let chosen = pick("gpu_bound");
+        let cached = Some((Some(&chosen), &link));
+        assert!(cached_plan("1-re9.exe", Some(&pick("gpu_bound")), cached).is_some());
+        assert!(cached_plan("1-re9.exe", Some(&pick("upscale.helps")), cached).is_none());
+        assert!(cached_plan("1-re9.exe", None, cached).is_none());
     }
 }

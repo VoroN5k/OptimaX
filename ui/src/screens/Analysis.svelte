@@ -13,6 +13,7 @@
   import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
   import BlackBoxNote from "../components/BlackBoxNote.svelte";
+  import CheckStart from "../components/CheckStart.svelte";
   import DriverOnline from "../components/DriverOnline.svelte";
   import FindingCard from "../components/FindingCard.svelte";
   import Page from "../components/Page.svelte";
@@ -157,6 +158,8 @@
   {/each}
 
   <BlackBoxNote />
+
+  <div class="check-start"><CheckStart /></div>
 
   <div data-tour="home-state">
   <Card title={tk("ui.home.state")}>
@@ -309,6 +312,9 @@
 {/if}
 
 <style>
+  .check-start {
+    margin-bottom: calc(var(--space) * 4);
+  }
   .drop {
     display: flex;
     align-items: center;
